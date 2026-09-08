@@ -41,6 +41,7 @@
     ifaceMode:     opts(['直接调用', '通过MCIS', '通过IPS']),
     mq:            opts(['TDMQ', 'IBMMQ', 'KAFKA']),
     msgCommType:   opts(['消息中心SDK', '腾讯原生SDK', '消息中心消息转换', '消息中心消息分发']),
+    pageSize:      opts([{ label: '10 条', value: '10' }, { label: '30 条', value: '30' }, { label: '50 条', value: '50' }]),
     judgeRole:     opts(['调用方产品负责人', '服务方产品负责人']),
     yesNo:         opts(['是', '否', '无需幂等']),
   };
@@ -70,6 +71,9 @@
     { id: 'sub_groupContext',     source: 'none' },
     { id: 'sub_mcisCode',         source: 'none' },
     { id: 'sub_ipsCode',          source: 'none' },
+    // 关联文档子弹窗的下拉也复用同一套面板，避免文档区出现原生 popup
+    { id: 'docFilterBatch',       source: 'batch' },
+    { id: 'docPageSize',          source: 'dict', dict: 'pageSize' },
     // ── 原标准下拉（选项都是 2-4 项的小字典）──
     { id: 'sub_serviceMode',      source: 'dict', dict: 'serviceMode' },
     { id: 'sub_ifaceMode',        source: 'dict', dict: 'ifaceMode' },
@@ -244,10 +248,8 @@
         callerOptions = [];
       }
 
-      // SEARCHABLE_FIELDS 现在也包含原 7 个标准下拉（source: 'dict'），
+      // SEARCHABLE_FIELDS 现在包含弹窗所有 select（包括文档子弹窗），
       // 一并由 buildSearchableSelects() 处理，这里不再单独 fillSelect。
-      fillSelect(dom.docFilterBatch, (window._batchOptions || []));
-
       buildSearchableSelects();
       bindEvents();
       renderJudgeTable();
@@ -296,7 +298,8 @@
     dom.btnDocSearch.addEventListener('click', () => { docPage = 1; applyDocFilter(); });
     dom.btnDocReset.addEventListener('click', () => {
       dom.docFilterNo.value = '';
-      dom.docFilterBatch.value = '';
+      if (selectInstances.docFilterBatch) selectInstances.docFilterBatch.clear();
+      else dom.docFilterBatch.value = '';
       docPage = 1;
       applyDocFilter();
     });
@@ -699,7 +702,9 @@
 
   function applyDocFilter() {
     const kw = (dom.docFilterNo.value || '').trim().toLowerCase();
-    const batch = dom.docFilterBatch.value || '';
+    const batch = selectInstances.docFilterBatch
+      ? String(selectInstances.docFilterBatch.getValue() || '')
+      : (dom.docFilterBatch.value || '');
     docFiltered = docAllRows.filter((d) => {
       // 适配接口返回的字段名
       const docNo = d.docNo || d.no || '';
