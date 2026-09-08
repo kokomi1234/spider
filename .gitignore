@@ -21,3 +21,7 @@ output/*.png
 
 # AI assistant workspace memory (not project code)
 .workbuddy/
+
+# Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
+.workbuddy-ai
+.opencode
