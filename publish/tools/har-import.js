@@ -7,8 +7,8 @@
  *
  * 用法：
  *   cd publish
- *   node tools/har-import.js ../任务单查询.har
- *   node tools/har-import.js ../任务单查询.har --no-index   # 只写文件，不更新索引
+ *   node tools/har-import.js ../../analysis/任务单查询.har
+ *   node tools/har-import.js ../../analysis/任务单查询.har --no-index   # 只写文件，不更新索引
  *
  * 缓存 key 的算法与 proxy.js 的 cacheKey() 完全一致：
  *   sha1( METHOD | pathname | JSON.stringify(排序后的查询参数，剔除 n) |

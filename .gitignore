@@ -9,7 +9,7 @@
 # Real captured internal responses / sensitive network traces
 publish/cache/
 *.har
-har/*.json
+analysis/har/
 
 # Local editor / runtime artifacts
 .vscode/
