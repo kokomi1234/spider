@@ -119,10 +119,8 @@
     let list = Array.isArray(options) ? options.slice() : [];
 
     host.innerHTML = `
-      <div class="msel-row">
-        <input type="text" class="msel-display" readonly placeholder="${esc(placeholder || '全部')}">
-        <button type="button" class="msel-btn">选择</button>
-      </div>
+      <input type="text" class="msel-display" readonly placeholder="${esc(placeholder || '全部')}"
+             title="点击选择（可多选）">
       <div class="msel-panel">
         <input type="text" class="msel-search" placeholder="搜索">
         <div class="msel-list"></div>
@@ -137,7 +135,6 @@
     const panel = host.querySelector('.msel-panel');
     const search = host.querySelector('.msel-search');
     const listEl = host.querySelector('.msel-list');
-    const openBtn = host.querySelector('.msel-btn');
 
     function paintLabel() {
       const picked = list.filter((o) => selected.has(o.value)).map((o) => o.label);
@@ -167,7 +164,6 @@
     function isOpen() { return panel.classList.contains('show'); }
 
     display.addEventListener('click', () => (isOpen() ? close() : open()));
-    openBtn.addEventListener('click', (e) => { e.stopPropagation(); isOpen() ? close() : open(); });
     search.addEventListener('input', renderList);
 
     listEl.addEventListener('change', (e) => {

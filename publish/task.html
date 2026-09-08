@@ -135,38 +135,33 @@
     /* ── 多选控件（排期批次 / 任务分类）─────────────────────────
        searchable-select.js 只支持单选，而这两个筛选字段报文里是数组，
        所以这里做一个轻量多选：只读输入框 + 弹出面板（搜索 / 全选 / 清空）。
-       样式属于页面控件，不是弹窗，放本页 <style>。 */
+       输入框外观与 .form-group select 完全同款（同高度 / 边框 / 右侧箭头），
+       不再外挂「选择」按钮。样式属于页面控件，放本页 <style>。 */
     .msel { position: relative; }
-    .msel-row { display: flex; gap: 6px; align-items: stretch; }
-    .msel-row input {
-      flex: 1 1 auto;
-      min-width: 0;
+    .msel .msel-display {
+      width: 100%;
       height: 42px;
-      padding: 0 12px;
+      padding: 0 34px 0 12px;
       border: 1px solid var(--outline);
       border-radius: var(--r-xs);
       font-size: var(--fs-md);
       color: var(--on-surface);
-      background: var(--surface-1);
+      background-color: var(--surface);
+      font-family: inherit;
       cursor: pointer;
+      transition: border-color .15s, box-shadow .15s;
+      /* 与统一下拉框同款的灰色 V 形箭头 */
+      background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='14'%20height='14'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2373777f'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpolyline%20points='6%209%2012%2015%2018%209'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 14px 14px;
     }
-    .msel-row input:focus {
+    .msel .msel-display:hover { border-color: var(--primary); }
+    .msel .msel-display:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
     }
-    .msel-btn {
-      flex: 0 0 auto;
-      padding: 0 12px;
-      height: 42px;
-      border: 1px solid var(--outline);
-      border-radius: var(--r-xs);
-      background: var(--surface);
-      color: var(--on-variant);
-      font-size: var(--fs-sm);
-      cursor: pointer;
-    }
-    .msel-btn:hover { background: var(--surface-1); }
     .msel-panel {
       position: absolute;
       top: calc(100% + 4px);
@@ -250,7 +245,7 @@
     <div class="page-header" data-page-node-id="LDwD1hkL0lOptPN7JwwvxT">
       <h1 data-page-node-id="GN9KpXOj6464oBm07mLk05">📝 任务单查询</h1>
       <div class="toolbar" data-page-node-id="gkjfH8qhqyzf6r0cyxDnRR">
-        <a class="outlined btn-sm" href="index.html" style="text-decoration:none;display:inline-flex;align-items:center;" data-page-node-id="H3YoFnGBOOV5kiZoHUJK9M">← 返回首页</a>
+        <a class="outlined btn-sm" href="index.html" data-page-node-id="H3YoFnGBOOV5kiZoHUJK9M">← 返回首页</a>
         <button class="filled btn-sm" id="btnQuery" data-page-node-id="DPExQcLaXQpQDSLi8zuv1t">🔍 查 询</button>
         <button class="outlined btn-sm" id="btnReset" data-page-node-id="GJHAFzRBsidcbI90Qe4jSD">↺ 重 置</button>
         <button class="outlined btn-sm" id="btnExportCsv" title="导出当前筛选结果" data-page-node-id="j1j0RfBYlH0aFLRKOBG7HG">⬇ 导 出</button>
@@ -398,6 +393,48 @@
       </div>
     </div>
 
+    <!-- ═══ 人员查询卡片（userinfo.har：按姓名搜用户 / 按工号查详情） ═══ -->
+    <style>
+      #peopleCard .ps-search { display: flex; gap: var(--sp1); align-items: center; margin-bottom: var(--sp1); }
+      #peopleCard .ps-search input {
+        flex: 0 1 260px; height: 36px; padding: 0 12px;
+        border: 1px solid var(--outline); border-radius: var(--r-xs);
+        font-size: var(--fs-md); background: var(--surface-1); color: var(--on-surface);
+      }
+      #peopleCard .ps-search input:focus { outline: none; border-color: var(--primary); }
+      .ps-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+      .ps-table th, .ps-table td {
+        padding: 7px 9px; border-bottom: 1px solid var(--outline-soft);
+        text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .ps-table thead th { background: var(--surface-1); color: var(--muted); font-size: var(--fs-nano); }
+      .ps-table tbody tr.ps-row { cursor: pointer; }
+      .ps-table tbody tr.ps-row:hover td { background: var(--surface-1); }
+      .ps-idx, .ps-idx-h { width: 36px; }
+      .ps-no, .ps-no-h { width: 90px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: var(--fs-nano); }
+      .ps-detail { background: var(--surface-1); }
+      .ps-kv { display: inline-block; margin: 2px 14px 2px 0; font-size: var(--fs-xs); color: var(--on-surface); }
+      .ps-kv b { color: var(--muted); font-weight: 500; }
+      .ps-empty { padding: 12px 4px; color: var(--muted); font-size: var(--fs-sm); }
+      .ps-hint { margin-top: 4px; font-size: var(--fs-nano); color: var(--faint); }
+    </style>
+    <div class="card collapsible" id="peopleCard">
+      <div class="card-head">
+        <h2>👤 人员查询</h2>
+        <button type="button" class="chevron" id="peopleToggle"
+                aria-expanded="false" aria-controls="peopleBody"
+                style="transform: rotate(-90deg);"
+                title="展开 / 收起人员查询">▼</button>
+      </div>
+      <div class="card-body" id="peopleBody" style="display:none;">
+        <div class="ps-search">
+          <input type="text" id="psKeyword" placeholder="输入姓名搜索，如：李胜" autocomplete="off">
+          <button type="button" class="filled btn-sm" id="psSearchBtn">🔍 搜 索</button>
+        </div>
+        <div id="psResult"><div class="ps-empty">输入姓名关键字后点击「搜索」</div></div>
+      </div>
+    </div>
+
     <!-- ═══ 结果表格卡片 ═══ -->
     <div class="card results-card" data-page-node-id="nHzxwqMjgq619BV3HLxoOQ">
       <div class="card-head" data-page-node-id="DMi1finoVtxlPWrhEhH0a5">
@@ -454,7 +491,7 @@
         <span class="page-info" id="pageInfo" data-page-node-id="3UwQieia1oEIxJS9rK3zPr">第 1 / 1 页</span>
         <button class="outlined btn-xs" id="btnNext" data-page-node-id="AM8AT15uZe2lPPCu4S23hM">下一页 ›</button>
         <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="Bhc0X61xKY1kU0duoMgDYk">末页 »</button>
-        <input type="number" id="pageJump" min="1" value="1" title="跳页" style="width:72px;height:28px;padding:0 8px;border:1px solid var(--outline);border-radius:var(--r-xs);font-size:var(--fs-xs);" data-page-node-id="Tosvk465qcWI4yEvjUHlYG">
+        <input type="number" id="pageJump" min="1" value="1" title="跳页" data-page-node-id="Tosvk465qcWI4yEvjUHlYG">
       </div>
     </div>
   </div>
@@ -475,9 +512,11 @@
 
   <script src="runtime-config.js"></script>
   <script src="api-client.js"></script>
+  <script src="user-api.js"></script>
   <script src="task-api.js"></script>
   <script src="searchable-select.js"></script>
   <script src="date-picker.js"></script>
+  <script src="people-search.js"></script>
   <script src="task.js"></script>
 </body>
 </html>

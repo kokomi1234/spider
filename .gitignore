@@ -18,3 +18,6 @@ har/*.json
 
 # Temporary verification output
 output/*.png
+
+# AI assistant workspace memory (not project code)
+.workbuddy/

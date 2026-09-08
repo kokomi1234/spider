@@ -208,6 +208,8 @@
       judgeAll:   $('#judgeCheckAll'),
       btnAddJudge:$('#btnAddJudge'),
       btnDelJudge:$('#btnRemoveJudge'),
+      btnFetchJudges: $('#btnFetchJudges'),
+      btnSubmitJudges: $('#btnSubmitJudges'),
 
       docOverlay: $('#docSelectOverlay'),
       btnDocClose:$('#btnDocClose'),
@@ -322,6 +324,8 @@
     dom.btnAddJudge.addEventListener('click', () => { addJudgeRow(); renderJudgeTable(); });
     dom.btnDelJudge.addEventListener('click', removeSelectedJudges);
     dom.judgeAll.addEventListener('change', toggleJudgeAll);
+    if (dom.btnFetchJudges) dom.btnFetchJudges.addEventListener('click', fetchJudges);
+    if (dom.btnSubmitJudges) dom.btnSubmitJudges.addEventListener('click', submitJudges);
 
     // ESC：先关子弹窗，再关主弹窗
     document.addEventListener('keydown', (e) => {
@@ -522,18 +526,174 @@
       fillSelect(roleSel, DICT.judgeRole);
     }
 
-    // 评委工号：可搜索下拉，暂无人员接口 → 允许直接手输
+    // 评委工号：可搜索下拉 + 按姓名在线搜索（UserApi，来自 har/userinfo.har 抓包）
     const noSel = tr.querySelector('.judge-no');
     const noKey = 'judge-no-' + judgeSeq;
     tr._noKey = noKey;
+    tr._userMap = {};   // userId -> 用户对象，选中工号后联动姓名/部门
     if (typeof window.createSearchableSelect === 'function') {
       tr._noInstance = window.createSearchableSelect(noSel, [], {});
       bindTypedCapture(noKey, noSel);
+      bindJudgeUserSearch(tr, noSel);
     } else {
       fillSelect(noSel, PLACEHOLDER);
     }
     tr.querySelector('.judge-check').addEventListener('change', syncJudgeAllState);
     return tr;
+  }
+
+  /** 评委工号在线搜索（UserApi.fetchUserList）：输入 ≥2 字防抖搜索，选中后带出姓名/部门 */
+  function bindJudgeUserSearch(tr, noSel) {
+    const host = noSel && noSel.parentElement;
+    if (!host) return;
+    let timer = null;
+    // 捕获阶段拿输入框实时文本（组件展开下拉时会清空输入框，普通监听拿不到）
+    host.addEventListener('input', () => {
+      const box = host.querySelector('.searchable-select .searchable-select-input');
+      const text = box ? String(box.value || '').trim() : '';
+      clearTimeout(timer);
+      if (text.length < 2) return;   // 单字太宽，≥2 字再搜
+      timer = setTimeout(async () => {
+        if (!window.UserApi || typeof window.UserApi.fetchUserList !== 'function') return;
+        const kw = text;
+        const r = await window.UserApi.fetchUserList(kw);
+        const box2 = host.querySelector('.searchable-select .searchable-select-input');
+        const now = box2 ? String(box2.value || '').trim() : '';
+        if (!r || !r.ok || now !== kw) return;   // 输入已变或失败 → 丢弃
+        tr._userMap = {};
+        const opts = r.list.map((u) => {
+          tr._userMap[u.userId] = u;
+          return { value: u.userId, label: `${u.userName}（${u.userId}）` };
+        });
+        try { tr._noInstance.updateOptions(opts); } catch (_) { /* 实例已销毁 */ }
+      }, 400);
+    }, true);
+    // searchable-select 选中项时会向原 <select> 派发 change → 自动带出姓名/部门
+    noSel.addEventListener('change', () => {
+      const u = tr._userMap && tr._userMap[noSel.value];
+      if (!u) return;
+      const nameEl = tr.querySelector('.judge-name');
+      const deptEl = tr.querySelector('.judge-dept');
+      if (nameEl) nameEl.value = u.userName || '';
+      if (deptEl) deptEl.value = u.orgName || u.teamName || deptEl.value;
+    });
+  }
+
+  /** 从接口行里按候选字段名取第一个非空值 */
+  function pickField(obj, keys) {
+    for (const k of keys) {
+      if (obj && obj[k] != null && obj[k] !== '') return String(obj[k]);
+    }
+    return '';
+  }
+
+  /** ⤓ 拉取评委（ToolApi.getJudgeInfo）：按当前组件编号 + 调用方系统拉取并填充表格 */
+  async function fetchJudges() {
+    if (!currentRow) return;
+    if (!window.ToolApi || typeof window.ToolApi.fetchJudgeInfo !== 'function') {
+      toast('⚠️ ToolApi 未加载', 2200, 'warn');
+      return;
+    }
+    const compNum = currentRow.assemblyNo || currentRow.provideSystemNumber || currentRow.compNum || '';
+    if (!compNum) {
+      toast('⚠️ 当前行缺少组件编号（assemblyNo），无法拉取评委', 2800, 'warn');
+      return;
+    }
+    const form = collectForm();
+    toast('评委信息拉取中…', 2000);
+    const r = await window.ToolApi.fetchJudgeInfo({
+      compNum,
+      principal: '',
+      callerComponent: form.callerSystem || '',
+    });
+    if (!r || !r.ok) {
+      toast(`⚠️ 拉取失败：${(r && r.error) || '未知错误'}`, 3000, 'error');
+      return;
+    }
+    if (!r.list.length) {
+      toast('接口未返回评委数据', 2500, 'warn');
+      return;
+    }
+    // 清空现有行再填充
+    dom.judgeBody.querySelectorAll('tr.judge-row').forEach((tr) => {
+      if (tr._noInstance) { try { tr._noInstance.destroy(); } catch (_) {} }
+      if (tr._roleInstance) { try { tr._roleInstance.destroy(); } catch (_) {} }
+      tr.remove();
+    });
+    r.list.forEach((it) => {
+      const tr = addJudgeRow();
+      const role = pickField(it, ['judgeRoleName', 'roleName', 'role']);
+      const no = pickField(it, ['judgeUserId', 'userId', 'empNo']);
+      const name = pickField(it, ['judgeName', 'userName', 'name']);
+      const dept = pickField(it, ['judgeDeptName', 'orgName', 'teamName', 'dept']);
+      const nameEl = tr.querySelector('.judge-name');
+      const deptEl = tr.querySelector('.judge-dept');
+      if (name) nameEl.value = name;
+      if (dept) deptEl.value = dept;
+      if (tr._userMap) tr._userMap[no] = { userId: no, userName: name, orgName: dept, teamName: dept };
+      if (no && tr._noInstance) {
+        try {
+          tr._noInstance.updateOptions([{ value: no, label: name ? `${name}（${no}）` : no }]);
+          tr._noInstance.setValue(no);
+        } catch (_) { /* 忽略 */ }
+      }
+      if (role && tr._roleInstance) {
+        try {
+          const base = Array.isArray(DICT.judgeRole) ? DICT.judgeRole : [];
+          if (!base.some((o) => o.value === role)) {
+            tr._roleInstance.updateOptions(base.concat([{ value: role, label: role }]));
+          }
+          tr._roleInstance.setValue(role);
+        } catch (_) { /* 忽略 */ }
+      }
+    });
+    renderJudgeTable();
+    toast(`✅ 已拉取 ${r.list.length} 条评委信息`, 2200, 'success');
+  }
+
+  /** ↑ 提交评委信息（ToolApi.subscriptionReview） */
+  async function submitJudges() {
+    if (!currentRow) return;
+    if (!window.ToolApi || typeof window.ToolApi.submitSubscriptionReview !== 'function') {
+      toast('⚠️ ToolApi 未加载', 2200, 'warn');
+      return;
+    }
+    const judges = collectJudges().filter((j) => j.empNo || j.name);
+    if (!judges.length) {
+      toast('⚠️ 请先添加评委信息', 2500, 'warn');
+      return;
+    }
+    const publishId = currentRow.publishId || currentRow.id || '';
+    if (!publishId) {
+      toast('⚠️ 当前行缺少 publishId，无法提交评委信息', 2800, 'warn');
+      return;
+    }
+    const form = collectForm();
+    // 调用方应用系统服务编号（如 E00406TO1197）；没填则按提供方编号 + 调用方前缀推一份
+    let prodSysServeNoList = form.callerServiceNo ? [form.callerServiceNo] : [];
+    if (!prodSysServeNoList.length) {
+      const sysServeNo = currentRow.sysServeNo || currentRow.serverCoding || '';
+      const caller = form.callerSystem || '';
+      const m = sysServeNo.match(/(TO\d+)$/);
+      if (sysServeNo && caller && m) prodSysServeNoList = [caller + m[1]];
+    }
+    const judgeInfoList = judges.map((j) => ({
+      judgeName:      j.name,
+      judgeUserId:    j.empNo,
+      judgeDeptName:  j.dept,
+      involvedProduct: '',
+      judgeRoleName:  j.role,
+    }));
+    const r = await window.ToolApi.submitSubscriptionReview({ publishId, prodSysServeNoList, judgeInfoList });
+    if (!r || !r.ok) {
+      toast(`⚠️ 提交失败：${(r && r.error) || '未知错误'}`, 3000, 'error');
+      return;
+    }
+    if (r.local) {
+      toast('接口未启用，评委信息仅保留在表单中', 2500, 'warn');
+      return;
+    }
+    toast('✅ 评委信息已提交', 2200, 'success');
   }
 
   function renderJudgeTable() {
@@ -790,6 +950,29 @@
     });
     dom.relDoc.value = picked.map((d) => d.docName || d.name || '').join('、');
     dom.relDocIds.value = picked.map((d) => d.value || d.docInstId || d.id || '').join(',');
+
+    // 选完文档 → 联动拉取调用方应用系统服务编号（getDocSysServeNoList，来自 har/订阅.json 抓包）
+    const docInstIds = picked.map((d) => d.value || d.docInstId || d.id || '').filter(Boolean);
+    if (docInstIds.length && window.ToolApi && window.ToolApi.isEnabled('docSysServeNoList')) {
+      window.ToolApi.fetchDocSysServeNoList(docInstIds).then((r) => {
+        if (!r || !r.ok || !r.list.length) return;
+        const inst = selectInstances['sub_callerServiceNo'];
+        if (!inst) return;
+        const opts = r.list
+          .map((o) => {
+            if (typeof o === 'string') return { value: o, label: o };
+            const v = o.value != null ? String(o.value) : '';
+            if (!v) return null;
+            return { value: v, label: o.label != null ? String(o.label) : v };
+          })
+          .filter(Boolean);
+        if (opts.length) {
+          try { inst.updateOptions(opts); } catch (_) { /* 忽略 */ }
+          toast(`已按关联文档带出 ${opts.length} 个服务编号`, 2000, 'success');
+        }
+      }).catch(() => { /* 静默降级，不阻塞文档选择 */ });
+    }
+
     closeDocDialog();
   }
 

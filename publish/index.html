@@ -187,7 +187,7 @@
       margin-right: auto;
     }
 
-    /* 订阅筛选按钮组 */
+    /* 订阅筛选按钮组（外观与全站胶囊按钮一致，颜色走主题变量） */
     .subscribe-filter-group {
       display: flex;
       gap: 8px;
@@ -196,11 +196,14 @@
     .subscribe-filter-group button {
       padding: 4px 12px;
       font-size: var(--fs-xs);
-      border-radius: 4px;
+      min-height: 30px;
+      border-radius: var(--r-pill);
       border: 1px solid var(--outline);
-      background: white;
+      background: var(--surface);
+      color: var(--on-variant);
       cursor: pointer;
-      transition: all 0.2s;
+      font-family: inherit;
+      transition: background .15s, border-color .15s, color .15s;
     }
     .subscribe-filter-group button:hover {
       border-color: var(--primary);
@@ -208,7 +211,7 @@
     }
     .subscribe-filter-group button.active {
       background: var(--primary);
-      color: white;
+      color: var(--on-primary);
       border-color: var(--primary);
     }
 
@@ -321,7 +324,7 @@
         <button class="filled btn-sm" id="btnQuery" data-page-node-id="vaEGNr3BFuyiYPBT1BJAbB">🔍 查 询</button>
         <button class="outlined btn-sm" id="btnReset" data-page-node-id="A5yxcZ2T76YIiWoSLHq21z">↺ 重 置</button>
         <button class="outlined btn-sm" id="btnSubscribePanel" data-page-node-id="SOtRYG9cXoPuN2nWwAS4BD">📌 已订阅 (0)</button>
-        <a class="outlined btn-sm" href="task.html" style="text-decoration:none;display:inline-flex;align-items:center;" data-page-node-id="navTaskPage">📝 任务单查询</a>
+        <a class="outlined btn-sm" href="task.html" data-page-node-id="navTaskPage">📝 任务单查询</a>
       </div>
     </div>
 
@@ -704,6 +707,10 @@
           <div class="sub-sec-head">
             <h3 class="sub-sec-title">评委信息</h3>
             <div class="sub-sec-actions">
+              <button type="button" class="outlined btn-xs" id="btnFetchJudges"
+                      title="按当前组件编号 + 调用方系统拉取评委信息（getJudgeInfo）">⤓ 拉取评委</button>
+              <button type="button" class="outlined btn-xs" id="btnSubmitJudges"
+                      title="把下方评委表格提交为订阅评委信息（subscriptionReview）">↑ 提交评委信息</button>
               <button type="button" class="outlined btn-xs" id="btnAddJudge">＋ 新增</button>
               <button type="button" class="outlined btn-xs danger" id="btnRemoveJudge">－ 删除</button>
             </div>
@@ -811,6 +818,10 @@
 
   <script src="runtime-config.js"></script>
   <script src="api-client.js"></script>
+  <script src="user-api.js"></script>
+  <script src="tool-api.js"></script>
+  <script src="task-api.js"></script>
+  <script src="sys-api.js"></script>
   <script src="service-api.js"></script>
   <script src="batch-data.js"></script>
   <script src="provider-data.js"></script>

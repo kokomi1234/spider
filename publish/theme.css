@@ -241,6 +241,22 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .btn-sm { padding: 6px 16px; font-size: var(--fs-xs); min-height: 36px; }
 .btn-xs { padding: 4px 12px; font-size: var(--fs-nano); min-height: 30px; }
 
+/* <a> 形态的按钮（如「任务单查询」「返回首页」跳转链接）
+   与 <button> 保持同一套外观：圆角胶囊、字体、居中布局 */
+a.outlined, a.filled, a.tonal-btn, a.text-btn {
+  border-radius: var(--r-pill);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: background .15s, border-color .15s;
+}
+
 /* ── 表单输入框 ───────────────────────────────────── */
 .form-grid {
   display: grid;
@@ -411,7 +427,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .searchable-select-option-text { flex: 1; min-width: 0; word-break: break-all; }
 .searchable-select-check { font-weight: 700; flex-shrink: 0; }
 .searchable-select-option mark {
-  background: #fff3cd;
+  background: color-mix(in srgb, var(--amber-c) 55%, var(--surface));
   color: inherit;
   padding: 0;
   border-radius: 2px;
@@ -1008,6 +1024,23 @@ tbody tr.unsubscribed-row:hover td {
 
 .pagination button { min-height: 32px; padding: 4px 14px; }
 .pagination .page-info { margin: 0 8px; }
+/* 跳页输入框：与分页按钮同高，外观走统一输入框变量 */
+.pagination input {
+  width: 72px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--on-surface);
+  background: var(--surface);
+}
+.pagination input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
+}
 
 /* ── 失败分页重试条 ───────────────────────────────── */
 .retry-bar {
