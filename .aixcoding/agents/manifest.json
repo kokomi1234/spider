@@ -1,0 +1,26 @@
+{
+  "guid": "9f4c2d81-6a3e-4b7b-8c5a-2e8f0d9a4b6c",
+  "registry_id": "aixcoding-agents",
+  "name": "AIxCoding Agents",
+  "description": "AIxCoding 阶段编排 Agents（ba / architect / test / dev）：作为 AIxCoding Harness 工具集（toolset-id: aixcoding-harness-toolset）的角色编排层，不直接实现业务/技术动作，而是按用户意图路由到 ../toolsets/aixcoding-harness-toolset/actions/ 下工具集的对应 action（discover / design / split / specify / plan / build / check / done），并自动补全前置、逐步引导用户走完「业务分析 → 技术设计 → 测试验收 → 开发实现」的完整闭环。项目初始化 aixcoding-init 不属于任何角色的范围，而是流程上的步骤，由用户/工具集层面显式触发，不由 agents 编排。",
+  "version": "0.0.1",
+  "configType": "agents",
+  "commands": {
+    "harness-ba": {
+      "name": "需求分析师",
+      "order": 1
+    },
+    "harness-architect": {
+      "name": "系统架构师",
+      "order": 2
+    },
+    "harness-test": {
+      "name": "测试工程师",
+      "order": 4
+    },
+    "harness-dev": {
+      "name": "开发工程师",
+      "order": 3
+    }
+  }
+}

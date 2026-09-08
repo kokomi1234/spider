@@ -1,0 +1,77 @@
+# 我的已订阅服务列表
+# 更新时间: 2026-09-03 16:03
+# 来源: 原始条目(从 E00301/C07511/E02402 组件查询结果提取) + trace.har/table.har 真实 serverCoding 扩充
+# 共 71 条 (原有 30 + 抓包新增 41)
+# 说明: 导入后开启对比模式，可与真实查询结果的 serverCoding 字段交叉校验匹配情况
+#   注: /v1/T* 类为早期非匹配对照样本，保留用于验证「不匹配」场景
+PsnInterTransInfoQryResultBak
+PsnGlobalRemittanceAccountsQuery
+PsnGlobalTransferList
+PsnPayeeAndPayerInfoCheckForGlobal
+PsnGlobalTransferSwiftCode
+PsnSsmSendWithBlock
+ObsMacAccountBalQry
+ObsHKAccountBalQry
+PsnAccLoginWithImagePre
+PsnAccLoginWithBlockPre
+/v1/T10201
+/v1/T10258
+/v1/T10229
+/v1/T10252
+/v1/T10192
+/v1/T10040
+/v1/T10039
+/v1/T01109
+/v1/T10202
+/v1/T10255
+RemitBatchSubmitPre
+RemitTransConsignPre
+ECardFaceCheckIdGetAfterLogin
+ECardFaceCheckIdGetBeforeLogin
+NcdsRdsUpperLimitRateQuery
+DcepPlanPayRefresh
+DcepPayPayeeListQuery
+DcepPlanPayQuery
+DcepPlanPayAuth
+DcepPayPayeeDelete
+CustomerComplaintQuery
+E00301TP001
+E00301TP7800
+ObsHKAccountListQry
+ObsHKAssetTotalQry
+ObsHKCustomerLevelQry
+ObsMacAccountListQry
+ObsMacAssetTotalQry
+ObsMacCustomerLevelQry
+ObsUkbContectQuery
+OvpSDCrcdAssoCancelSafetyTool
+OvpSDCrcdRegisterSafetyTool
+PsnBOAQryChinaBankAccountList
+PsnChlWubsTransferSubmitReinforce
+PsnConsumerFinanceLoanInfoQry
+PsnLatestEPayrollQuery
+PsnLoanBizParameterQry
+PsnLoanDeferCustInfoQuery
+PsnLoanDeferRepayPre
+PsnLoanDeferRepayQuery
+PsnLoanDeferRepaySubmit
+PsnLoanDeferRepayVerify
+PsnPcLoanApplyStatusQry
+PsnPcLoanQuotaApplyPre
+PsnPcLoanQuotaApplySubmit
+PsnPcLoanQuotaApplyVerify
+PsnProxyPaymentCancel
+PsnStockBTransferBranchAccountCharge
+PsnxFundFeeDetailQuery
+PsnxFundFeeDetailQueryOutlay
+PsnxFundTransactionTimeQuery
+PsnxFundTransactionTimeQueryOutlay
+PsnxWealthProductExtraDetailQueryNew
+ShardingTokenLoginForUC
+psn/aiagent/psnAiAgentQueryHistory
+psn/aiagent/psnAiAgentTtsPre
+psn/base/PsnUCSendSMSLoginPre
+psn/login/PsnUCLoginForBiometric
+psn/login/PsnUCLoginForGesture
+psn/login/PsnUCLoginForMsg
+psn/login/PsnUCLoginForPassword

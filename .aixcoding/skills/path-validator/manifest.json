@@ -1,0 +1,14 @@
+{
+    "registry_id": "path-validator",
+    "guid": "6031dca7-e460-4c0d-a6a9-877f127dc927",
+    "name": "File Path Validator",
+    "description": "File path validation utility for verifying source code paths before generating Markdown links in review/progress reports. Use this skill whenever generating code file references in .md documents. Triggers for: (1) Validating code paths before adding to reports, (2) Generating verified Markdown links for code files, (3) Batch validating file lists'.",
+    "scenario": "quality-assurance",
+    "version": "1.0.0",
+    "entryPoint": "path-validator/SKILL.md",
+	"configType": "skill",
+    "dateCreated": "2026-05-16T01:45:00Z",
+    "dateUpdated": "2026-05-16T01:45:00Z",
+    "createdBy": "AIxCoding Platform",
+    "updatedBy": "AIxCoding Platform"
+}

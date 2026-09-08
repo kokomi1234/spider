@@ -1,0 +1,20 @@
+# macOS metadata
+.DS_Store
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
+# Real captured internal responses / sensitive network traces
+publish/cache/
+*.har
+har/*.json
+
+# Local editor / runtime artifacts
+.vscode/
+.idea/
+*.log
+
+# Temporary verification output
+output/*.png

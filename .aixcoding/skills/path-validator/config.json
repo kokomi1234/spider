@@ -1,0 +1,9 @@
+{
+  "base_path": ".",
+  "path_patterns": {
+    "backend_user": "server/qa-service-user/src/main/java/**/*.java",
+    "backend_question": "server/qa-service-question/src/main/java/**/*.java",
+    "frontend": "web/qa-web/src/**/*.{vue,ts,tsx}",
+    "config": "server/*/src/main/resources/**/*.{properties,yml,yaml}"
+  }
+}

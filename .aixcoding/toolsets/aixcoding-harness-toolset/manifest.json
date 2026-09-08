@@ -1,0 +1,24 @@
+{
+  "guid": "6c2b9773-4d8a-4f1e-9b7a-2e5f0c8a1d3b",
+  "registry_id": "aixcoding-harness-toolset",
+  "name": "AIxCoding Harness",
+  "description": "提供从业务分析→技术设计→Story 拆分→测试规格→任务拆解→逐任务实现→Spec 校正→验收归档的 Feature 级端到端开发驾驭流水线（价值驱动的十步闭环），帮助模型按照统一节奏、质量门禁与可追溯性交付一个 Feature / Change，并生成 overall-plan.md、上下文分层、Story 卡片、.feature 测试规格、develop-log 与归档验收报告等全链路产物。",
+  "version": "0.0.1",
+  "configType": "toolset",
+  "commands": [
+    "aixcoding-init",
+    "aixcoding-discover",
+    "aixcoding-design",
+    "aixcoding-split",
+    "aixcoding-specify",
+    "aixcoding-test",
+    "aixcoding-plan",
+    "aixcoding-propose",
+    "aixcoding-build",
+    "aixcoding-apply",
+    "aixcoding-check",
+    "aixcoding-done",
+    "aixcoding-archive",
+    "aixcoding-sync-specs"
+  ]
+}

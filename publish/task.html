@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="3e4NIUFHMy5Vn1y8tt8GQ2">
+<head data-page-node-id="ndfITAf2z71EGVQb1TI5xD">
+  <meta charset="UTF-8" data-page-node-id="LAnBkEnRqwtpaz8CXIltCv">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="35HhYp44qzaA9xoLJ3pjJs">
+  <title>任务单查询</title>
+  <link rel="stylesheet" href="theme.css" data-page-node-id="05I6BsQeQaAjh8jkZyht5E">
+  <style>
+    /* ── 页面专属微调（与弹窗无关，弹窗样式一律在 theme.css）── */
+
+    /* 结果条数说明（与首页 #resultCount 同款） */
+    .result-count { font-size: var(--fs-xs); color: var(--muted); margin-right: var(--sp1); }
+
+    /* 结果表格：列宽集中成变量，窄屏统一压缩 */
+    .task-table {
+      --c-index: 40px;
+      --c-no: 130px;
+      --c-name: 280px;
+      --c-type: 80px;
+      --c-dept: 170px;
+      --c-demand: 130px;
+      --c-prod: 110px;
+      --c-rel: 190px;
+      --c-batch: 80px;
+      --c-state: 90px;
+      --c-perf: 90px;
+      --c-date: 120px;
+      --c-op: 76px;
+      table-layout: fixed;
+      width: 100%;
+      min-width: calc(var(--c-index) + var(--c-no) + var(--c-name) + var(--c-type)
+                    + var(--c-dept) + var(--c-demand) + var(--c-prod) + var(--c-rel)
+                    + var(--c-batch) + var(--c-state) + var(--c-perf) + var(--c-date)
+                    + var(--c-op));
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .task-table th,
+    .task-table td {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 10px 9px;
+      font-size: var(--fs-sm);
+      border-bottom: 1px solid var(--outline-soft);
+    }
+    .task-table thead th {
+      background: var(--surface-1);
+      color: var(--muted);
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      letter-spacing: .02em;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .task-table tbody td {
+      vertical-align: middle;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.4;
+    }
+    .task-table tbody tr:last-child td { border-bottom: none; }
+    .task-table tbody tr:hover td { background: var(--surface-1); }
+    /* 操作列固定在可视区域右侧 */
+    .task-table thead th:last-child,
+    .task-table tbody td:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      box-shadow: -6px 0 8px -8px rgba(26, 28, 30, .45);
+    }
+    .task-table thead th:last-child { z-index: 3; background: var(--surface-1); }
+    .task-table tbody td:last-child { background: var(--surface); }
+    .task-table tbody tr:hover td:last-child { background: var(--surface-1); }
+    .task-table td[colspan] { text-align: center; padding: 40px 0; color: var(--muted); }
+
+    .task-table .col-index  { width: var(--c-index); }
+    .task-table .col-no     { width: var(--c-no); }
+    .task-table .col-name   { width: var(--c-name); }
+    .task-table .col-type   { width: var(--c-type); }
+    .task-table .col-dept   { width: var(--c-dept); }
+    .task-table .col-demand { width: var(--c-demand); }
+    .task-table .col-prod   { width: var(--c-prod); }
+    .task-table .col-rel    { width: var(--c-rel); }
+    .task-table .col-batch  { width: var(--c-batch); }
+    .task-table .col-state  { width: var(--c-state); }
+    .task-table .col-perf   { width: var(--c-perf); }
+    .task-table .col-date   { width: var(--c-date); }
+    .task-table .col-op     { width: var(--c-op); }
+
+    @media (max-width: 1460px) {
+      .task-table {
+        --c-no: 118px;
+        --c-name: 216px;
+        --c-type: 72px;
+        --c-dept: 138px;
+        --c-demand: 116px;
+        --c-prod: 96px;
+        --c-rel: 140px;
+        --c-batch: 74px;
+        --c-state: 80px;
+        --c-perf: 80px;
+        --c-date: 104px;
+        --c-op: 72px;
+      }
+    }
+
+    .task-table .cell-no,
+    .task-table .cell-demand,
+    .task-table .cell-prod {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--fs-nano);
+    }
+    .task-table .cell-rel { font-size: var(--fs-nano); color: var(--on-variant); }
+    .task-table .cell-name { font-weight: 500; }
+
+    /* 「更多筛选项」折叠头：箭头 + 标题紧挨着，不用 .sub-sec-head 的
+       两端对齐（那个是给弹窗里「标题 + 操作按钮」用的） */
+    .more-head {
+      display: flex;
+      align-items: center;
+      gap: var(--sp1);
+      margin-top: var(--sp2);
+      padding-top: var(--sp2);
+      border-top: 1px solid var(--outline-soft);
+    }
+    .more-head-title { font-size: var(--fs-md); font-weight: 600; color: var(--on-surface); }
+
+    /* 日期区间：起 ~ 止 两个输入框并排 */
+    .date-range { display: flex; align-items: center; gap: 6px; }
+    .date-range input { flex: 1 1 0; min-width: 0; }
+    .date-range span { color: var(--faint); font-size: var(--fs-xs); }
+
+    /* ── 多选控件（排期批次 / 任务分类）─────────────────────────
+       searchable-select.js 只支持单选，而这两个筛选字段报文里是数组，
+       所以这里做一个轻量多选：只读输入框 + 弹出面板（搜索 / 全选 / 清空）。
+       样式属于页面控件，不是弹窗，放本页 <style>。 */
+    .msel { position: relative; }
+    .msel-row { display: flex; gap: 6px; align-items: stretch; }
+    .msel-row input {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 42px;
+      padding: 0 12px;
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      font-size: var(--fs-md);
+      color: var(--on-surface);
+      background: var(--surface-1);
+      cursor: pointer;
+    }
+    .msel-row input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
+    }
+    .msel-btn {
+      flex: 0 0 auto;
+      padding: 0 12px;
+      height: 42px;
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      background: var(--surface);
+      color: var(--on-variant);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+    }
+    .msel-btn:hover { background: var(--surface-1); }
+    .msel-panel {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      background: var(--surface);
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      box-shadow: var(--shadow-pop);
+      padding: var(--sp1);
+      display: none;
+    }
+    .msel-panel.show { display: block; }
+    .msel-search {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      font-size: var(--fs-sm);
+      margin-bottom: 6px;
+    }
+    .msel-search:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+    .msel-list {
+      max-height: 240px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .msel-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: var(--r-xs);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+    }
+    .msel-item:hover { background: var(--surface-1); }
+    .msel-item input { width: 14px; height: 14px; flex: 0 0 auto; }
+    .msel-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msel-empty { padding: 12px 8px; text-align: center; color: var(--muted); font-size: var(--fs-sm); }
+    .msel-foot {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--outline-soft);
+    }
+
+    /* 详情弹窗：任务单字段多，做成两列网格 */
+    #taskDetailDialog { max-width: 860px; }
+    .task-detail-body {
+      max-height: 62vh;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: 190px 1fr;
+      gap: 1px;
+      background: var(--outline-soft);
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      font-size: var(--fs-md);
+    }
+    .task-detail-body dt,
+    .task-detail-body dd { background: var(--surface); padding: 7px 12px; word-break: break-all; }
+    .task-detail-body dt { color: var(--muted); font-size: var(--fs-sm); }
+    .task-detail-body dd { font-family: monospace; font-size: var(--fs-xs); }
+    .task-detail-body .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px 0; }
+  </style>
+</head>
+<body data-page-node-id="gl5XIF3oBc3gdrzYEa0iiE">
+  <div class="wrap" data-page-node-id="kA2vSe4t121GCvkZWhUuic">
+
+    <!-- ═══ 页面标题 ═══ -->
+    <div class="page-header" data-page-node-id="LDwD1hkL0lOptPN7JwwvxT">
+      <h1 data-page-node-id="GN9KpXOj6464oBm07mLk05">📝 任务单查询</h1>
+      <div class="toolbar" data-page-node-id="gkjfH8qhqyzf6r0cyxDnRR">
+        <a class="outlined btn-sm" href="index.html" style="text-decoration:none;display:inline-flex;align-items:center;" data-page-node-id="H3YoFnGBOOV5kiZoHUJK9M">← 返回首页</a>
+        <button class="filled btn-sm" id="btnQuery" data-page-node-id="DPExQcLaXQpQDSLi8zuv1t">🔍 查 询</button>
+        <button class="outlined btn-sm" id="btnReset" data-page-node-id="GJHAFzRBsidcbI90Qe4jSD">↺ 重 置</button>
+        <button class="outlined btn-sm" id="btnExportCsv" title="导出当前筛选结果" data-page-node-id="j1j0RfBYlH0aFLRKOBG7HG">⬇ 导 出</button>
+      </div>
+    </div>
+
+    <!-- ═══ 统计卡片 ═══ -->
+    <div class="stats stat-row" id="statsRow" style="display:none;" data-page-node-id="aED8hxVpaN8fcUnOJu1VFw">
+      <div class="stat info" data-page-node-id="BAH4ds70hC6OHdLOxg497c">
+        <div class="lbl" data-page-node-id="yndtz3lWKTGi9IfHo79ec1">总条数</div>
+        <div class="val" id="statTotal" data-page-node-id="ffNVDWdHfrsoZB7x9tWyK5">0</div>
+      </div>
+      <div class="stat neutral" data-page-node-id="EmvR9YXm0tjK35XxFBaueO">
+        <div class="lbl" data-page-node-id="nLAVvtvKghC5oeG9JxSDKI">当前页 / 总页数</div>
+        <div class="val" id="statPage" style="font-size: var(--fs-base);" data-page-node-id="riWZr5Fr5tg2zW4aN9D144">—</div>
+      </div>
+      <div class="stat ok" data-page-node-id="Lf26L4CRi6g7va1oRloI3I">
+        <div class="lbl" data-page-node-id="bDYmIMKd3jBwKaFP6HmgqO">本页工作量合计</div>
+        <div class="val" id="statWorkload" data-page-node-id="lkgLko0zwLLRPZpzqmvUDj">0</div>
+      </div>
+      <div class="stat neutral" data-page-node-id="DJkkVeMCfrhcGoFVf3992F">
+        <div class="lbl" data-page-node-id="c9FwpVLJMBFE2y6B48Q7wl">当前用户</div>
+        <div class="val" id="statUser" style="font-size: var(--fs-base);" data-page-node-id="jyHJIcAVf2fvxjmPkWN7Xp">—</div>
+      </div>
+    </div>
+
+    <!-- ═══ 筛选条件卡片 ═══ -->
+    <div class="card collapsible" id="filterCard" data-page-node-id="rrpJkWO3ilkb4BMyRjpYHV">
+      <div class="card-head" data-page-node-id="zkG4sQJao0LJMAowq9mdyq">
+        <h2 data-page-node-id="LI1YWMtC9PDVcnCyPH9V4G">筛选条件</h2>
+        <button type="button" class="chevron" id="filterToggle"
+                aria-expanded="true" aria-controls="filterBody"
+                title="展开 / 收起筛选条件" data-page-node-id="HnOitHksR8arR3TkJsdd8d">▼</button>
+      </div>
+      <div class="card-body" id="filterBody" data-page-node-id="YdrZ547ihfHFhn4BgdaWvw">
+        <div class="form-grid" data-page-node-id="wizr6ouDbx3q6wzsNU6ECV">
+          <div class="form-group" data-page-node-id="utCqEDYuJtxKavDnUc3KzK">
+            <label for="t_taskNo" data-page-node-id="5KA5XQ5PM5HxRBX0hiVAHq">任务单编号</label>
+            <input type="text" id="t_taskNo" placeholder="如 M-202608-12430" data-page-node-id="I244IG2GF6XEZIgudD3g81">
+          </div>
+          <div class="form-group" data-page-node-id="w2CcbRKV2JCDy9vfzg8Ana">
+            <label for="t_taskName" data-page-node-id="aplthPnuzdkR3kAE0o06Iq">任务单名称</label>
+            <input type="text" id="t_taskName" placeholder="模糊搜索" data-page-node-id="JkRsLSGpUxGhK4wSoP6xnB">
+          </div>
+          <div class="form-group" data-page-node-id="PcyTpFuw4LEGF2h0qylQc0">
+            <label for="t_demandNo" data-page-node-id="EAatBwLUIMkPlCNfAD2S4o">软需编号</label>
+            <input type="text" id="t_demandNo" placeholder="如 FR-202607-68444" data-page-node-id="kxzi6FHWSBJXpgwCx65CR4">
+          </div>
+          <div class="form-group" data-page-node-id="qF97obEmP9BPX8WHtg3ahC">
+            <label for="t_leadDept" data-page-node-id="DmFkpFiIOx0GdAhWGEpV1t">牵头部门</label>
+            <select id="t_leadDept" placeholder="请输入或选择部门" data-page-node-id="xJhOoIHgceQHCsoR9x1hhs">
+              <option value="" data-page-node-id="nMavExM74GGRsPDwYeiJDY">加载中…</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="wxuLDOzckVZAH4rZpaOKX5">
+            <label for="t_leadProduct" data-page-node-id="4u1H4MNV3AwYdjDqtu7GOJ">牵头产品</label>
+            <input type="text" id="t_leadProduct" placeholder="如 BOCNET-G-IFS" data-page-node-id="KYMl0COrwY6G3M3XU0vlMW">
+          </div>
+          <div class="form-group" data-page-node-id="JPTzTHXkFBBI1lfYtoY1BU">
+            <label for="t_relationProducts" data-page-node-id="grhwzNcGytawnzwAdX8tAK">关联产品</label>
+            <input type="text" id="t_relationProducts" placeholder="如 BOCNETC-O-MAPSN" data-page-node-id="iaB0IDOx6ah3OMe9uwuysQ">
+          </div>
+          <div class="form-group" data-page-node-id="gc99sFipxlQxAlSGgcUxxd">
+            <label data-page-node-id="rgpDU9bmSajohUtqA4fgK7">排期批次（可多选）</label>
+            <div class="msel" id="msel_batch" data-page-node-id="oS1hSUGRXyAqIM8fhZjNfC"></div>
+          </div>
+          <div class="form-group" data-page-node-id="AvyI7wpo463r23RXpXA0hp">
+            <label data-page-node-id="aAMeva3GtSdKBKjENPrWlf">任务分类（可多选）</label>
+            <div class="msel" id="msel_classify" data-page-node-id="drtlNNQbkvWnkYiWNvp15L"></div>
+          </div>
+          <div class="form-group" data-page-node-id="0fUsuIlGfzBiCwFBu17Jz4">
+            <label for="t_projectType" data-page-node-id="4hdATopiRW3IFu6SQvZixl">项目分类</label>
+            <select id="t_projectType" placeholder="请选择" data-page-node-id="dCJ9OySB6Z2aQqsEy5XImP">
+              <option value="" data-page-node-id="Cz2GpDfttZakDNQg3Bz8eF">加载中…</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="XcuK9jNogDFwuh2NHru1yn">
+            <label for="t_funcTestStart" data-page-node-id="9I8ZJ8vttLC6Bx5EyDRAiU">功能测试日期</label>
+            <div class="date-range" data-page-node-id="PKX87sXL8Du1dtrS9c7n6F">
+              <input type="text" id="t_funcTestStart" placeholder="开始" readonly data-page-node-id="6GLpfRqpSX6kDFu5xDCBLv">
+              <span data-page-node-id="nUDjmxERQXgoRwIg1Wl2R4">~</span>
+              <input type="text" id="t_funcTestEnd" placeholder="结束" readonly data-page-node-id="vZWfFZzh4KbGpJgglhxEcE">
+            </div>
+          </div>
+          <div class="form-group" data-page-node-id="L2rnWZKRvxBMbse7MRk2OO">
+            <label for="t_archiveStart" data-page-node-id="pFmE2VH8auW7fAE2qsNPmz">归档日期</label>
+            <div class="date-range" data-page-node-id="GgSfraHdGLr6C2NszCCXm8">
+              <input type="text" id="t_archiveStart" placeholder="开始" readonly data-page-node-id="M0OwbVMhw8oPaoWUcD01Ku">
+              <span data-page-node-id="U4moZtvHuCN205HIOnYB8T">~</span>
+              <input type="text" id="t_archiveEnd" placeholder="结束" readonly data-page-node-id="pt2sRP56uBpoTdKFl3tCLU">
+            </div>
+          </div>
+        </div>
+
+        <div class="more-head" data-page-node-id="jPcCLBTyslK8iLW3jtxypA">
+          <button type="button" class="chevron" id="moreToggle"
+                  aria-expanded="false" aria-controls="moreBody"
+                  style="transform: rotate(-90deg);"
+                  title="展开 / 收起更多筛选项" data-page-node-id="Xkuto7eZznjWCtbgxd4Ap7">▼</button>
+          <span class="more-head-title" data-page-node-id="6fEqbFLTPJDDfuKpmfSpkB">更多筛选项（枚举值待抓包确认，原样传值）</span>
+        </div>
+        <div class="form-grid" id="moreBody" style="display:none; margin-top: var(--sp1);" data-page-node-id="MNB26IA7gjO2jPJ3BGJ6Hx">
+          <div class="form-group" data-page-node-id="U6k2hpha7wwqgf95ArZ8Vf">
+            <label for="t_taskType" data-page-node-id="eZauEsIh7YB5BoyH4eQVZG">任务类型</label>
+            <input type="text" id="t_taskType" placeholder="原样传值，如 3" data-page-node-id="Zah9CheyqfesfbaBxKWp9K">
+          </div>
+          <div class="form-group" data-page-node-id="zgLFBkmyyZGWcPConozeCP">
+            <label for="t_taskPerformStatue" data-page-node-id="LbBpxYiADHVUsfUI7M6nJG">执行状态</label>
+            <input type="text" id="t_taskPerformStatue" placeholder="原样传值，如 11" data-page-node-id="FoAkjKUNQLhyEb0tnMEAnl">
+          </div>
+          <div class="form-group" data-page-node-id="KaWZF4dyp7dkQvbBfKXhxB">
+            <label for="t_tieVersion" data-page-node-id="zpGD9DMkRV1pzRQ5oGLMlK">投产版本</label>
+            <input type="text" id="t_tieVersion" placeholder="如 BOCNET-G-IFS_V01.1M_B45" data-page-node-id="bQ4VHum8M99nQDnlKhpFwj">
+          </div>
+          <div class="form-group" data-page-node-id="iUJUoPZ0C2FubTAb5IOsG1">
+            <label for="t_belongYear" data-page-node-id="higBf5Gi3bJ0aUvAp5E511">所属年份</label>
+            <input type="text" id="t_belongYear" placeholder="如 2026" data-page-node-id="eZCzmCiKInQUQ2VQgtAclM">
+          </div>
+          <div class="form-group" data-page-node-id="2HyYzRHjdvlOYNJ5MeckP3">
+            <label for="t_projectNo" data-page-node-id="tJupfDb768gJmdoV7JHKUX">项目编号</label>
+            <input type="text" id="t_projectNo" placeholder="请输入" data-page-node-id="UL6ENwEXnP2TdZw6o5XoQr">
+          </div>
+          <div class="form-group" data-page-node-id="pMMbMcGP3ge63GlyRexa5c">
+            <label for="t_projectName" data-page-node-id="BvleB3J1FSZX0UucsnwYxD">项目名称</label>
+            <input type="text" id="t_projectName" placeholder="模糊搜索" data-page-node-id="83iD1F68seTfxFMp5jMuQm">
+          </div>
+          <div class="form-group" data-page-node-id="UcFlHXn1kGNSCrElQE6rfw">
+            <label for="t_projLeadDept" data-page-node-id="suWnb07ifVBp6tXH6QBoiz">项目牵头部门</label>
+            <input type="text" id="t_projLeadDept" placeholder="请输入" data-page-node-id="8qN6KwHVKVu9KYq5lioNqS">
+          </div>
+          <div class="form-group" data-page-node-id="VQaRGWOnn1El0D0NwHZDMM">
+            <label for="t_prodPracDeptName" data-page-node-id="LUms67Fl1j1X8CmQCCtZBY">生产实施部门</label>
+            <input type="text" id="t_prodPracDeptName" placeholder="请输入" data-page-node-id="OdKwQN78bGgEalA9uU0kAb">
+          </div>
+          <div class="form-group" data-page-node-id="Wo5P8zj6QFu4vbdhul1yn7">
+            <label for="t_reviewerRole" data-page-node-id="ELcBJf38u1YFj9cp9eYqu9">评委角色（暂不发送）</label>
+            <select id="t_reviewerRole" disabled
+                    title="接口文档里有这个字段，但两次抓包都没带上，确认后端支持前不发送" data-page-node-id="BfQOFIdPHndGVr7akarVVO">
+              <option value="" data-page-node-id="66rF10orYFb6qzBpAwV0ls">全部</option>
+              <option value="产品负责人" data-page-node-id="iV2yT2Npd6cVdoS8cIJvpK">产品负责人</option>
+              <option value="服务方产品负责人" data-page-node-id="jOcNOXjsrxF8EPwoatNS3L">服务方产品负责人</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 结果表格卡片 ═══ -->
+    <div class="card results-card" data-page-node-id="nHzxwqMjgq619BV3HLxoOQ">
+      <div class="card-head" data-page-node-id="DMi1finoVtxlPWrhEhH0a5">
+        <h2 data-page-node-id="zMBgOSElLoKh4QoX0c4GYg">查询结果</h2>
+        <div class="toolbar" data-page-node-id="rUv6dRdCudS9EpSiPtpfCY">
+          <span id="resultCount" class="result-count" data-page-node-id="efzdhO90bKjKOYstNfDXwO"></span>
+        </div>
+      </div>
+
+      <div class="tbl-scroll" data-page-node-id="JRgH1QoMA0prksPqkBGWCq">
+        <table class="task-table" data-page-node-id="Ps8lqh37LZFEXw7lFa5f8w">
+          <colgroup data-page-node-id="99d0NFpbYYAhjur5FralK4">
+            <col class="col-index" data-page-node-id="MqMEPArdYOfLi7FDWaxyj3">
+            <col class="col-no" data-page-node-id="F4151FQtVB3FlhXG4J1q7s">
+            <col class="col-name" data-page-node-id="rfdHJ6KdURrxVHlaPkpUzf">
+            <col class="col-type" data-page-node-id="2Lcz8bx9eARxzkGOCUicQa">
+            <col class="col-dept" data-page-node-id="jkM8cw2pRdviB2x5RRlQpN">
+            <col class="col-demand" data-page-node-id="B7CPan3Jxmryq9toOBUUGG">
+            <col class="col-prod" data-page-node-id="vAW521sAnq6oBb7Li0iRbD">
+            <col class="col-rel" data-page-node-id="Ga7nDbtuwFZ3PT9ZbHsIOP">
+            <col class="col-batch" data-page-node-id="5DZLTJIdAlf0OhGgK9i2pZ">
+            <col class="col-state" data-page-node-id="jVgpqeErDnLaVXAXS5HmWP">
+            <col class="col-perf" data-page-node-id="eEBsMZZqHkcr0ezxCCw0p8">
+            <col class="col-date" data-page-node-id="e5UiQWtaAKykvru1VWg7Bn">
+            <col class="col-op" data-page-node-id="Y4vHMY4wMhdKKz2qzWkBgN">
+          </colgroup>
+          <thead data-page-node-id="NVBMXRDGWAopp8hgpd2fVt">
+            <tr data-page-node-id="42Iq9JBbFRcYQCCfkNkG3Q">
+              <th scope="col" data-page-node-id="Qu5I0BRdwN2BEF9RF0BY1H">#</th>
+              <th scope="col" data-page-node-id="HBF0JDHrMbRv6EQGQ66Oaf">任务单编号</th>
+              <th scope="col" data-page-node-id="DOsbiLeBB1Ff64GKUkUZfL">任务单名称</th>
+              <th scope="col" data-page-node-id="sIBRnUabmXToGtc7tSXB8Y">任务类型</th>
+              <th scope="col" data-page-node-id="TPXgP0znefMCmJUAjMaNnJ">牵头部门</th>
+              <th scope="col" data-page-node-id="fvqDVaTBhhkFvnCmEnNqfx">软需编号</th>
+              <th scope="col" data-page-node-id="yPSyKZ4R23VywsPVPry8hj">牵头产品</th>
+              <th scope="col" data-page-node-id="5p7wWb2XsPgTH6ViAKdtSq">关联产品</th>
+              <th scope="col" data-page-node-id="JuBq34KzLBbB2V6iEzwkyc">排期批次</th>
+              <th scope="col" data-page-node-id="5OJQL0ADbAdrCq0d2UmSEz">任务状态</th>
+              <th scope="col" data-page-node-id="iMcuYYjYoYaCcJC53SCvC3">执行状态</th>
+              <th scope="col" data-page-node-id="QCm8712BWiboWHyrRscGVS">计划投产日期</th>
+              <th scope="col" data-page-node-id="iDcHliNJpLnOVNFcUU6C3I">操作</th>
+            </tr>
+          </thead>
+          <tbody id="resultBody" data-page-node-id="jYB3BBlVJPf8tP7t9oeBgb">
+            <tr data-page-node-id="BNMr8LuBSiO2PvWGe6rDGB"><td colspan="13" class="empty-hint" data-page-node-id="q7Q8PmyPLEa5dXP3TVQ6mL">请输入条件后点击「查询」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 分页 -->
+      <div class="pagination" id="pagination" style="display:none;" data-page-node-id="BPIzBxNM92S3S75ET4tCVv">
+        <button class="outlined btn-xs" id="btnFirst" title="首页" data-page-node-id="eZhXRZ0EQVDDWvRrLKchy1">« 首页</button>
+        <button class="outlined btn-xs" id="btnPrev" data-page-node-id="XyBKJT1JcnvH9OViJNUFvJ">‹ 上一页</button>
+        <span class="page-info" id="pageInfo" data-page-node-id="3UwQieia1oEIxJS9rK3zPr">第 1 / 1 页</span>
+        <button class="outlined btn-xs" id="btnNext" data-page-node-id="AM8AT15uZe2lPPCu4S23hM">下一页 ›</button>
+        <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="Bhc0X61xKY1kU0duoMgDYk">末页 »</button>
+        <input type="number" id="pageJump" min="1" value="1" title="跳页" style="width:72px;height:28px;padding:0 8px;border:1px solid var(--outline);border-radius:var(--r-xs);font-size:var(--fs-xs);" data-page-node-id="Tosvk465qcWI4yEvjUHlYG">
+      </div>
+    </div>
+  </div>
+
+  <!-- 详情弹窗 -->
+  <div class="overlay" id="taskDetailOverlay" role="presentation" data-page-node-id="WHNfNQbrc8zPP0q232ZrGR">
+    <div class="dialog" id="taskDetailDialog" role="dialog" aria-modal="true" aria-labelledby="taskDetailTitle" tabindex="-1" data-page-node-id="sO7rFK8iFD5hbtlVMdeXBH">
+      <h2 id="taskDetailTitle" data-page-node-id="hqJ3ApTmDzN3WfL71lNI8n">任务单详情</h2>
+      <dl class="task-detail-body" id="taskDetailBody" data-page-node-id="eh3shuqX0aQ3nci5c7toJG"></dl>
+      <div class="foot" data-page-node-id="HqXgSCmbhshVptIXJNZktJ">
+        <button class="outlined btn-sm" id="btnTaskDetailClose" type="button" data-page-node-id="jjQ9CK0rPY56e58ajysHxa">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" data-page-node-id="3gxj6HWqckYpsZdkGMqPR3"></div>
+
+  <script src="runtime-config.js"></script>
+  <script src="api-client.js"></script>
+  <script src="task-api.js"></script>
+  <script src="searchable-select.js"></script>
+  <script src="date-picker.js"></script>
+  <script src="task.js"></script>
+</body>
+</html>
