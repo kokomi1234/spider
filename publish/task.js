@@ -69,6 +69,8 @@
   let currentUser = null;
   let defaultDept = '';         // 牵头部门默认值（当前用户所在团队）
   let deptSelect = null;        // 牵头部门 searchable-select 实例
+  let projectTypeSelect = null; // 项目分类 searchable-select 实例
+  let reviewerRoleSelect = null;// 评委角色 searchable-select 实例（禁用，仅保持统一外观）
   let datePickers = {};         // id -> date-picker 实例
   let multiSelects = {};        // key -> multi-select 实例
   let loadingTimer = null;
@@ -227,7 +229,7 @@
       relationProducts:        val('#t_relationProducts'),
       schedulingAgreeBatchList: multiSelects.batch ? multiSelects.batch.getValues() : [],
       taskClassifyList:         multiSelects.classify ? multiSelects.classify.getValues() : [],
-      projectType:             val('#t_projectType'),
+      projectType:             projectTypeSelect ? String(projectTypeSelect.getValue() || '').trim() : val('#t_projectType'),
       funcTestDateStart:       datePickers.funcTestStart ? datePickers.funcTestStart.getValue() : '',
       funcTestDateEnd:         datePickers.funcTestEnd ? datePickers.funcTestEnd.getValue() : '',
       startArchiveDate:        datePickers.archiveStart ? datePickers.archiveStart.getValue() : '',
@@ -240,7 +242,7 @@
       projectName:             val('#t_projectName'),
       projLeadDept:            val('#t_projLeadDept'),
       prodPracDeptName:        val('#t_prodPracDeptName'),
-      reviewerRole:            val('#t_reviewerRole'),
+      reviewerRole:            reviewerRoleSelect ? String(reviewerRoleSelect.getValue() || '').trim() : val('#t_reviewerRole'),
     };
   }
 
@@ -249,8 +251,10 @@
      '#t_taskType', '#t_taskPerformStatue', '#t_tieVersion', '#t_belongYear',
      '#t_projectNo', '#t_projectName', '#t_projLeadDept', '#t_prodPracDeptName']
       .forEach((id) => { const el = $(id); if (el) el.value = ''; });
-    const role = $('#t_reviewerRole'); if (role) role.value = '';
-    const ptype = $('#t_projectType'); if (ptype) ptype.value = '';
+    if (reviewerRoleSelect) reviewerRoleSelect.clear();
+    else { const role = $('#t_reviewerRole'); if (role) role.value = ''; }
+    if (projectTypeSelect) projectTypeSelect.clear();
+    else { const ptype = $('#t_projectType'); if (ptype) ptype.value = ''; }
     if (deptSelect) deptSelect.clear();
     Object.values(multiSelects).forEach((m) => m.clear());
     Object.values(datePickers).forEach((p) => { if (p && p.clear) p.clear(); });
@@ -519,40 +523,31 @@
     ]);
 
     // ── 牵头部门 ──
-    // 注意：抄送人部门列表里的叫「深圳分中心开发三部」，而 getUserInfo 里的
-    // teamName 是「中国银行软件中心（深圳）开发三部」，两边名字不一样但
-    // teamId 与 deptNo 都是 K4229，所以按编号匹配，拿列表里的名字回填。
-    let deptList = [];
-    if (d.ok) {
-      deptList = d.list;
-      if (deptSelect) {
-        deptSelect.updateOptions(deptList.map((x) => ({ value: x.deptName, label: x.deptName })));
-      } else {
-        // searchable-select 没加载 → 退化成原生下拉，保证可用
-        const sel = $('#t_leadDept');
-        if (sel) {
-          sel.innerHTML = '<option value="">全部</option>' +
-            deptList.map((x) => `<option value="${esc(x.deptName)}">${esc(x.deptName)}</option>`).join('');
-        }
-      }
-    } else if (d.error) {
-      console.warn('[task] 部门列表加载失败:', d.error);
-    }
+    // 抓包里的 taskFormSelectList 使用 getUserInfo.teamName（完整名称），
+    // 而 selectDeptList 的对应项是简称。查询请求必须保留抓包里的完整 teamName。
+    let deptList = d.ok ? d.list : [];
+    if (d.error) console.warn('[task] 部门列表加载失败:', d.error);
 
     if (u.ok && u.user) {
       currentUser = u.user;
-      const byNo = currentUser.teamId
-        ? deptList.find((x) => x.deptNo === currentUser.teamId)
-        : null;
-      defaultDept = (byNo && byNo.deptName) || '';
-      if (!defaultDept && currentUser.teamName) {
-        // 编号没对上就退回 teamName，但 setValue 只在选项存在时才生效
-        const hit = deptList.find((x) => x.deptName === currentUser.teamName);
-        defaultDept = hit ? hit.deptName : '';
+      defaultDept = currentUser.teamName || '';
+      // 完整 teamName 不在部门接口简称列表时，作为额外选项加入搜索下拉。
+      if (defaultDept && !deptList.some((x) => x.deptName === defaultDept)) {
+        deptList = [{ deptId: currentUser.teamId || '', deptName: defaultDept, deptNo: currentUser.teamId || '' }, ...deptList];
       }
-      if (deptSelect && defaultDept) deptSelect.setValue(defaultDept);
     } else if (u.error) {
       console.warn('[task] 获取用户信息失败:', u.error);
+    }
+
+    if (deptSelect) {
+      deptSelect.updateOptions(deptList.map((x) => ({ value: x.deptName, label: x.deptName })));
+      if (defaultDept) deptSelect.setValue(defaultDept);
+    } else {
+      const sel = $('#t_leadDept');
+      if (sel) {
+        sel.innerHTML = '<option value="">全部</option>' +
+          deptList.map((x) => `<option value="${esc(x.deptName)}">${esc(x.deptName)}</option>`).join('');
+      }
     }
 
     // ── 排期批次 ──
@@ -571,13 +566,16 @@
 
     // ── 项目分类（系统参数）──
     const sel = $('#t_projectType');
-    if (p.ok && p.list.length) {
-      sel.innerHTML = '<option value="">全部</option>' +
-        p.list.map((x) => `<option value="${esc(x.value)}">${esc(x.paramName)}</option>`).join('');
-    } else {
-      sel.innerHTML = '<option value="">全部</option>';
-      if (p.error) console.warn('[task] 项目分类加载失败:', p.error);
+    const projectOptions = p.ok
+      ? [{ value: '', label: '全部' }, ...p.list.map((x) => ({ value: x.value, label: x.paramName }))]
+      : [{ value: '', label: '全部' }];
+    if (projectTypeSelect) {
+      projectTypeSelect.updateOptions(projectOptions);
+    } else if (sel) {
+      sel.innerHTML = projectOptions
+        .map((x) => `<option value="${esc(x.value)}">${esc(x.label)}</option>`).join('');
     }
+    if (p.error) console.warn('[task] 项目分类加载失败:', p.error);
 
     renderStats();
   }
@@ -590,10 +588,21 @@
     multiSelects.batch = createMultiSelect($('#msel_batch'), [], '全部批次');
     multiSelects.classify = createMultiSelect($('#msel_classify'), [], '全部分类');
 
-    // 牵头部门：先建一个空的可搜索下拉，部门列表到了再重建
-    const host = $('#t_leadDept');
+    // 牵头部门、项目分类、评委角色统一走 searchable-select；
+    // 后两者即使是小字典也不留原生 popup，保持和服务发布页一致。
     if (typeof window.createSearchableSelect === 'function') {
-      deptSelect = window.createSearchableSelect(host, [], {});
+      deptSelect = window.createSearchableSelect($('#t_leadDept'), [], {});
+      projectTypeSelect = window.createSearchableSelect($('#t_projectType'), [], {});
+      reviewerRoleSelect = window.createSearchableSelect(
+        $('#t_reviewerRole'),
+        [
+          { value: '', label: '全部' },
+          { value: '产品负责人', label: '产品负责人' },
+          { value: '服务方产品负责人', label: '服务方产品负责人' },
+        ],
+        { disabled: true }
+      );
+      reviewerRoleSelect.setValue('');
     }
 
     await loadDicts();
