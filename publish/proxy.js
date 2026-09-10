@@ -69,6 +69,11 @@ const TOKEN = process.env.PROXY_TOKEN;
 
 const OFFLINE = process.env.PROXY_OFFLINE === '1';   // 纯离线回放
 const RECORD = process.env.PROXY_RECORD !== '0';     // 是否录制
+// 宽松匹配：精确 key 未命中时，退而按「method + path」回放同接口最近一条记录。
+// 前端改了请求体（加字段、改 pageSize）后，旧缓存的 key 就再也命中不了，
+// 离线调试会全线 404。这个兜底让离线回放继续可用。
+// 想验证「参数是否严格一致」时用 PROXY_LOOSE_MATCH=0 关掉。
+const LOOSE = process.env.PROXY_LOOSE_MATCH !== '0';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -252,8 +257,32 @@ function cacheKey(method, reqUrl, bodyBuf) {
   return crypto.createHash('sha1').update(canonical).digest('hex');
 }
 
+// ── 宽松匹配：同 method + 同 path 的最近一条缓存 ───────────────
+// 只比较 pathname（忽略 ?n= 这类查询串），请求体不参与。
+function findLooseMatch(method, reqUrl) {
+  let wantPath;
+  try { wantPath = new URL(reqUrl, 'http://dummy').pathname; }
+  catch (_) { return null; }
+
+  const idx = readIndex();
+  let best = null;
+  for (const [k, v] of Object.entries(idx)) {
+    if (String(v.method || '').toUpperCase() !== String(method || '').toUpperCase()) continue;
+    let vp = String(v.path || '');
+    try { vp = new URL(vp, 'http://dummy').pathname; } catch (_) { /* 保留原值 */ }
+    if (vp !== wantPath) continue;
+    if (!best || String(v.recordedAt || '') > String(best.meta.recordedAt || '')) {
+      best = { key: k, meta: v };
+    }
+  }
+  if (!best) return null;
+  const entry = readCache(best.key);
+  if (!entry) return null;
+  return { entry, key: best.key, meta: best.meta };
+}
+
 // ── 回放 ──────────────────────────────────────────────────────
-function replay(res, entry, reason) {
+function replay(res, entry, reason, loose) {
   const headers = { ...(entry.headers || {}), ...CORS };
   // 逐跳头 / 长度头必须去掉，否则浏览器会一直挂着
   delete headers['content-length'];
@@ -262,11 +291,16 @@ function replay(res, entry, reason) {
   delete headers['connection'];
   headers['X-Served-From'] = 'cache';
   headers['X-Cache-Recorded-At'] = entry.recordedAt || '';
+  headers['X-Cache-Match'] = loose ? 'loose' : 'exact';
 
   res.writeHead(entry.status || 200, headers);
   res.end(entry.body);
 
   console.log(`   📦 回放本地缓存（${reason}）· 录制于 ${entry.recordedAt || '未知'}`);
+  if (loose) {
+    console.log(`   ⚠️  宽松匹配：请求参数与录制时不一致，回放的是同接口最近一条记录，` +
+                `数据可能与当前筛选条件不符，仅供参考`);
+  }
 }
 
 function sendJson(res, status, payload) {
@@ -338,6 +372,12 @@ function forward(req, res, bodyBuf, key, meta) {
     // 关键路径：外网 / 内网不可达 → 回退到本地缓存
     const hit = readCache(key);
     if (hit) return replay(res, hit, '后端不可达: ' + e.message);
+
+    // 精确未命中 → 宽松匹配兜底
+    if (LOOSE) {
+      const loose = findLooseMatch(req.method, req.url);
+      if (loose) return replay(res, loose.entry, '后端不可达，宽松匹配: ' + e.message, true);
+    }
 
     // 错误响应也必须带 CORS 头。
     // 之前没带，浏览器只会抛一句看不懂的 CORS 错误，
@@ -446,12 +486,20 @@ function handle(req, res, bodyBuf) {
   if (OFFLINE) {
     const hit = readCache(key);
     if (hit) return replay(res, hit, 'PROXY_OFFLINE=1');
+
+    // 精确未命中 → 尝试宽松匹配（同 method + 同 path 的最近一条）
+    if (LOOSE) {
+      const loose = findLooseMatch(req.method, req.url);
+      if (loose) return replay(res, loose.entry, 'PROXY_OFFLINE=1 宽松匹配', true);
+    }
+
     return sendJson(res, 404, {
       code: 404,
       msg: '离线模式：本地缓存中没有这条记录。请连内网用相同参数请求一次以录制。',
       key,
       path: req.url,
       requestBody: meta.requestBody,
+      looseMatch: LOOSE ? '已尝试宽松匹配，仍无同路径的缓存记录' : '已关闭（PROXY_LOOSE_MATCH=0）',
     });
   }
 
