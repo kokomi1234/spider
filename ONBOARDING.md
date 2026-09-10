@@ -68,6 +68,7 @@ spider/
 | 颜色/字号/圆角令牌、组件样式 | `publish/docs/design-system.md` |
 | 接口真实字段（抓包核实过） | `analysis/output/接口文档.md`、`analysis/output/openapi.json` |
 | 订阅关系页的设计方案（含各字段设计意图） | `publish/docs/服务订阅关系查询页面设计.md` |
+| 当前还欠什么、在等什么 | `TODO.md`（根目录） |
 | 订阅列表导入测试数据 | `publish/docs/导入说明.md` |
 | 项目长期约定与踩坑史 | `.workbuddy/memory/MEMORY.md` |
 
