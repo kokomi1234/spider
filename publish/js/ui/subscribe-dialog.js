@@ -453,6 +453,11 @@
       tr.remove();
     });
     dom.judgeAll.checked = false;
+
+    // 默认两个评委行：调用方产品负责人 + 服务方产品负责人
+    addDefaultJudgeRow('调用方产品负责人');
+    addDefaultJudgeRow('服务方产品负责人');
+
     renderJudgeTable();
 
     // 用当前行的信息预填：服务中文名 / 编号类字段
@@ -578,8 +583,8 @@
   // 评委信息表格
   // ═══════════════════════════════════════════════════
 
-  function addJudgeRow() {
-
+  /** 创建一行，可选预填角色 */
+  function addJudgeRow(role) {
     const tr = document.createElement('tr');
     tr.className = 'judge-row';
     tr.dataset.id = ++judgeSeq;
@@ -587,9 +592,9 @@
       <td class="c-chk"><input type="checkbox" class="judge-check" aria-label="选择该行"></td>
       <td class="c-idx judge-idx">—</td>
       <td><select class="judge-role sub-ctl"></select></td>
-      <td><select class="judge-no sub-ctl" placeholder="请输入姓名或EHR号"></select></td>
-      <td><input type="text" class="judge-name sub-input" placeholder="请输入或选择"></td>
-      <td><input type="text" class="judge-dept sub-input" placeholder="请输入或选择"></td>
+      <td><select class="judge-no sub-ctl" placeholder="请输入工号"></select></td>
+      <td><input type="text" class="judge-name sub-input" placeholder="选中后自动带出"></td>
+      <td><input type="text" class="judge-dept sub-input" placeholder="选中后自动带出"></td>
     `;
     dom.judgeBody.appendChild(tr);
 
@@ -600,8 +605,24 @@
       tr._roleKey = roleKey;
       tr._roleInstance = window.createSearchableSelect(roleSel, DICT.judgeRole || PLACEHOLDER, { placeholder: '请选择' });
       bindTypedCapture(roleKey, roleSel);
+      // 预填角色
+      if (role && tr._roleInstance) {
+        try {
+          const base = Array.isArray(DICT.judgeRole) ? DICT.judgeRole : [];
+          if (!base.some((o) => o.value === role)) {
+            tr._roleInstance.updateOptions(base.concat([{ value: role, label: role }]));
+          }
+          tr._roleInstance.setValue(role);
+        } catch (_) { /* 忽略 */ }
+      }
     } else {
       fillSelect(roleSel, DICT.judgeRole);
+      if (role) {
+        const opts = roleSel.querySelectorAll('option');
+        for (let i = 0; i < opts.length; i++) {
+          if (opts[i].value === role) { roleSel.selectedIndex = i; break; }
+        }
+      }
     }
 
     // 评委工号：可搜索下拉 + 按姓名在线搜索（UserApi，来自 har/userinfo.har 抓包）
@@ -618,6 +639,11 @@
     }
     tr.querySelector('.judge-check').addEventListener('change', syncJudgeAllState);
     return tr;
+  }
+
+  /** 快捷创建默认评委行（只填角色，不搜人） */
+  function addDefaultJudgeRow(role) {
+    addJudgeRow(role);
   }
 
   // ═══════════════════════════════════════════════════
@@ -667,19 +693,16 @@
       return box ? String(box.value || '').trim() : '';
     };
 
-    // 捕获阶段拿输入框实时文本（组件展开下拉时会清空输入框，普通监听拿不到）
-    host.addEventListener('input', (e) => {
-      if (e && e.isComposing) return;   // 中文组字过程中的拼音不拿去搜
+    /** 核心搜索逻辑：读取输入框内容并触发异步搜索（抽取为函数以便 input / compositionend 复用） */
+    function doSearch() {
       const kw = readInput();
       const inst = tr._noInstance;
       clearTimeout(timer);
 
       if (kw.length < JUDGE_SEARCH_MIN) {
-        // 关键字太短：不打请求，让组件在已有候选里自己过滤
         if (inst) inst.setBusy('');
         return;
       }
-      // 立刻给反馈，别让用户对着「无匹配结果」以为坏了
       if (inst) inst.setBusy('搜索中…');
 
       timer = setTimeout(async () => {
@@ -687,8 +710,8 @@
         const seq = ++searchSeq;
         const r = await window.UserApi.fetchUserList(kw);
         const inst2 = tr._noInstance;
-        if (seq !== searchSeq || !inst2) return;   // 已有更新的搜索 / 行已删除
-        if (readInput() !== kw) return;            // 输入又变了，交给下一次搜索
+        if (seq !== searchSeq || !inst2) return;
+        if (readInput() !== kw) return;
 
         try {
           if (r && r.ok && r.list.length) {
@@ -702,6 +725,17 @@
           ensurePanelOpen(inst2, noSel);
         } catch (_) { /* 实例已销毁（行被删除），忽略 */ }
       }, JUDGE_SEARCH_DELAY);
+    }
+
+    // 非 IME 输入法：实时输入时立即搜索
+    host.addEventListener('input', (e) => {
+      if (e && e.isComposing) return;   // 仅跳过 IME 组字中的中间状态
+      doSearch();
+    }, true);
+
+    // 中文输入法确认候选词后搜索
+    host.addEventListener('compositionend', () => {
+      doSearch();
     }, true);
 
     // searchable-select 选中项时会向原 <select> 派发 change → 自动带出姓名/部门
