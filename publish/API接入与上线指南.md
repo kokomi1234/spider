@@ -1,6 +1,6 @@
 # API 接入与上线指南
 
-本项目的页面请求统一经过 `publish/api-client.js` 的 `window.API.call()`。新增接口时，优先只增加业务模块和字段解析，不要在页面里重复编写 `fetch`、token、代理地址或缓存逻辑。
+本项目的页面请求统一经过 `publish/js/core/api-client.js` 的 `window.API.call()`。新增接口时，优先只增加业务模块和字段解析，不要在页面里重复编写 `fetch`、token、代理地址或缓存逻辑。
 
 ## 一、当前请求链路
 
@@ -17,8 +17,7 @@
 
 ```bash
 cd /Users/a1/Desktop/spider/publish
-PROXY_OFFLINE=1 node proxy.js
-python3 -m http.server 8080
+PROXY_OFFLINE=1 node proxy.js     # proxy 自带静态服务，页面也从这个端口打开
 ```
 
 ### 生产 / 上线
@@ -40,7 +39,7 @@ python3 -m http.server 8080
 - 设置超时、重试、日志脱敏和权限校验
 - 不把认证信息返回给浏览器
 
-前端已预留运行时配置：`publish/runtime-config.js`。
+前端已预留运行时配置：`publish/js/core/runtime-config.js`。
 
 ```js
 window.__APP_CONFIG__ = {
@@ -108,7 +107,7 @@ const rows = data.rows || data.records || data.list || [];
 
 ### 4. 新增下拉字典时
 
-将接口解析放在独立文件，例如 `xxx-data.js`，对外暴露：
+将接口解析放在独立文件，例如 `js/data/xxx-data.js`，对外暴露：
 
 ```js
 window.loadExampleList = async function () { ... };
@@ -124,7 +123,7 @@ window.loadExampleList = async function () { ... };
 
 ### 5. 新增本地过滤字段时
 
-在 `publish/index.js` 的 `FIELDS` 中声明：
+在 `publish/js/page/index.js` 的 `FIELDS` 中声明：
 
 - `key`：后台字段名；后台不支持则为 `null`
 - `mode`：`api` / `both` / `local`
@@ -158,7 +157,7 @@ window.loadExampleList = async function () { ... };
 
 ### 前端
 
-- [ ] `runtime-config.js` 设置 `mode: 'production'`
+- [ ] `js/core/runtime-config.js` 设置 `mode: 'production'`
 - [ ] `apiBase` 指向同源 `/api` 或正式网关地址
 - [ ] 浏览器端没有 token 配置
 - [ ] 生产构建不包含开发缓存和真实响应文件
@@ -178,4 +177,4 @@ window.loadExampleList = async function () { ... };
 
 ### 回滚方案
 
-生产接口切换建议通过 `runtime-config.js` 完成，而不是改业务代码。上线失败时，将 `apiBase` 切回旧网关或测试网关即可；开发 proxy 仅保留给内网调试和离线回放。
+生产接口切换建议通过 `js/core/runtime-config.js` 完成，而不是改业务代码。上线失败时，将 `apiBase` 切回旧网关或测试网关即可；开发 proxy 仅保留给内网调试和离线回放。

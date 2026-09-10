@@ -66,9 +66,29 @@ spider/
 | 怎么跑 / mock / 离线 / 缓存管理 | `publish/README.md` |
 | 请求链路、生产上线、**怎么新增接口** | `publish/API接入与上线指南.md` |
 | 颜色/字号/圆角令牌、组件样式 | `publish/docs/design-system.md` |
-| 接口真实字段（抓包核实过） | `analysis/output/接口文档.md`、`analysis/openapi.json` |
+| 接口真实字段（抓包核实过） | `analysis/output/接口文档.md`、`analysis/output/openapi.json` |
+| 订阅关系页的设计方案（含各字段设计意图） | `publish/docs/服务订阅关系查询页面设计.md` |
 | 订阅列表导入测试数据 | `publish/docs/导入说明.md` |
 | 项目长期约定与踩坑史 | `.workbuddy/memory/MEMORY.md` |
+
+## 安全与保密（务必遵守）
+
+这个仓库里有多份**含真实内网数据与凭证的文件**，处理原则：
+
+- `publish/.env` 存 `PROXY_TOKEN`，权限必须是 `600`（已设置）；`.env` 永远不进仓库（`.gitignore` 已覆盖）。
+- 抓包 `*.har`（根目录与 `analysis/har/`）与 `publish/cache/` 里含 **token / Cookie / ssopSessionId / 内网地址**，
+  `.gitignore` 已全部忽略：`*.har`、`analysis/har/`、`publish/cache/`。
+  **不要提交、外传或贴到外部工具**；需要分享时另做脱敏副本。
+- token 只有 12 小时有效期；过期后页面报 401，重新取 token 后
+  `curl http://localhost:3000/cache/clear` 清缓存重录。
+
+## 已知架构债（接手时心里有数）
+
+- 模块之间靠隐式全局变量通信（`window.API` / `window.ServiceApi` / `window.SubscribeDialog` /
+  `window.Priority` 等），页面脚本的加载顺序不能随意调整。新增模块请沿用
+  `window.Xxx = {...}` 的显式导出，不要再新增 `window._私有桥`。
+- 三个页面的入口脚本各自初始化，没有统一的启动器编排；改动 `publish/js/core/bootstrap.js`
+  前先确认它只服务 `index.html`。
 
 ## 三条铁律（违反过，代价很高）
 

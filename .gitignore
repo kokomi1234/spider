@@ -22,6 +22,9 @@ output/*.png
 # AI assistant workspace memory (not project code)
 .workbuddy/
 
+# 工具自动写入的安装时间戳（每次装 toolset 都会变，无版本价值）
+.aixcoding/toolset-installs.json
+
 # Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
 .workbuddy-ai
 .opencode

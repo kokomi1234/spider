@@ -1,15 +1,29 @@
 # ITAMP 平台接口总览
 
-基于工作区 5 份抓包文件实测整理。**这份文档的每个字段都有抓包出处，没有任何推测。**
-抓包里没有的接口，不要凭经验去拼 URL、参数名或响应结构——猜错的排查成本远高于直接要抓包。
+**每个字段都有抓包出处，没有任何推测。** 抓包里没有的接口，不要凭经验去拼 URL、
+参数名或响应结构——猜错的排查成本远高于直接要抓包。
 
-| 抓包文件 | 内容 | 接口数 |
+## ⚠️ 覆盖范围（先看这里，别拿它当全量接口清单）
+
+| 页面 | 主接口 | 本文是否覆盖 |
 | --- | --- | --- |
-| `trace.har` | 服务订阅页完整操作流程，含主列表 `getPublishDataList` | 14 |
-| `table.har` | 同上，样本较少 | 3 |
-| `进入请求.har` | 页面进入时的初始化请求，含**部门树 `getOrgTreeList`** | 8 |
-| `userinfo.har` | 人员查询 | 2 |
-| `login.har` | 登录认证 + 前端静态资源 | 2 |
+| 服务发布数据查询（`index.html`） | `getPublishDataList`、`getOrgTreeList` 等 | ✅ 已覆盖（第二～五章） |
+| 任务单查询（`task.html`） | `taskFormSelectList` 等 7 个 | ❌ **未收录**，看 `analysis/任务单查询.har` 与 `analysis/任务单查询接口文档.md` |
+| 服务订阅关系查询（`subscription.html`） | `getSubscriptionPublishHistoryList`、`getProdSysServeNoList` | ❌ **未收录**，看根目录 `服务订阅关系查询.har` |
+
+后两个页面是在本文成稿之后接入的（2026-09-10），字段口径见 `.workbuddy/memory/MEMORY.md`
+的「字段口径与陷阱」小节。
+
+## 抓包来源
+
+| 抓包文件 | 内容 | 接口数 | 现状 |
+| --- | --- | --- | --- |
+| `trace.har` | 服务订阅页完整操作流程，含主列表 `getPublishDataList` | 14 | ⚠️ 已不在仓库（本文结论仍有效） |
+| `table.har` | 同上，样本较少 | 3 | ⚠️ 已不在仓库 |
+| `login.har` | 登录认证 + 前端静态资源 | 2 | ⚠️ 已不在仓库 |
+| `analysis/har/进入请求.har` | 页面进入时的初始化请求，含**部门树 `getOrgTreeList`** | 8 | ✅ 在库 |
+| `analysis/har/userinfo.har` | 人员查询 | 2 | ✅ 在库 |
+| `analysis/har/查询接口.har` | 服务发布数据查询主接口 | 1 | ✅ 在库 |
 
 ---
 
@@ -49,9 +63,9 @@ Cookie: <会话>
 **`token` 是动态的，有效期 12 小时。** 抓包实测：
 `loginTime` 2026-09-03 11:02:20 → `expireTime` 2026-09-03 23:02:20。
 
-> ⚠️ `proxy.js` 和 `index.js` 里目前硬编码了一个 token，**它会过期**。
-> 过期后所有接口都会认证失败。正确做法是先调 `/itamp-comm/iam/getUserInfo`
-> 拿 `data.token` 再注入，或做成配置项每次手动更新。
+> ⚠️ 认证 token 通过 `publish/.env` 的 `PROXY_TOKEN` 配置（由 `proxy.js` 启动时读取并注入请求头），代码里**没有硬编码**。token 约 12 小时过期，过期后页面报 401，换新 token 并清缓存重录即可。
+> 过期后所有接口都会认证失败。更新方式：登录后调 `/itamp-comm/iam/getUserInfo`
+> 取 `data.token`，填进 `publish/.env` 的 `PROXY_TOKEN` 即可（**现状已做成配置项**，无需改代码）。
 
 ### 响应封装：后端用了三套结构，别只按一种写
 
@@ -507,7 +521,7 @@ open index.html
 字段级的明细表（每个字段的类型、是否必含、示例、中文说明）由 `har2doc.py` 生成：
 
 ```bash
-python3 har2doc.py trace.har     -o output --format both --title "ITAMP 服务订阅平台接口文档"
+python3 har2doc.py <file.har> -o output --format both      # har2doc.py 与本文件同目录
 python3 har2doc.py 进入请求.har  -o output --format md --md-name "进入请求接口文档.md"
 ```
 
