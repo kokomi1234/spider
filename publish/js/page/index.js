@@ -275,7 +275,10 @@
       return '权限不足，无法访问该接口';
     }
     if (response.status === 404) {
-      return '接口地址不存在，请检查配置';
+      // 本地代理在离线模式下「缓存未命中」也返回 404，跟接口地址没关系。
+      // 以前这里写死「接口地址不存在，请检查配置」，把人往错误的方向带。
+      return '请求 404：本地代理缓存中没有这条记录（请求参数与录制时不一致），' +
+             '或接口路径确实有误。打开控制台 Network → 该请求的响应体可看到代理给出的原因';
     }
     if (response.status === 500) {
       return '服务器内部错误，请稍后重试';
@@ -357,9 +360,26 @@
   }
 
   // ── 收集要发给后端的请求体 ──────────────────────────
-  // 只发送非空值，空值不发送（避免干扰筛选）
+  //
+  // ⚠️ 必须全字段发送，空值用 "" / [] 占位，一个都不能省。
+  // 抓包里后端收到的就是完整的 17 个字段。早期版本「只发非空值」有两个后果：
+  //   1. 本地代理的缓存 key = sha1(method + path + query + body)，
+  //      body 字段个数不同 → 算出来的 key 也不同 → 缓存永远命中不了，
+  //      离线模式直接 404，前端还把 404 显示成「接口地址不存在」（误导）。
+  //   2. 与后端真实契约不一致，本身就是隐患。
+  //
+  // 其中 subscriberStatus / isChecked / principal / sysServeNoList 目前没有
+  // 对应的 UI 控件，固定发空值，保持结构完整即可。
+  const API_BODY_DEFAULTS = {
+    compNum: '', batch: '', serverCodingList: [], serviceName: '',
+    callerComponent: '', subscriberStatus: '', isChecked: '',
+    isSendOutsideSystem: '', principal: '', principalName: '',
+    serviceStatus: '', sysServeNoList: [], sysServeNo: '',
+    deptId: '', implementationUnit: '',
+  };
+
   function collectApiBody() {
-    const body = {};
+    const body = { ...API_BODY_DEFAULTS };
 
     FIELDS.forEach(({ id, key, mode, array }) => {
       if (mode === 'local' || !key) return;
