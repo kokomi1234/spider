@@ -196,6 +196,9 @@
       state.queried = true;
       render();
       if (!res.rows.length) toast('查询完成，没有匹配的任务单', 2200);
+    } catch (e) {
+      toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
+      console.error('[task] query 异常', e);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '🔍 查 询'; }
     }

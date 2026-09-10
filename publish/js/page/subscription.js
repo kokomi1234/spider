@@ -341,6 +341,9 @@
       render();
       if (!state.total) toast('查询完成，没有匹配的订阅关系', 2200);
       if (first.local) toast('⚠️ 查询接口未接入（endpoint 为空），返回空结果', 3000);
+    } catch (e) {
+      toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
+      console.error('[subscription] query 异常', e);
     } finally {
       if (seq === state.reqSeq) setLoading(false);
     }
