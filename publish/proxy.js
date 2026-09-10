@@ -44,6 +44,7 @@
  */
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -56,7 +57,9 @@ if (fs.existsSync(envPath)) {
     if (line && !line.startsWith('#')) {
       const [key, ...rest] = line.split('=');
       const value = rest.join('=').trim();
-      if (key && value !== undefined) {
+      // 与 dotenv 惯例一致：已存在的环境变量优先，.env 只做兜底。
+      // 否则 `PROXY_TOKEN=xxx node proxy.js` 这种临时覆盖会被 .env 静默改回去。
+      if (key && value !== undefined && !(key in process.env)) {
         process.env[key] = value;
       }
     }
@@ -66,6 +69,25 @@ if (fs.existsSync(envPath)) {
 const PORT = process.env.PROXY_PORT || 3000;
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
 const TOKEN = process.env.PROXY_TOKEN;
+
+// 转发超时（毫秒）。不设的话目标不可路由（黑洞 IP）时请求会一直挂着，
+// 直到 OS 层超时（实测 10s 仍无响应，实际可达数分钟），连接持续堆积。
+// 内网大查询较慢，默认给 20s；个别慢接口用 PROXY_TIMEOUT 调大。
+const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
+
+// 后端要求的公共请求头。抓包里浏览器会话带了这些，但代理转发时浏览器
+// 不会自动带上（跨域自定义头），必须在这里补。
+// ⚠️ 留空就不注入，绝不臆造值 —— ssopSessionId 是会话级的，需要真实登录后取。
+const EXTRA_HEADERS = {};
+for (const [name, envKey] of [
+  ['systemId', 'PROXY_SYSTEM_ID'],
+  ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
+  ['authMethods', 'PROXY_AUTH_METHODS'],
+  ['Cookie', 'PROXY_COOKIE'],
+]) {
+  const v = (process.env[envKey] || '').trim();
+  if (v) EXTRA_HEADERS[name] = v;
+}
 
 const OFFLINE = process.env.PROXY_OFFLINE === '1';   // 纯离线回放
 const RECORD = process.env.PROXY_RECORD !== '0';     // 是否录制
@@ -168,10 +190,12 @@ function serveStatic(req, res) {
     const ext = path.extname(fullPath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
 
-    // 静态文件缓存 1 天（浏览器缓存后不再请求）
+    // 默认不缓存：缓存 1 天时改完 HTML/CSS/JS 不硬刷新就看不到效果，
+    // 是「改了没生效」最常见的误判来源。部署场景用 PROXY_STATIC_MAX_AGE=86400 打开。
+    const maxAge = Number(process.env.PROXY_STATIC_MAX_AGE) || 0;
     const headers = {
       'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': maxAge > 0 ? `public, max-age=${maxAge}` : 'no-store',
     };
 
     const stream = fs.createReadStream(fullPath);
@@ -323,20 +347,32 @@ function forward(req, res, bodyBuf, key, meta) {
   delete fwdHeaders.connection;
   delete fwdHeaders['content-length'];
   delete fwdHeaders['transfer-encoding'];
-  fwdHeaders['token'] = TOKEN;                 // 统一注入认证令牌
+
+  // ⚠️ 必须在配了 token 时才写这个头。写成 undefined 时 http.request 会同步抛
+  // ERR_HTTP_INVALID_HEADER_VALUE，异常被 uncaughtException 吞掉后响应永远不会发出，
+  // 客户端只能一直转圈（实测 6s 无响应）。token 约 12 小时过期，这个坑迟早踩到。
+  if (TOKEN) fwdHeaders['token'] = TOKEN;
+  Object.assign(fwdHeaders, EXTRA_HEADERS);    // systemId / ssopSessionId / authMethods
   fwdHeaders['Accept-Encoding'] = 'identity'; // 不压缩，便于调试与录制
   if (!fwdHeaders['content-type']) fwdHeaders['content-type'] = 'application/json';
   if (bodyBuf && bodyBuf.length) fwdHeaders['content-length'] = String(bodyBuf.length);
 
+  const isHttps = target.protocol === 'https:';
+  const client = isHttps ? https : http;
   const options = {
     hostname: target.hostname,
-    port: target.port || 80,
+    port: target.port || (isHttps ? 443 : 80),
     path: req.url,
     method: req.method,
     headers: fwdHeaders,
+    timeout: TIMEOUT,
   };
+  // 内网常用自签证书，需要时 PROXY_REJECT_UNAUTHORIZED=0 关掉校验
+  if (isHttps && process.env.PROXY_REJECT_UNAUTHORIZED === '0') {
+    options.rejectUnauthorized = false;
+  }
 
-  const proxyReq = http.request(options, (proxyRes) => {
+  const proxyReq = client.request(options, (proxyRes) => {
     // 要先收集完整响应才能写缓存，所以这里不再直接 pipe
     const chunks = [];
     proxyRes.on('data', (c) => chunks.push(c));
@@ -364,6 +400,12 @@ function forward(req, res, bodyBuf, key, meta) {
         console.log(`   ⚠️  HTTP ${proxyRes.statusCode}，未录制（只缓存 200）`);
       }
     });
+  });
+
+  // 超时主动断开：不设这个的话，目标不可路由时请求会挂到 OS 层超时（可达数分钟）。
+  // destroy(err) 会触发下面的 error 分支，从而走「回退本地缓存」的降级路径。
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy(new Error(`转发超时（${TIMEOUT}ms）`));
   });
 
   proxyReq.on('error', (e) => {
@@ -526,6 +568,18 @@ server.listen(PORT, () => {
   console.log(`   模式：${OFFLINE ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
   console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
   console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
+  if (!OFFLINE) {
+    console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
+    console.log(`   附加请求头：${Object.keys(EXTRA_HEADERS).length ? Object.keys(EXTRA_HEADERS).join(', ') : '（未配置）'}`);
+    if (!TOKEN) {
+      console.log(`   ⚠️  未配置 PROXY_TOKEN：转发时不会带 token 头，后端大概率 401。` +
+                  `请在 .env 里补上（后端 token 约 12 小时过期）`);
+    }
+    if (!Object.keys(EXTRA_HEADERS).length) {
+      console.log(`   ⚠️  未配置 systemId / ssopSessionId / authMethods：抓包显示后端需要这几个头，` +
+                  `缺失可能导致 401。用 PROXY_SYSTEM_ID / PROXY_SSOP_SESSION_ID / PROXY_AUTH_METHODS 配置`);
+    }
+  }
   console.log(`   健康检查：http://localhost:${PORT}/health`);
   console.log(`   缓存列表：http://localhost:${PORT}/cache/list`);
   console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面\n`);
