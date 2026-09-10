@@ -367,6 +367,24 @@
     return code ? 'code:' + code : '';
   }
 
+  /**
+   * 批次下拉的 value 是 "2609pc" 这类代码，而请求体与行数据用的都是 label（"2609批次"）。
+   * window._batchOptions 只在批次列表加载成功时才有，缺失时解析不出 label。
+   *
+   * 原实现在解析失败时直接 `if (!val) return`，后果是：批次条件既没发给后端、
+   * 也没进入前端兜底过滤，而必填校验用的是 getValue() 照样通过 ——
+   * 用户以为查的是某批次，实际拿到的是全批次数据。
+   * 所以这里把「解析失败」显式暴露出来（ok:false），由调用方阻断查询。
+   */
+  function resolveBatchLabel() {
+    if (!batchSelectInstance) return { value: '', label: '', ok: true };
+    const val = batchSelectInstance.getValue() || '';
+    if (!val) return { value: '', label: '', ok: true };
+    const opt = (window._batchOptions || []).find((o) => o.value === val);
+    if (opt) return { value: val, label: opt.label, ok: true };
+    return { value: val, label: '', ok: false };   // 选了东西但解析不出 label
+  }
+
   // ── 收集要发给后端的请求体 ──────────────────────────
   //
   // ⚠️ 必须全字段发送，空值用 "" / [] 占位，一个都不能省。
@@ -403,18 +421,9 @@
       }
       // 批次：走 searchable-select 实例，取 label（后端需要 "2611批次" 而非 "2611"）
       if (id === 'f_prodBatch') {
-        let val = '';
-        if (batchSelectInstance) {
-          // getValue() 返回的是 value（如 "2611"），但后端需要 label（如 "2611批次"）
-          // 需要从原始 options 里找对应的 label
-          const selectedVal = batchSelectInstance.getValue();
-          if (selectedVal && window._batchOptions) {
-            const opt = window._batchOptions.find(o => o.value === selectedVal);
-            if (opt) val = opt.label;
-          }
-        }
-        if (!val) return;
-        body[key] = val;
+        const r = resolveBatchLabel();
+        if (!r.label) return;
+        body[key] = r.label;
         return;
       }
       // 部门字段走 searchable-select，value 已经是 deptId
@@ -458,16 +467,9 @@
       // 用的都是 label（"2706批次"）。口径必须与请求体一致，否则本地兜底
       // 过滤会把整页结果误杀（症状：toast「本页数据均不满足筛选条件」）。
       if (f.id === 'f_prodBatch') {
-        let val = '';
-        if (batchSelectInstance) {
-          const selectedVal = batchSelectInstance.getValue();
-          if (selectedVal && window._batchOptions) {
-            const opt = window._batchOptions.find((o) => o.value === selectedVal);
-            if (opt) val = opt.label;
-          }
-        }
-        if (!val) return;
-        conds.push({ label: f.label, keys: f.local, value: val, exact: false, date: false });
+        const r = resolveBatchLabel();   // 与请求体同源，口径必须一致
+        if (!r.label) return;
+        conds.push({ label: f.label, keys: f.local, value: r.label, exact: false, date: false });
         return;
       }
       const el = $(`#${f.id}`);
@@ -949,6 +951,12 @@
         const inputEl = document.querySelector('#f_prodBatch + div .searchable-select-input');
         if (inputEl) inputEl.focus();
       }
+      return;
+    }
+    // 选了批次但解析不出 label（批次列表没加载完成）时必须拦下来。
+    // 放行的结果是请求体与前端过滤双双丢掉批次条件，静默返回全批次数据。
+    if (fBatch && !resolveBatchLabel().ok) {
+      showToast('⚠️ 批次列表尚未加载完成，无法解析所选批次。请刷新页面后重试', 4000, 'warn');
       return;
     }
 
