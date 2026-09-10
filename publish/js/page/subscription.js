@@ -680,7 +680,7 @@
   async function exportRows(byBatch) {
     if (!state.queried || !state.total) { toast('⚠️ 请先查询再导出', 2200); return; }
     const btn = byBatch ? $('#btnExportByBatch') : $('#btnExport');
-    const label = byBatch ? '⬇ 按接口变更批次导出' : '⬇ 按查询结果导出';
+    const label = byBatch ? '按接口变更批次导出' : '按查询结果导出';
     if (btn) { btn.disabled = true; btn.textContent = '导出中…'; }
     setLoading(true);
 
@@ -791,7 +791,7 @@
       toast(`⚠️ 统计失败：${e.message || String(e)}`, 3000);
     } finally {
       setLoading(false);
-      if (btn) { btn.disabled = false; btn.textContent = '📊 统计全部逾期'; }
+      if (btn) { btn.disabled = false; btn.textContent = '统计全部逾期'; }
     }
   }
 

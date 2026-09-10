@@ -1742,3 +1742,138 @@ label.req::after {
 .col-resizer.is-active::after { background: var(--primary); }
 body.is-resizing,
 body.is-resizing * { cursor: col-resize !important; user-select: none !important; }
+
+/* ═══════════════════════════════════════════════════════════
+   全站视觉基线「台账纸」（2026-09-10 起，三个页面统一）
+   ───────────────────────────────────────────────────────────
+   来源：先在「服务发布数据查询」页试点确认，再上提到这里与三页共用。
+   概念：银行内部的服务台账——分区靠线与留白，不用阴影表达层级；
+   数字用等宽字体；印章赭红只做一处装饰锚点与警示；动作蓝保持原令牌。
+
+   实现要点（为什么表格规则带 .tbl-scroll 前缀）：
+   各页面 <style> 在 theme.css 之后加载，同权重下会覆盖这里。
+   给表格规则加上 .tbl-scroll 父级限定后，权重高于页面里的单类选择器，
+   因此不必改动任何页面结构、类名或 JS。
+   ═══════════════════════════════════════════════════════════ */
+:root {
+  --ink:    #1F2A37;   /* 墨：标题与正文 */
+  --ledger: #D9DCD6;   /* 账簿线：全部分隔 */
+  --seal:   #A8402F;   /* 印章赭红：唯一强调色，只用于警示与标题锚点 */
+  --paper:  #F2F3F0;   /* 纸灰底（中性，刻意不用暖 cream） */
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* 页头：印章竖条 + 墨色封线 */
+.page-header {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 14px;
+}
+.page-header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.page-header h1::before {
+  content: '';
+  width: 7px;
+  height: 22px;
+  background: var(--seal);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* 面板：账簿线，不用阴影；标题小一号、墨色 */
+.card {
+  border-color: var(--ledger);
+  box-shadow: none;
+}
+.card-head h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--ink);
+}
+
+/* 统计：对账摘要带（竖线分隔、等宽数字、语义色只落在数字上） */
+.stats.stat-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--ledger);
+  border-radius: var(--r);
+  padding: 12px 4px;
+  margin-bottom: var(--sp3);
+}
+.stat {
+  background: transparent;
+  border-radius: 0;
+  border-left: 1px solid var(--ledger);
+  padding: 2px 22px;
+  flex: 0 0 auto;
+}
+.stat:first-child {
+  border-left: none;
+  padding-left: 12px;
+}
+.stat .lbl {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+.stat .val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+}
+.stat.ok   .val { color: #2E7D46; }   /* 已发布 / 已订阅 */
+.stat.warn .val { color: #96660F; }   /* 待发布 / 未订阅 */
+.stat.info .val { color: var(--ink); }
+
+/* 数据表格：三页统一线型与表头（父级限定，权重高于页面单类规则） */
+.tbl-scroll .result-table thead th,
+.tbl-scroll .task-table   thead th,
+.tbl-scroll .subq-table   thead th {
+  background: #FBFBF9;
+  color: #55636F;
+  border-bottom: 2px solid #33414F;
+}
+.tbl-scroll .result-table tbody td,
+.tbl-scroll .task-table   tbody td,
+.tbl-scroll .subq-table   tbody td {
+  border-bottom: 1px solid #E7E9E4;
+}
+.tbl-scroll .result-table tbody tr:hover td,
+.tbl-scroll .task-table   tbody tr:hover td,
+.tbl-scroll .subq-table   tbody tr:hover td {
+  background: #F4F6F2;
+}
+/* 固定列：用 1px 分隔线替代阴影（台账线比投影更安静） */
+.tbl-scroll .result-table thead th:last-child,
+.tbl-scroll .task-table   thead th:last-child,
+.tbl-scroll .subq-table   thead th:last-child,
+.tbl-scroll .result-table tbody td:last-child,
+.tbl-scroll .task-table   tbody td:last-child,
+.tbl-scroll .subq-table   tbody td:last-child {
+  box-shadow: none;
+  border-left: 1px solid var(--ledger);
+}
+.tbl-scroll { border-color: var(--ledger); }
+.result-count { font-variant-numeric: tabular-nums; }
+
+/* 订阅关系页的左侧固定表头列（复选框 / 优先级）有自己的背景规则，
+   这里同步成与其余表头一致的极浅底色，避免三页表头出现两种灰。 */
+.tbl-scroll .subq-table thead th.col-chk,
+.tbl-scroll .subq-table thead th.col-prio {
+  background: #FBFBF9;
+}

@@ -200,7 +200,7 @@
       toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
       console.error('[task] query 异常', e);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '🔍 查 询'; }
+      if (btn) { btn.disabled = false; btn.textContent = '查 询'; }
     }
   }
 
@@ -359,7 +359,7 @@
     } catch (e) {
       toast(`⚠️ 导出失败：${e.message || String(e)}`, 3000);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '⬇ 导 出'; }
+      if (btn) { btn.disabled = false; btn.textContent = '导 出'; }
     }
   }
 

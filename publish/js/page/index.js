@@ -826,8 +826,8 @@
     const pending = [...queryState.failedPages];
     const prevLabel = btnRetryFailed.textContent;
     btnRetryFailed.disabled = true;
-    btnRetryFailed.textContent = '↻ 重试中…';
-    showToast('↻ 正在重试失败的分页…', 1800, 'info');
+    btnRetryFailed.textContent = '重试中…';
+    showToast('正在重试失败的分页…', 1800, 'info');
 
     const CONCURRENCY = 3;
     const worker = async () => {
@@ -1136,7 +1136,7 @@
       rawRows = records;
       displayedRows = records;
 
-      debugLog(`📊 查询完成: 全量 ${records.length} 条 (${elapsed}ms, 去重 ${droppedDup})`);
+      debugLog(`查询完成: 全量 ${records.length} 条 (${elapsed}ms, 去重 ${droppedDup})`);
 
       // 顺手用结果里的 deptId + deptName 兜底填充部门下拉
       fillDeptListFromRows(records);
@@ -1211,7 +1211,7 @@
     queryState = null;           // 清掉失败分页重试上下文
     updateRetryBar();
     setFilter('all');            // 同步「全部 / 未订阅 / 已订阅」按钮高亮
-    showToast('↺ 筛选条件已重置', 1500, 'info');
+    showToast('筛选条件已重置', 1500, 'info');
   }
 
   // ── 折叠面板 ────────────────────────────────────────

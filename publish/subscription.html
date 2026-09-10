@@ -192,10 +192,10 @@
 
     <!-- ═══ 页面标题 ═══ -->
     <div class="page-header">
-      <h1>📋 服务订阅关系查询</h1>
+      <h1>服务订阅关系查询</h1>
       <div class="toolbar">
         <a class="outlined btn-sm" href="index.html">← 返回首页</a>
-        <a class="outlined btn-sm" href="task.html">📝 任务单查询</a>
+        <a class="outlined btn-sm" href="task.html">任务单查询</a>
       </div>
     </div>
 
@@ -287,8 +287,8 @@
 
         <!-- 按钮区 -->
         <div class="search-bar" style="margin-top: var(--sp2); display: flex; gap: var(--sp1); justify-content: flex-end;">
-          <button class="filled btn-sm" id="btnQuery">🔍 查 询</button>
-          <button class="outlined btn-sm" id="btnReset">↺ 重 置</button>
+          <button class="filled btn-sm" id="btnQuery">查 询</button>
+          <button class="outlined btn-sm" id="btnReset">重 置</button>
         </div>
       </div>
     </div>
@@ -312,17 +312,17 @@
           <span id="pickedCount" class="result-count"
                 title="勾选会跨页累计，导出时包含全部勾选行"></span>
           <button class="outlined btn-xs" id="btnCountAll"
-                  title="拉取全部查询结果做一次逾期统计（最多 5000 条）">📊 统计全部逾期</button>
-          <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">↻ 刷 新</button>
-          <button class="outlined btn-xs" id="btnExportByBatch" title="按接口变更批次导出">⬇ 按接口变更批次导出</button>
-          <button class="filled btn-xs" id="btnExport" title="按查询结果导出">⬇ 按查询结果导出</button>
+                  title="拉取全部查询结果做一次逾期统计（最多 5000 条）">统计全部逾期</button>
+          <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">刷 新</button>
+          <button class="outlined btn-xs" id="btnExportByBatch" title="按接口变更批次导出">按接口变更批次导出</button>
+          <button class="filled btn-xs" id="btnExport" title="按查询结果导出">按查询结果导出</button>
         </div>
       </div>
 
       <!-- 查询失败提示条：表格会保留上一次结果，这里说明清楚，避免「以为点了没反应」 -->
       <div class="retry-bar fail-bar" id="failBar" role="status" aria-live="polite" style="display:none;">
         <span class="retry-text" id="failText"></span>
-        <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">↻ 重 试</button>
+        <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">重 试</button>
       </div>
 
       <div class="prio-summary" id="prioSummary" style="display:none;"></div>
