@@ -1054,6 +1054,20 @@ tbody tr.unsubscribed-row:hover td {
 .retry-bar .retry-text { color: var(--muted); }
 .retry-bar .retry-btn:disabled { opacity: .6; cursor: progress; }
 
+/* 缓存回放告警：本地代理宽松匹配到旧录制数据时显示 */
+.cache-replay-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+  margin-bottom: var(--sp2);
+  padding: 8px 12px;
+  border-radius: var(--r-xs);
+  background: var(--amber-c);
+  color: var(--on-amber-c);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
 /* ── Toast 提示 ───────────────────────────────────── */
 .toast {
   position: fixed;

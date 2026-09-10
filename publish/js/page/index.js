@@ -52,6 +52,10 @@
   const retryText      = $('#retryText');
   const btnRetryFailed = $('#btnRetryFailed');
 
+  // 缓存回放告警条（本地代理宽松匹配到旧录制数据时提示）
+  const cacheReplayBar  = $('#cacheReplayBar');
+  const cacheReplayText = $('#cacheReplayText');
+
   // ── 批次下拉搜索组件实例 ────────────────────────────
   let batchSelectInstance = null;
 
@@ -263,7 +267,11 @@
     const data = json.data || json.body || json;
     const rows = data.records || data.list || data.rows || [];
     const total = data.total ?? rows.length;
-    return { data, rows, total };
+    // 本地代理宽松匹配时会带 X-Cache-Match: loose，意思是「精确没命中，
+    // 回放的是同接口旧录制的数据」——这批数据未必属于本次的查询条件，
+    // 上层必须如实告诉用户，否则会把回放数据当成真实结果。
+    const loose = !!(resp.headers && resp.headers.get && resp.headers.get('x-cache-match') === 'loose');
+    return { data, rows, total, loose };
   }
 
   /** 解析 API 错误信息 */
@@ -769,6 +777,20 @@
     retryBar.style.display = '';
   }
 
+  // ── 缓存回放告警条显隐 ──────────────────────────────
+  // 本地代理精确匹配失败时会「宽松匹配」到同接口的旧录制数据。
+  // 不提示的话，用户会以为查到的就是当前条件下的真实数据。
+  function updateCacheReplayBar(loose) {
+    if (!loose) {
+      cacheReplayBar.style.display = 'none';
+      return;
+    }
+    cacheReplayText.textContent =
+      '⚠️ 当前展示的是本地代理回放的旧录制数据（请求参数与录制时不一致），' +
+      '仅供界面调试，数据不反映当前查询条件的真实结果。连内网重新请求一次即可刷新缓存。';
+    cacheReplayBar.style.display = '';
+  }
+
   // ── 失败分页重试：只重拉失败页，合并回全量 ──────────
   async function retryFailedPages() {
     if (!queryState || !queryState.failedPages.length) return;
@@ -967,6 +989,9 @@
       }));
       if (!isCurrentQuery()) return;
 
+      // 本次结果是否来自本地代理的宽松回放（旧录制数据，未必属于当前查询条件）
+      const replayLoose = !!first.loose;
+
       let all = first.rows;
       const backendTotal = first.total;
       const failedPages = [];
@@ -1054,9 +1079,13 @@
 
       // 空数据处理
       if (!records.length) {
-        const hint = (dropped > 0 || droppedDup > 0)
-          ? '本页数据均不满足筛选条件（部分条件后端未支持，已由前端过滤）'
-          : '未找到匹配的数据，请尝试调整筛选条件';
+        // 宽松回放时数据来自旧录制，跟当前筛选对不上是必然结果，
+        // 这时提示「不满足筛选条件」会误导用户去调筛选条件，要单独说明。
+        const hint = replayLoose && (dropped > 0 || droppedDup > 0)
+          ? '本地代理回放的是旧录制数据，与当前查询条件不符，已被前端过滤。请连内网用当前条件重新请求一次以重新录制'
+          : (dropped > 0 || droppedDup > 0)
+            ? '本页数据均不满足筛选条件（部分条件后端未支持，已由前端过滤）'
+            : '未找到匹配的数据，请尝试调整筛选条件';
         const incompleteHint = failedPages.length
           ? `（第 ${failedPages.join('、')} 页获取失败，结果不完整）`
           : '';
@@ -1071,6 +1100,7 @@
         displayedRows = [];
         filteredRows = [];
         updateRetryBar();   // 结果集为空但仍有分页失败 → 仍给出重试入口
+        updateCacheReplayBar(false);
         hideLoading();
         return;
       }
@@ -1086,6 +1116,7 @@
       fillDeptListFromRows(records);
 
       updateStats({ ...first.data, rows: records, total: records.length });
+      updateCacheReplayBar(replayLoose);
 
       pageNum = 1;
       applySubscribeFilter();   // 内部按 currentFilter 过滤全量并渲染当前页 + 分页
