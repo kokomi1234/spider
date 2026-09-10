@@ -199,7 +199,16 @@
   function getDeptCondition() {
     if (deptSelectInstance) {
       const id = deptSelectInstance.getValue() || '';
-      return id ? { api: id, local: null } : null;
+      if (id) return { api: id, local: null };
+      // 下拉建起来了但用户没选中（只是手输了未选）：getValue() 拿不到，
+      // 但 searchable-select 内部记着 freeText。把它退回成「按部门名前端模糊过滤」，
+      // 与下拉未建时的降级分支行为一致 —— 否则手输条件会被静默丢弃，
+      // 用户以为按部门查了，实际拿到的是全部门数据。
+      const free = typeof deptSelectInstance.getFreeText === 'function'
+        ? (deptSelectInstance.getFreeText() || '').trim()
+        : '';
+      if (free) return { api: null, local: { keys: ['deptName'], value: free, exact: false } };
+      return null;
     }
     const el = $('#f_deptName');
     const txt = el ? el.value.trim() : '';
@@ -562,8 +571,12 @@
     subscribeStats.style.display = '';
   }
 
-  // ── 应用订阅筛选（作用在全量 rawRows 上，而非单页） ──
-  function applySubscribeFilter() {
+  /**
+   * 只按 currentFilter 重建 filteredRows（导出 / 计数 / 分页都读它），
+   * 不动 pageNum。订阅状态变化但筛选维度没变时用它：当前页仍在就留在原地，
+   * 别把用户从正在看的那一页弹回第一页。
+   */
+  function rebuildFilteredRows() {
     if (currentFilter === 'all') {
       filteredRows = [...rawRows];
     } else {
@@ -577,6 +590,11 @@
         }
       });
     }
+  }
+
+  // ── 应用订阅筛选（作用在全量 rawRows 上，而非单页） ──
+  function applySubscribeFilter() {
+    rebuildFilteredRows();
     pageNum = 1;                 // 切筛选后回到第一页
     renderCurrentPage();
   }
@@ -1347,7 +1365,14 @@
 
   // 订阅弹窗已抽到 subscribe-dialog.js（window.SubscribeDialog.open(row)）
   const afterSubscribeChanged = () => {
-    refreshCurrentPageRows();
+    // 订阅状态变了，filteredRows（导出 / 计数 / 分页的唯一种子）必须跟着重建：
+    // 否则在「未订阅」筛选态下刚订阅的一行仍残留在 filteredRows 里，
+    // 导出会把它带上、计数与分页总数也都是旧的。
+    rebuildFilteredRows();
+    // 当前页可能因订阅而空了（如「未订阅」筛选下订阅了一行），回退到存在的最后一页。
+    const tp = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    if (pageNum > tp) pageNum = tp;
+    renderCurrentPage();
     updateSubscribeStats(rawRows);
     updatePagination();
   };

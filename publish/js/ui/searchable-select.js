@@ -552,6 +552,17 @@
         return selectedValue;
       },
 
+      /**
+       * 返回用户手输但未选中任何选项时的文本。
+       * 选中项后该值会被清空（selectOption/setValue 都会重置 freeText），
+       * 所以它与 getValue() 互补：有选中看 getValue()，没选中看 getFreeText()。
+       * 用途：部门下拉建好但用户手输未选时，把这段文本退回给上层做前端兜底过滤，
+       * 而不是让手输条件被静默丢弃。
+       */
+      getFreeText() {
+        return freeText || '';
+      },
+
       setValue(value) {
         const opt = findOpt(value);
         selectedValue = opt ? value : '';
