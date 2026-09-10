@@ -30,8 +30,10 @@
    * @param {object} [opts.headers] 额外请求头
    * @returns {Promise<Response>} 原样返回 fetch 的 Response，调用方自行判 resp.ok / resp.json()
    */
+  const DEFAULT_TIMEOUT = 20000; // ms，与代理层 PROXY_TIMEOUT 对齐，避免网络异常时无限等待
+
   async function call(path, opts = {}) {
-    const { method = 'GET', body, query, headers = {}, signal } = opts;
+    const { method = 'GET', body, query, headers = {}, signal, timeout = DEFAULT_TIMEOUT, retry = 0 } = opts;
 
     let url = BASE_URL + path;
     if (query && typeof query === 'object') {
@@ -43,6 +45,14 @@
       if (qs) url += (url.includes('?') ? '&' : '?') + qs;
     }
 
+    // 超时：调用方已传 signal 则尊重它；否则用默认超时兜底（AbortController）
+    let abortController = null;
+    let timer = null;
+    if (!signal && timeout > 0 && typeof AbortController !== 'undefined') {
+      abortController = new AbortController();
+      timer = setTimeout(() => abortController.abort(), timeout);
+    }
+
     const fetchOpts = {
       method,
       headers: {
@@ -50,11 +60,21 @@
         ...(TOKEN ? { 'token': TOKEN } : {}),
         ...headers,
       },
-      ...(signal ? { signal } : {}),
+      ...(signal ? { signal } : (abortController ? { signal: abortController.signal } : {})),
     };
     if (body !== undefined) fetchOpts.body = JSON.stringify(body);
 
-    return fetch(url, fetchOpts);
+    try {
+      return await fetch(url, fetchOpts);
+    } catch (e) {
+      // 超时 / 网络错误：可选重试一次（默认不重试，避免意外放大请求量）
+      if (retry > 0) return call(path, { ...opts, retry: retry - 1 });
+      const isAbort = e && (e.name === 'AbortError' || (abortController && abortController.signal.aborted));
+      if (isAbort) throw new Error(`请求超时（${timeout}ms 未响应）：${path}`);
+      throw e;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**

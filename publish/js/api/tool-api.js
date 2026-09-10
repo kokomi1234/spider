@@ -576,6 +576,17 @@
         try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
         throw new Error(`HTTP ${resp.status} ${detail}`.trim());
       }
+      // 后端偶发把错误当 200 + JSON 返回（如 { code:500 }），此时 body 是 JSON 不是文件，
+      // 必须拦下来，否则会把错误报文当成 xlsx 下载。
+      const ct = resp.headers.get('content-type') || '';
+      if (ct.includes('application/json')) {
+        let j = null;
+        try { j = await resp.json(); } catch (_) { /* ignore */ }
+        if (j && j.code != null && j.code !== 0 && j.code !== 200 && j.code !== '200') {
+          throw new Error(`导出失败（业务码 ${j.code}）：${j.msg || j.message || ''}`.trim());
+        }
+        throw new Error('导出接口返回了 JSON 而非文件，可能后端异常，请重试或检查参数');
+      }
       const blob = await resp.blob();
       const disposition = resp.headers.get('content-disposition') || '';
       const matched = /filename[^;=\n]*=((['"])(.*?)\2|([^;\n]*))/.exec(disposition);

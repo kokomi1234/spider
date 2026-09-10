@@ -148,7 +148,7 @@
     try {
       const json = await request('taskList', buildTaskListBody(cond, pageNum, pageSize));
       // 报文：{ total, rows, code, msg, pageNum, pageSize, pageTotals }
-      const rows = (json && (json.rows || (json.data && json.rows))) || [];
+      const rows = (json && (json.rows || (json.data && json.data.rows))) || [];
       const total = Number((json && (json.total != null ? json.total : (json.data && json.data.total))) || 0);
       return { ok: true, local: false, total, rows: Array.isArray(rows) ? rows : [] };
     } catch (e) {
