@@ -1,0 +1,302 @@
+/* ============================================================
+   深色主题（午夜蓝黑）— theme.css 的覆盖层
+   ------------------------------------------------------------
+   使用方式：在页面里于 theme.css 之后引入即可，例如
+     <link rel="stylesheet" href="theme.css">
+     <link rel="stylesheet" href="theme-dark.css">
+   不需要改任何组件代码 —— 全站样式都走 :root 令牌，这里重定义令牌，
+   再补少量必须硬编码的细节（遮罩、固定列分隔线、滚动条、语义色块）。
+
+   设计要点
+   1. 不用纯黑 #000，用带冷色偏的近黑（#0a0c10），长时间看不累；
+   2. 层次靠「亮度阶梯」而不是阴影：底 → 卡片 → 表头/悬浮 → 控件，每级差约 4%；
+   3. 描边用半透明白，模拟边缘受光，比深灰线更有质感；
+   4. 主色降饱和、提亮：填充用中蓝（白字够对比），文字型用亮蓝（深底上够亮）；
+   5. 语义色由「实心浅底 + 深字」改为「极淡底 + 亮字 + 细描边」，更精致；
+   6. 顶部一层极淡的径向光，制造氛围感（纯平黑会显得廉价）。
+   ============================================================ */
+
+/* ── 1. 令牌覆盖 ─────────────────────────────────────── */
+:root {
+  /* 表面层次：亮度阶梯 */
+  --bg:        #0a0c10;
+  --surface:   #111419;
+  --surface-1: #171b21;
+  --surface-2: #1f242c;
+
+  /* 文字层次 */
+  --on-surface: #e7eaf0;
+  --on-variant: #a6adb9;
+  --muted:      #848d9a;
+  --faint:      #5d6673;
+
+  /* 描边：半透明白更像“受光的边” */
+  --outline:      #2a313b;
+  --outline-soft: #1f242c;
+
+  /* 主色：填充用中蓝，文字型用亮蓝（见第 2 节） */
+  --primary:      #2f6fe0;
+  --on-primary:   #ffffff;
+  --primary-c:    #16243c;
+  --on-primary-c: #a8c8ff;
+
+  --info:   #7aa9ff;
+  --info-c: #16243c;
+
+  /* 语义色：深色下改为“极淡底 + 亮字” */
+  --green-c:    #132a1e;
+  --on-green-c: #7fd8a3;
+  --amber-c:    #2e2212;
+  --on-amber-c: #ffc266;
+  --red-c:      #2a1618;
+  --on-red-c:   #ff9b93;
+
+  /* 辅色（青绿） */
+  --ext:        #2dd4bf;
+  --on-ext:     #04241f;
+  --ext-c:      #10312c;
+  --on-ext-c:   #7ce7d9;
+
+  /* 浮层阴影：深色下要更重才浮得起来 */
+  --shadow-pop: 0 10px 30px rgba(0, 0, 0, .55);
+}
+
+/* ── 2. 氛围与文字渲染 ───────────────────────────────── */
+body {
+  /* 顶部一层极淡的冷光，避免“平黑”带来的廉价感 */
+  background:
+    radial-gradient(1100px 520px at 50% -12%, rgba(64, 114, 245, .10), transparent 68%),
+    radial-gradient(760px 420px at 88% -6%, rgba(45, 212, 191, .05), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
+  /* 深底上文字会显得偏重，稍微收一点厚度 */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── 3. 卡片与表头：用亮边代替阴影分层 ───────────────── */
+.card {
+  border: 1px solid var(--outline-soft);
+  /* 顶部 1px 内高光：给卡片一点“厚度”，深色 UI 的质感细节 */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045);
+}
+
+.card-head,
+.more-head {
+  border-bottom: 1px solid var(--outline-soft);
+}
+
+/* 标题层级：深底上提亮半档，主标题略收字距 */
+.page-header h1,
+.card-head h2 {
+  color: #f2f5f9;
+}
+.page-header h1 { letter-spacing: .01em; }
+
+/* 表头：比卡片亮一档 + 底部一条亮边 */
+.subq-table thead th,
+.result-table thead th {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--outline);
+  color: var(--on-variant);
+}
+
+/* 行分隔：深色下靠一条极淡的亮线，否则相邻行会糊在一起 */
+.subq-table tbody td,
+.result-table tbody td {
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+.subq-table tbody tr:last-child td,
+.result-table tbody tr:last-child td { border-bottom: none; }
+
+/* ── 4. 按钮：文字型用亮蓝，填充型保持中蓝 ──────────── */
+.outlined {
+  color: #7aa9ff;
+  border-color: var(--outline);
+  background: transparent;
+}
+.outlined:hover:not(:disabled) {
+  border-color: #3a63a8;
+  background: rgba(122, 169, 255, .09);
+}
+.text-btn { color: #7aa9ff; }
+.text-btn:hover:not(:disabled) { background: rgba(122, 169, 255, .12); }
+
+.filled { background: var(--primary); color: var(--on-primary); }
+.filled:hover:not(:disabled) { background: #3a7bee; filter: none; }
+
+/* 快速筛选选中态（订阅页）：蓝底白字 */
+.filter-quick-btn.active:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+  filter: none;
+  box-shadow: 0 0 0 3px rgba(47, 111, 224, .22);
+}
+
+/* ── 5. 表单控件：控件底比卡片略亮 ───────────────────── */
+.form-group input,
+.form-group select,
+.form-group textarea,
+.searchable-select-input,
+.msel-display,
+.sub-input,
+.sub-ctl {
+  background: var(--surface-2);
+  border-color: var(--outline);
+  color: var(--on-surface);
+}
+.form-group input:focus,
+.form-group select:focus,
+.searchable-select.is-open .searchable-select-input,
+.msel-display:focus {
+  border-color: #3f74d6;
+  box-shadow: 0 0 0 3px rgba(47, 111, 224, .18);
+}
+.form-group input::placeholder,
+.form-group textarea::placeholder,
+.searchable-select-input::placeholder,
+.msel-display::placeholder { color: var(--faint); }
+
+/* 下拉面板 / 多选面板 */
+.searchable-select-dropdown,
+.msel-panel {
+  background: var(--surface-1);
+  border-color: var(--outline);
+  box-shadow: var(--shadow-pop);
+}
+.searchable-select-option:hover,
+.msel-item:hover { background: var(--surface-2); }
+.searchable-select-option.is-active { background: var(--surface-2); }
+.searchable-select-option.is-selected { color: #7aa9ff; }
+.searchable-select-option.is-selected.is-active { background: var(--primary-c); }
+
+/* ── 6. 表格行状态 ───────────────────────────────────── */
+td, th { border-color: var(--outline-soft); }
+
+.subq-table tbody tr:hover td,
+.subq-table tbody tr:hover td.col-chk,
+.subq-table tbody tr:hover td.col-prio { background: var(--surface-1); }
+
+.subq-table tbody tr.is-picked td,
+.subq-table tbody tr.is-picked td.col-chk,
+.subq-table tbody tr.is-picked td.col-prio { background: var(--primary-c); }
+
+/* 逾期：暗红底 + 保持亮色文字（浅色主题下是浅红底深红字，深色下反过来更耐看） */
+.subq-table tbody tr.is-overdue td,
+.subq-table tbody tr.is-overdue td.col-chk,
+.subq-table tbody tr.is-overdue td.col-prio,
+.subq-table tbody tr.is-overdue td.col-op {
+  background: #241618;
+  color: var(--on-surface);
+}
+.subq-table tbody tr.is-overdue:hover td,
+.subq-table tbody tr.is-overdue:hover td.col-chk,
+.subq-table tbody tr.is-overdue:hover td.col-prio,
+.subq-table tbody tr.is-overdue:hover td.col-op {
+  background: #2d1a1d;
+}
+
+/* ── 7. 优先级色块：实心 → 淡底 + 亮字 + 细描边 ──────── */
+.prio-tag {
+  background: rgba(255, 255, 255, .06);
+  color: var(--on-variant);
+  border: 1px solid rgba(255, 255, 255, .10);
+  font-weight: 500;
+}
+.prio-tag.is-overdue {
+  background: rgba(255, 110, 110, .16);
+  border-color: rgba(255, 110, 110, .40);
+  color: #ff9b93;
+}
+.prio-tag.is-critical {
+  background: rgba(255, 178, 80, .16);
+  border-color: rgba(255, 178, 80, .40);
+  color: #ffc266;
+}
+.prio-tag.is-soon {
+  background: rgba(122, 169, 255, .15);
+  border-color: rgba(122, 169, 255, .34);
+  color: #8fbaff;
+}
+.prio-tag.is-normal { background: rgba(255, 255, 255, .05); color: var(--muted); }
+.prio-tag.is-done {
+  background: rgba(110, 219, 154, .14);
+  border-color: rgba(110, 219, 154, .32);
+  color: #7fd8a3;
+}
+.prio-tag.is-unknown { background: transparent; color: var(--faint); border-color: var(--outline-soft); }
+
+/* 逾期行里再套红标签会糊在一起 —— 反相成“亮红药丸 + 深字” */
+.subq-table tbody tr.is-overdue td .prio-tag.is-overdue {
+  background: #ff9b93;
+  border-color: transparent;
+  color: #2a0d0d;
+  font-weight: 600;
+}
+
+/* 状态标签（表格里的基线状态） */
+.st-tag { border: 1px solid transparent; }
+
+/* ── 8. 固定列：深色下阴影看不见，改用 1px 亮线分隔 ──── */
+.subq-table th.col-prio,
+.subq-table td.col-prio {
+  box-shadow: 1px 0 0 var(--outline), 10px 0 14px -12px rgba(0, 0, 0, .9);
+}
+.subq-table th.col-op,
+.subq-table td.col-op {
+  box-shadow: -1px 0 0 var(--outline), -10px 0 14px -12px rgba(0, 0, 0, .9);
+}
+
+/* 统计条 / 失败提示条 */
+.prio-summary { background: var(--surface-1); border-color: var(--outline-soft); }
+.prio-summary .prio-chip.is-overdue  { background: rgba(255, 110, 110, .16); color: #ff9b93; }
+.prio-summary .prio-chip.is-critical { background: rgba(255, 178, 80, .16);  color: #ffc266; }
+.prio-summary .prio-chip.is-soon     { background: rgba(122, 169, 255, .15); color: #8fbaff; }
+.prio-summary .prio-chip.is-normal   { background: rgba(255, 255, 255, .06); color: var(--muted); }
+.prio-summary .prio-chip.is-done     { background: rgba(110, 219, 154, .14); color: #7fd8a3; }
+.prio-summary .prio-chip.is-unknown  { background: rgba(255, 255, 255, .05); color: var(--faint); }
+.fail-bar { background: #2e2212; border: 1px solid rgba(255, 178, 80, .30); }
+.retry-bar .retry-text, .fail-bar .retry-text { color: #ffc266; }
+.prio-alert { color: #ff9b93 !important; }
+
+/* ── 9. 分页 ─────────────────────────────────────────── */
+.pagination button {
+  background: transparent;
+  border: 1px solid var(--outline);
+  color: var(--on-variant);
+}
+.pagination button:hover:not(:disabled) { border-color: #3a63a8; color: #7aa9ff; }
+.pagination button.is-current {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+/* ── 10. 浮层：遮罩与 loading 必须加深（否则一片白闪）── */
+.overlay { background: rgba(4, 6, 10, .72); backdrop-filter: blur(2px); }
+.loading-mask { background: rgba(10, 12, 16, .62); backdrop-filter: blur(1.5px); }
+.dialog, .sub-dialog { box-shadow: 0 24px 60px rgba(0, 0, 0, .7); }
+
+/* 详情弹窗里的字段分组标题 */
+.kv-group { color: #7aa9ff; border-bottom-color: var(--outline-soft); }
+.kv-grid dt { color: var(--muted); }
+.kv-grid dd { color: var(--on-surface); }
+
+/* Toast */
+.toast { background: #232a34; color: var(--on-surface); box-shadow: 0 8px 24px rgba(0, 0, 0, .55); }
+
+/* ── 11. 滚动条：细、半透明，避免亮色块破坏整体感 ────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2b333e;
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: #3b4552; background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* 选中文字 */
+::selection { background: rgba(47, 111, 224, .38); color: #fff; }
