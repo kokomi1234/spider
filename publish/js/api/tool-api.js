@@ -27,10 +27,17 @@
  *   性能数据            → POST /itamp-tool/performanceCapacity/getData body { subscriptionId }
  *   性能操作数据        → POST /itamp-tool/performanceCapacity/getPerformanceOperationData
  *                         body { pageNum, pageSize, subscriptionId }
+ *   订阅关系查询        → POST /itamp-tool/publish/getSubscriptionPublishHistoryList?n=xx
+ *                         body 见 fetchSubscriptionPublishHistory（服务订阅关系查询.har）
+ *   调用方服务编号      → POST /itamp-tool/publish/getProdSysServeNoList?callerComponent=xx&n=xx
+ *                         无 body，返回 [{label, value, shortEn}]
  *
  * 注意：openapi.json 只记录了请求体结构，多数接口没有保存响应样本，
  * 适配函数统一按「{ code, msg, data | rows }」的通用形态做防御式解析。
  * 某接口真实响应有出入时，在对应 adapt 函数里改，调用方不用动。
+ *
+ * 导出订阅关系（exportSubscriptionPublishHistoryList）目前**没有抓包**，
+ * 按项目铁律只留空 endpoint：未配置时前端不发起任何网络请求，直接走本地 CSV。
  *
  * 约定：所有方法都不抛异常，失败一律返回 { ok:false, error }。
  */
@@ -58,6 +65,11 @@
       subOperationRecordList: '/itamp-tool/operation/getSubOperationRecordList',
       perfData:         '/itamp-tool/performanceCapacity/getData',
       perfOperationData: '/itamp-tool/performanceCapacity/getPerformanceOperationData',
+      // ── 服务订阅关系查询页（服务订阅关系查询.har，2026-09-10）──
+      subscriptionHistory: '/itamp-tool/publish/getSubscriptionPublishHistoryList',
+      prodSysServeNo:     '/itamp-tool/publish/getProdSysServeNoList',
+      // 导出接口没有抓包，留空 = 关闭；配置后才会真的发请求
+      subscriptionExport: '',
     },
     CONFIG.toolEndpoints || {}
   );
@@ -80,6 +92,9 @@
       subOperationRecordList: 'POST',
       perfData:         'POST',
       perfOperationData: 'POST',
+      subscriptionHistory: 'POST',
+      prodSysServeNo:     'POST',
+      subscriptionExport: 'POST',
     },
     CONFIG.toolEndpointMethods || {}
   );
@@ -450,6 +465,138 @@
     }
   }
 
+  // ── 服务订阅关系查询（服务订阅关系查询.har）──────────────
+
+  /**
+   * 订阅关系查询列表。
+   *
+   * 请求体与抓包逐字段一致（19 个字段，一个不多一个不少）：
+   * {"putBatch":"","compNum":"","useNum":"E00406","providerServiceNameAndId":"",
+   *  "pageSize":10,"pageNum":1,"prodBatch":"","prodSysServeNo":"","subscriberId":"",
+   *  "subscriberName":"","isSendOutsideSystem":"","status":"","serverCodingList":[],
+   *  "sysServeNoList":[],"prodDeptId":"","deptId":"","prodSysServeNoList":[],
+   *  "batch":"","callerComponent":"E00406"}
+   *
+   * 抓包里的两个事实：
+   *   · prodBatch 传的是「2611批次」这种带后缀的 label，不是 "2611"
+   *     （同源的 getPublishDataList 抓包里 batch 也是 "2609批次"）
+   *   · useNum 与 callerComponent 三次抓包里始终相等
+   *
+   * 响应：{ code, msg, data:{ total, rows, code, msg, pageNum, pageSize, pageTotals } }
+   *
+   * @param {object} p 页面筛选条件（缺字段按抓包默认值补空）
+   * @returns {Promise<{ok:boolean, total:number, rows:Array, local?:boolean, error?:string}>}
+   */
+  async function fetchSubscriptionPublishHistory(p) {
+    if (!isEnabled('subscriptionHistory')) return { ok: true, local: true, total: 0, rows: [] };
+    if (!window.API || typeof window.API.call !== 'function') {
+      return { ok: false, total: 0, rows: [], error: 'API 客户端未就绪' };
+    }
+    const q = p || {};
+    const arr = (v) => (Array.isArray(v) ? v : (v ? [v] : []));
+    try {
+      const json = await request('subscriptionHistory', {
+        putBatch:                  q.putBatch || '',
+        compNum:                   q.compNum || '',
+        useNum:                    q.useNum || '',
+        providerServiceNameAndId:  q.providerServiceNameAndId || '',
+        pageSize:                  Number(q.pageSize) || 10,
+        pageNum:                   Number(q.pageNum) || 1,
+        prodBatch:                 q.prodBatch || '',
+        prodSysServeNo:            q.prodSysServeNo || '',
+        subscriberId:              q.subscriberId || '',
+        subscriberName:            q.subscriberName || '',
+        isSendOutsideSystem:       q.isSendOutsideSystem || '',
+        status:                    q.status || '',
+        serverCodingList:          arr(q.serverCodingList),
+        sysServeNoList:            arr(q.sysServeNoList),
+        prodDeptId:                q.prodDeptId || '',
+        deptId:                    q.deptId || '',
+        prodSysServeNoList:        arr(q.prodSysServeNoList),
+        batch:                     q.batch || '',
+        callerComponent:           q.callerComponent || '',
+      }, { n: cacheBuster() });
+
+      const data = (json && json.data) || {};
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      const total = Number(data.total ?? json.total ?? rows.length) || 0;
+      return { ok: true, local: false, total, rows };
+    } catch (e) {
+      return { ok: false, total: 0, rows: [], error: e.message || String(e) };
+    }
+  }
+
+  /**
+   * 调用方应用系统服务编号下拉。
+   * POST /itamp-tool/publish/getProdSysServeNoList?callerComponent=E00406&n=xx
+   * 抓包里**没有请求体**，callerComponent 走 query string。
+   * 响应 data 直接是数组：[{ label:'E00406TO1198', value:'E00406TO1198', shortEn:null }]
+   */
+  async function fetchProdSysServeNoList(callerComponent) {
+    if (!isEnabled('prodSysServeNo')) return { ok: true, local: true, list: [] };
+    if (!window.API || typeof window.API.call !== 'function') {
+      return { ok: false, list: [], error: 'API 客户端未就绪' };
+    }
+    try {
+      const json = await request('prodSysServeNo', undefined, {
+        callerComponent: String(callerComponent || ''),
+        n: cacheBuster(),
+      });
+      return { ok: true, local: false, list: pickArray(json) };
+    } catch (e) {
+      return { ok: false, list: [], error: e.message || String(e) };
+    }
+  }
+
+  /**
+   * 导出订阅关系（预留）。
+   *
+   * ⚠️ 该接口**没有抓包**，路径/参数都未经确认，所以默认 endpoint 为空：
+   *    · 未配置 → 返回 { ok:false, notConfigured:true }，前端改走本地 CSV，不发任何请求
+   *    · 抓包确认后在 __APP_CONFIG__.toolEndpoints.subscriptionExport 填上路径即可
+   *
+   * @returns {Promise<{ok:boolean, notConfigured?:boolean, filename?:string, error?:string}>}
+   *          成功时直接触发浏览器下载（后端返回文件流）
+   */
+  async function exportSubscriptionPublishHistory(body) {
+    if (!isEnabled('subscriptionExport')) {
+      return { ok: false, notConfigured: true, error: '导出接口未接入（缺抓包）' };
+    }
+    if (!window.API || typeof window.API.call !== 'function') {
+      return { ok: false, error: 'API 客户端未就绪' };
+    }
+    try {
+      const resp = await window.API.call(ENDPOINTS.subscriptionExport, {
+        method: METHODS.subscriptionExport || 'POST',
+        body: body || {},
+        query: { n: cacheBuster() },
+      });
+      if (!resp.ok) {
+        let detail = '';
+        try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
+        throw new Error(`HTTP ${resp.status} ${detail}`.trim());
+      }
+      const blob = await resp.blob();
+      const disposition = resp.headers.get('content-disposition') || '';
+      const matched = /filename[^;=\n]*=((['"])(.*?)\2|([^;\n]*))/.exec(disposition);
+      const filename = matched
+        ? decodeURIComponent((matched[3] || matched[4] || '').trim())
+        : `服务订阅关系_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.xlsx`;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { ok: true, filename };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
   if (typeof window !== 'undefined') {
     window.ToolApi = {
       endpoints: ENDPOINTS,
@@ -470,6 +617,9 @@
       fetchSubOperationRecordList,
       fetchPerformanceData,
       fetchPerformanceOperationData,
+      fetchSubscriptionPublishHistory,
+      fetchProdSysServeNoList,
+      exportSubscriptionPublishHistory,
     };
   }
 })();

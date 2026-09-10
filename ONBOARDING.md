@@ -5,7 +5,7 @@
 
 ## 这个项目是什么
 
-**ITAMP 服务发布数据查询 + 任务单查询 + 订阅管理**的前端（原生 HTML/CSS/JS，无框架无构建）。
+**ITAMP 服务发布数据查询 + 任务单查询 + 服务订阅关系查询 + 订阅管理**的前端（原生 HTML/CSS/JS，无框架无构建）。
 后端 `itamp.bocsys.cn` 在内网，本地通过 `publish/proxy.js` 转发（可录制/离线回放）。
 
 ## 5 分钟跑起来
@@ -15,8 +15,9 @@
 cd publish && node proxy.js          # 端口 3000
 
 # 2. 打开页面（代理同时提供静态服务）
-open http://localhost:3000/index.html   # 服务发布数据查询
-open http://localhost:3000/task.html    # 任务单查询
+open http://localhost:3000/index.html         # 服务发布数据查询
+open http://localhost:3000/task.html          # 任务单查询
+open http://localhost:3000/subscription.html  # 服务订阅关系查询
 
 # 3. 内网不可达时，离线回放已录制的响应
 PROXY_OFFLINE=1 node proxy.js
@@ -32,6 +33,7 @@ spider/
 ├── publish/                 ← 前端项目（唯一交付物）
 │   ├── index.html           # 页面①：服务发布数据查询
 │   ├── task.html            # 页面②：任务单查询（首页工具栏有入口）
+│   ├── subscription.html    # 页面③：服务订阅关系查询
 │   ├── theme.css            # 全站唯一样式来源（令牌 + 组件 + 弹窗）
 │   ├── proxy.js             # 代理：转发/录制/离线回放（entry，勿挪）
 │   ├── README.md            # 运行细节（mock/离线/缓存管理）
@@ -41,9 +43,10 @@ spider/
 │   │   ├── api/             # 接口层（每域一个文件，ENDPOINTS+METHODS 模式）
 │   │   │                    #   task-api / service-api / user-api / tool-api / sys-api
 │   │   ├── data/            # 字典/兜底数据：batch / provider / department
-│   │   ├── ui/              # 通用组件与弹窗：searchable-select / date-picker /
-│   │   │                    #   csv-export / subscribe-* / people-search
-│   │   └── page/            # 页面主逻辑：index.js / task.js
+│   │   ├── ui/              # 通用组件与弹窗：searchable-select / multi-select /
+│   │   │                    #   priority（投产优先级规则） / table-resize（列宽拖拽） /
+│   │   │                    #   date-picker / csv-export / subscribe-* / people-search
+│   │   └── page/            # 页面主逻辑：index.js / task.js / subscription.js
 │   ├── docs/                # 设计规范（design-system.md）、订阅导入说明
 │   ├── tools/               # 开发工具：har-import（HAR→缓存）、mock-proxy
 │   └── cache/               # 代理录制的离线响应（gitignore，勿提交）
@@ -80,9 +83,15 @@ spider/
 
 - **接入一个新接口**：先在 `analysis/har/` 找（或让用户提供）抓包 → 在 `publish/js/api/` 对应域文件
   （或新建 `<域>-api.js`）加 ENDPOINT + fetch 方法 → 页面调用。详见 `publish/API接入与上线指南.md`。
-- **离线验证页面**：`node publish/tools/har-import.js ../../analysis/任务单查询.har` 把抓包灌进缓存，
-  再 `PROXY_OFFLINE=1 node proxy.js`。
+- **离线验证页面**：`node publish/tools/har-import.js <file.har>` 把抓包灌进缓存，
+  再 `PROXY_OFFLINE=1 node proxy.js`。请注意 `publish/cache/` 是**全站共用**的，
+  清缓存要连带重新导入所有抓包（进入请求 / userinfo / 查询接口 / 任务单查询 / 服务订阅关系查询），
+  否则别的页面会一起失效；离线时缓存没命中的请求会返回 404，
+  页面上表现为「查询失败」或「数据没变」，先查缓存再查代码。
 - **改主题**：只改 `publish/theme.css` 的 `:root` 令牌，不要逐处改 px。
+- **改投产优先级规则**（批次 → 基线里程碑 / 逾期标红）：只改 `publish/js/ui/priority.js`
+  顶部的 `MILESTONES`（状态机）和 `LEVELS`（紧急阈值）两个常量，页面代码不用动。
+  当前规则：批次月 − 3 个月的 15 日转功能测试基线，批次月的 15 日转正式版基线。
 - **前端自动化验证**：本机已有 chromium（`~/Library/Caches/ms-playwright/`），用 playwright-core
   显式传 executablePath 即可，无需下载浏览器。
 

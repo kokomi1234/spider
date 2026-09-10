@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>服务订阅关系查询</title>
+  <link rel="stylesheet" href="theme.css">
+  <style>
+    /* ── 页面专属微调（与弹窗无关，弹窗样式一律在 theme.css）── */
+
+    /* 结果条数说明（与首页 #resultCount 同款） */
+    .result-count { font-size: var(--fs-xs); color: var(--muted); margin-right: var(--sp1); }
+
+    /* 结果表格：22 个数据列 + 复选框 + 操作列，列宽集中在 colgroup。
+       table-layout: fixed + min-width 让横向滚动条出现时表头列宽不塌。 */
+    .subq-table {
+      table-layout: fixed;
+      width: 100%;
+      min-width: 3875px;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .subq-table th,
+    .subq-table td {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 10px 9px;
+      font-size: var(--fs-sm);
+      border-bottom: 1px solid var(--outline-soft);
+    }
+    .subq-table thead th {
+      background: var(--surface-1);
+      color: var(--muted);
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      letter-spacing: .02em;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .subq-table tbody td {
+      vertical-align: middle;
+      white-space: nowrap;
+      line-height: 1.4;
+    }
+    .subq-table tbody tr:last-child td { border-bottom: none; }
+    .subq-table tbody tr:hover td { background: var(--surface-1); }
+    .subq-table tbody tr.is-picked td { background: var(--primary-c); }
+    .subq-table tbody tr.is-picked:hover td { background: var(--primary-c); }
+
+    /* 左固定区：复选框列（55px）+ 优先级列（紧贴其后）。
+       优先级是最该先看的信息，横向滚动时不能丢，所以两列一起固定。 */
+    .subq-table th.col-chk,
+    .subq-table td.col-chk {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: var(--surface);
+    }
+    .subq-table th.col-prio,
+    .subq-table td.col-prio {
+      position: sticky;
+      left: 55px;                        /* = 复选框列宽，见 colgroup */
+      z-index: 2;
+      background: var(--surface);
+      box-shadow: 6px 0 8px -8px rgba(26, 28, 30, .45);   /* 左固定区的最右一列投阴影 */
+    }
+    .subq-table thead th.col-chk,
+    .subq-table thead th.col-prio { z-index: 3; background: var(--surface-1); }
+    .subq-table tbody tr:hover td.col-chk,
+    .subq-table tbody tr:hover td.col-prio { background: var(--surface-1); }
+    .subq-table tbody tr.is-picked td.col-chk,
+    .subq-table tbody tr.is-picked td.col-prio { background: var(--primary-c); }
+    .subq-table th.col-op,
+    .subq-table td.col-op {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      background: var(--surface);
+      box-shadow: -6px 0 8px -8px rgba(26, 28, 30, .45);
+    }
+    .subq-table thead th.col-op { z-index: 3; background: var(--surface-1); }
+    .subq-table tbody tr:hover td.col-op { background: var(--surface-1); }
+    .subq-table tbody tr.is-picked td.col-op { background: var(--primary-c); }
+
+    /* 空态：表格总宽 3875px，若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
+       所以这里左对齐（贴着复选框列显示） */
+    .subq-table td[colspan] {
+      text-align: left;
+      padding: 40px 0 40px 20px;
+      color: var(--muted);
+    }
+    /* 编号类字段用等宽字体，数字对齐更好读 */
+    .subq-table .cell-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--fs-nano);
+    }
+    .subq-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary); }
+
+    /* 详情弹窗：字段多，主体滚动 + 两列网格（.kv-grid 在 theme.css） */
+    .subq-detail-body { max-height: 62vh; overflow-y: auto; }
+
+    /* ── 投产优先级 ──────────────────────────────────────
+       规则在 js/ui/priority.js：批次月-3 个月的 15 日转功能测试基线，
+       批次月 15 日转正式版基线；逾期整行标红。 */
+    .subq-table th.col-prio { cursor: pointer; user-select: none; }
+    .subq-table th.col-prio:hover { color: var(--on-surface); }
+    .sort-ind { opacity: .45; font-size: var(--fs-nano); margin-left: 2px; }
+    .subq-table th.is-sorted .sort-ind { opacity: 1; color: var(--primary); }
+
+    .prio-tag {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: var(--fs-nano);
+      line-height: 1.6;
+      white-space: nowrap;
+    }
+    .prio-tag.is-overdue  { background: var(--red-c);   color: var(--on-red-c); font-weight: 600; }
+    .prio-tag.is-critical { background: var(--amber-c); color: var(--on-amber-c); font-weight: 600; }
+    .prio-tag.is-soon     { background: var(--info-c);  color: var(--info); }
+    .prio-tag.is-normal   { background: var(--surface-1); color: var(--muted); }
+    .prio-tag.is-done     { background: var(--green-c); color: var(--on-green-c); }
+    .prio-tag.is-unknown  { background: var(--surface-1); color: var(--faint); }
+
+    /* 逾期整行标红：放在 hover / 固定列规则之后，靠同权重后置覆盖 */
+    .subq-table tbody tr.is-overdue td {
+      background: var(--red-c);
+      color: var(--on-red-c);
+    }
+    .subq-table tbody tr.is-overdue td.col-chk,
+    .subq-table tbody tr.is-overdue td.col-prio,
+    .subq-table tbody tr.is-overdue td.col-op {
+      background: var(--red-c);
+      color: var(--on-red-c);
+    }
+    .subq-table tbody tr.is-overdue:hover td,
+    .subq-table tbody tr.is-overdue:hover td.col-chk,
+    .subq-table tbody tr.is-overdue:hover td.col-prio,
+    .subq-table tbody tr.is-overdue:hover td.col-op {
+      background: color-mix(in srgb, var(--red-c) 88%, var(--on-surface));
+    }
+    .subq-table tbody tr.is-overdue td .prio-tag.is-overdue {
+      background: var(--on-red-c);
+      color: var(--red-c);
+    }
+
+    /* 结果卡片头里的逾期提示 */
+    .prio-alert { color: var(--on-red-c); font-weight: 600; }
+
+    /* 查询失败提示条：文字占满左侧并允许换行，重试按钮留在右边 */
+    .fail-bar { justify-content: flex-start; flex-wrap: wrap; }
+    .fail-bar .retry-text { flex: 1 1 320px; min-width: 0; text-align: left; line-height: 1.5; }
+
+    /* ── 全量统计条（点「统计全部逾期」后出现）─────────── */
+    .prio-summary {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--sp1);
+      margin: 0 0 var(--sp2);
+      padding: var(--sp1) var(--sp2);
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      background: var(--surface-1);
+      font-size: var(--fs-sm);
+      color: var(--on-surface);
+    }
+    .prio-summary-title { color: var(--muted); }
+    .prio-summary .prio-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: var(--fs-xs);
+    }
+    .prio-summary .prio-chip b { font-weight: 700; }
+    .prio-summary .prio-chip.is-overdue  { background: var(--red-c);   color: var(--on-red-c); }
+    .prio-summary .prio-chip.is-critical { background: var(--amber-c); color: var(--on-amber-c); }
+    .prio-summary .prio-chip.is-soon     { background: var(--info-c);  color: var(--info); }
+    .prio-summary .prio-chip.is-normal   { background: var(--surface); color: var(--muted); }
+    .prio-summary .prio-chip.is-done     { background: var(--green-c); color: var(--on-green-c); }
+    .prio-summary .prio-chip.is-unknown  { background: var(--surface); color: var(--faint); }
+    .prio-summary .prio-summary-note { color: var(--faint); font-size: var(--fs-nano); }
+    .prio-summary .text-btn { margin-left: auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- ═══ 页面标题 ═══ -->
+    <div class="page-header">
+      <h1>📋 服务订阅关系查询</h1>
+      <div class="toolbar">
+        <a class="outlined btn-sm" href="index.html">← 返回首页</a>
+        <a class="outlined btn-sm" href="task.html">📝 任务单查询</a>
+      </div>
+    </div>
+
+    <!-- ═══ 筛选条件卡片 ═══ -->
+    <div class="card collapsible" id="filterCard">
+      <div class="card-head">
+        <h2>筛选条件</h2>
+        <button type="button" class="chevron" id="filterToggle"
+                aria-expanded="true" aria-controls="filterBody"
+                title="展开 / 收起筛选条件">▼</button>
+      </div>
+      <div class="card-body" id="filterBody">
+        <!-- 常用条件：调用方系统 + 两个批次。其余全部收进「更多筛选项」。 -->
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="f_callerCompNum">调用方系统/分行</label>
+            <select id="f_callerCompNum" placeholder="请输入或选择调用方系统/分行"></select>
+          </div>
+          <div class="form-group">
+            <label for="f_callerBatch">调用方投产/变更批次</label>
+            <select id="f_callerBatch" placeholder="请输入或选择投产批次"></select>
+          </div>
+          <div class="form-group">
+            <label for="f_providerBatch">提供方变更批次</label>
+            <select id="f_providerBatch" placeholder="请输入或选择变更批次"></select>
+          </div>
+        </div>
+
+        <!-- 更多筛选项（默认隐藏） -->
+        <div class="more-head">
+          <button type="button" class="chevron" id="btnToggleAdvanced"
+                  aria-expanded="false" aria-controls="advancedFields"
+                  style="transform: rotate(-90deg);"
+                  title="展开 / 收起更多筛选项">▼</button>
+          <span class="more-head-title">更多筛选项</span>
+        </div>
+        <div class="form-grid" id="advancedFields" style="display:none;">
+          <div class="form-group">
+            <label for="f_providerCompNum">提供方系统</label>
+            <select id="f_providerCompNum" placeholder="请输入或选择提供方系统"></select>
+          </div>
+          <div class="form-group">
+            <label>提供方应用系统服务编号（可多选）</label>
+            <div class="msel" id="msel_sysServeNo"></div>
+          </div>
+          <div class="form-group">
+            <label>提供方接口编码（可多选）</label>
+            <div class="msel" id="msel_serverCoding"></div>
+          </div>
+          <div class="form-group">
+            <label for="f_providerServiceNameAndId">提供方应用系统服务中文名称</label>
+            <input type="text" id="f_providerServiceNameAndId" placeholder="请输入提供方应用系统服务中文名称">
+          </div>
+          <div class="form-group">
+            <label for="f_deptId">提供方部门名称</label>
+            <select id="f_deptId" placeholder="请输入或选择部门"></select>
+          </div>
+          <div class="form-group">
+            <label>调用方应用系统服务编号（可多选）</label>
+            <div class="msel" id="msel_prodSysServeNo"></div>
+          </div>
+          <div class="form-group">
+            <label for="f_prodDeptId">调用方部门名称</label>
+            <select id="f_prodDeptId" placeholder="请输入或选择部门"></select>
+          </div>
+          <div class="form-group">
+            <label for="f_subscriberName">订阅人</label>
+            <input type="text" id="f_subscriberName" placeholder="请输入订阅人EHR号或姓名">
+          </div>
+          <div class="form-group">
+            <label for="f_status">订阅关系基线状态</label>
+            <select id="f_status" placeholder="请选择">
+              <option value="">全部</option>
+              <option value="开发基线">开发基线</option>
+              <option value="功能测试基线">功能测试基线</option>
+              <option value="正式版基线">正式版基线</option>
+              <option value="下线">下线</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="f_isSendOutside">是否发送行外系统</label>
+            <select id="f_isSendOutside" placeholder="请选择">
+              <option value="">全部</option>
+              <option value="是">是</option>
+              <option value="否">否</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 按钮区 -->
+        <div class="search-bar" style="margin-top: var(--sp2); display: flex; gap: var(--sp1); justify-content: flex-end;">
+          <button class="filled btn-sm" id="btnQuery">🔍 查 询</button>
+          <button class="outlined btn-sm" id="btnReset">↺ 重 置</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 调用方系统快速筛选 ═══ -->
+    <div class="filter-quick" id="callerQuick">
+      <span class="filter-quick-label">按调用方系统筛选：</span>
+      <button type="button" class="outlined btn-xs filter-quick-btn active"
+              data-caller="E00406">BOCNETC-O-MAPSN</button>
+      <button type="button" class="outlined btn-xs filter-quick-btn"
+              data-caller="E00404">BOCNETC-O-WPSN</button>
+    </div>
+
+    <!-- ═══ 结果表格卡片 ═══ -->
+    <div class="card results-card">
+      <div class="card-head">
+        <h2>查询结果</h2>
+        <div class="toolbar">
+          <span id="resultCount" class="result-count"></span>
+          <span id="overdueCount" class="result-count prio-alert"></span>
+          <span id="pickedCount" class="result-count"
+                title="勾选会跨页累计，导出时包含全部勾选行"></span>
+          <button class="outlined btn-xs" id="btnCountAll"
+                  title="拉取全部查询结果做一次逾期统计（最多 5000 条）">📊 统计全部逾期</button>
+          <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">↻ 刷 新</button>
+          <button class="outlined btn-xs" id="btnExportByBatch" title="按接口变更批次导出">⬇ 按接口变更批次导出</button>
+          <button class="filled btn-xs" id="btnExport" title="按查询结果导出">⬇ 按查询结果导出</button>
+        </div>
+      </div>
+
+      <!-- 查询失败提示条：表格会保留上一次结果，这里说明清楚，避免「以为点了没反应」 -->
+      <div class="retry-bar fail-bar" id="failBar" role="status" aria-live="polite" style="display:none;">
+        <span class="retry-text" id="failText"></span>
+        <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">↻ 重 试</button>
+      </div>
+
+      <div class="prio-summary" id="prioSummary" style="display:none;"></div>
+
+      <div class="tbl-scroll">
+        <table class="subq-table">
+          <colgroup>
+            <col class="col-chk" style="width:55px">
+            <col class="col-prio" style="width:130px">
+            <col style="width:180px"><col style="width:200px"><col style="width:200px">
+            <col style="width:220px"><col style="width:200px"><col style="width:160px">
+            <col style="width:140px"><col style="width:140px"><col style="width:200px">
+            <col style="width:220px"><col style="width:200px"><col style="width:180px">
+            <col style="width:180px"><col style="width:180px"><col style="width:160px">
+            <col style="width:150px"><col style="width:80px"><col style="width:140px">
+            <col style="width:140px"><col style="width:140px"><col style="width:140px">
+            <col class="col-op" style="width:140px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="col-chk"><label><input type="checkbox" id="checkAll" title="全选本页"></label></th>
+              <th class="col-prio is-sorted" id="thPrio"
+                  title="默认按优先级排序：逾期 / 临期的在最上面。点击循环切换 宽松在前 → 恢复后端顺序 → 紧急在前（后端分页，仅排当前页）；规则见 js/ui/priority.js">
+                优先级<span class="sort-ind" id="prioSortInd">↑</span>
+              </th>
+              <th title="sysNo">提供方应用系统编号</th>
+              <th title="assemblyEnName">提供方应用系统英文简称</th>
+              <th title="sysServeNo">提供方应用系统服务编号</th>
+              <th title="sysServeEnName">提供方应用系统服务英文名称</th>
+              <th title="sysServeName">提供方应用系统服务中文名称</th>
+              <th title="prodBatchList">提供方最新变更批次</th>
+              <th title="deptName">提供方部门名称</th>
+              <th title="serverCoding">接口编码</th>
+              <th title="callerComponent">调用方系统/分行编号</th>
+              <th title="callerComponentEnName">调用方系统英文简称/分行名称</th>
+              <th title="prodSysServeNo">调用方应用系统服务编号</th>
+              <th title="prodBatch">调用方投产/变更批次</th>
+              <th title="prodTaskNo">调用方任务编号</th>
+              <th title="reviewStatus">订阅关系审核流程状态</th>
+              <th title="status">订阅关系基线状态</th>
+              <th title="prodImplementationUnit">订阅方产品实施单元</th>
+              <th title="subscriberUserName">订阅人</th>
+              <th title="prodDeptName">调用方部门名称</th>
+              <th title="isBackup">是否做副本</th>
+              <th title="backupInfo">副本使用场景说明</th>
+              <th title="implementationUnit">产品实施单元</th>
+              <th class="col-op">操作</th>
+            </tr>
+          </thead>
+          <tbody id="resultBody">
+            <tr><td colspan="24" class="empty-hint">请输入条件后点击「查询」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 分页 -->
+      <div class="pagination" id="pagination" style="display:none;">
+        <span class="page-total" id="pageTotal">共 0 条</span>
+        <select id="pageSizeSelect" class="page-size-select" title="每页条数">
+          <option value="10">10 条/页</option>
+          <option value="50">50 条/页</option>
+          <option value="100">100 条/页</option>
+        </select>
+        <button class="outlined btn-xs" id="btnPrev">‹ 上一页</button>
+        <ul class="page-numbers" id="pageNumbers"></ul>
+        <button class="outlined btn-xs" id="btnNext">下一页 ›</button>
+        <span class="page-jump">前往 <input type="number" id="pageJumpInput" min="1" value="1"> 页</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading 遮罩：靠 .show 控制（.loading-mask 是 flex，hidden 属性盖不住） -->
+  <div class="loading-mask" id="loadingMask" role="status" aria-live="polite">
+    <div class="spinner"></div>
+    <span class="sr-only">正在查询，请稍候</span>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- 详情弹窗 -->
+  <div class="overlay sub-overlay" id="detailOverlay" role="presentation">
+    <div class="dialog sub-dialog" id="detailDialog" role="dialog" aria-modal="true"
+         aria-labelledby="detailTitle" tabindex="-1">
+      <div class="sub-head">
+        <h2 id="detailTitle">订阅关系详情</h2>
+        <button type="button" class="sub-close" id="btnDetailClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="sub-body">
+        <dl class="kv-grid subq-detail-body" id="detailBody"></dl>
+      </div>
+      <div class="sub-foot">
+        <button type="button" class="filled btn-sm" id="btnDetailConfirm">关 闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/core/runtime-config.js"></script>
+  <script src="js/core/api-client.js"></script>
+  <script src="js/api/tool-api.js"></script>
+  <script src="js/data/batch-data.js"></script>
+  <script src="js/data/provider-data.js"></script>
+  <script src="js/data/department-data.js"></script>
+  <script src="js/ui/searchable-select.js"></script>
+  <script src="js/ui/multi-select.js"></script>
+  <script src="js/ui/table-resize.js"></script>
+  <script src="js/ui/priority.js"></script>
+  <script src="js/ui/dialog-utils.js"></script>
+  <script src="js/page/subscription.js"></script>
+</body>
+</html>

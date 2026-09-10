@@ -1487,3 +1487,244 @@ label.req::after {
   .sub-grid { grid-template-columns: 1fr; }
   .sub-row > label { flex: 0 0 132px; }
 }
+
+/* ══════════════════════════════════════════════════════
+   共享页级控件（任务单查询 / 服务订阅关系查询 两页复用）
+   ──────────────────────────────────────────────────────
+   多选下拉 .msel、分页页码 .page-numbers、键值详情网格 .kv-grid
+   原本写在 task.html 的页面 <style> 里；订阅关系页要用同一套外观，
+   按「控件外观单一来源」的约定上提到 theme.css，页面 <style> 只留
+   与本页强相关的微调。
+   ══════════════════════════════════════════════════════ */
+
+/* ── 轻量多选控件（报文里是数组字段时用）────────────────
+   searchable-select.js 只支持单选，数组型筛选字段走这里：
+   只读输入框 + 弹出面板（搜索 / 全选 / 清空）。
+   输入框外观与 .form-group select 完全同款（同高度 / 边框 / 右侧箭头），
+   不再外挂「选择」按钮。 */
+.msel { position: relative; }
+.msel .msel-display {
+  width: 100%;
+  height: 42px;
+  padding: 0 34px 0 12px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-md);
+  color: var(--on-surface);
+  background-color: var(--surface);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s;
+  /* 与统一下拉框同款的灰色 V 形箭头 */
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='14'%20height='14'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2373777f'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpolyline%20points='6%209%2012%2015%2018%209'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 14px 14px;
+}
+.msel .msel-display:hover { border-color: var(--primary); }
+.msel .msel-display:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.msel-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  box-shadow: var(--shadow-pop);
+  padding: var(--sp1);
+  display: none;
+}
+.msel-panel.show { display: block; }
+.msel-panel .msel-search {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-sm);
+  margin-bottom: 6px;
+}
+.msel-panel .msel-search:focus { outline: none; border-color: var(--primary); }
+.msel-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.msel-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.msel-item:hover { background: var(--surface-1); }
+.msel-item input { width: 14px; height: 14px; flex: 0 0 auto; }
+.msel-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msel-empty { padding: 12px 8px; text-align: center; color: var(--muted); font-size: var(--fs-sm); }
+.msel-foot {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--outline-soft);
+}
+
+/* ── 分页页码条（订阅关系页用）───────────────────────── */
+.pagination .page-total { margin-right: var(--sp1); }
+.pagination .page-size-select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+}
+.pagination .page-size-select:focus { outline: none; border-color: var(--primary); }
+.pagination .page-numbers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.pagination .page-numbers button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--outline);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  cursor: pointer;
+}
+.pagination .page-numbers button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.pagination .page-numbers button.is-current {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+.pagination .page-numbers .page-ellipsis { padding: 0 2px; color: var(--faint); }
+.pagination .page-jump { display: inline-flex; align-items: center; gap: 4px; margin-left: var(--sp1); }
+
+/* ── 快速筛选按钮组（按调用方系统筛选）───────────────── */
+.filter-quick {
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+  flex-wrap: wrap;
+  margin: var(--sp2) 0;
+}
+.filter-quick-label { font-size: var(--fs-sm); color: var(--muted); }
+.filter-quick-btn.active {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+/* 选中态再 hover 时不能沿用 .outlined:hover 的浅色底 —— 那会把主色底改成
+   6% 透明的浅蓝，而文字仍是 on-primary（白），看着就和背景糊在一起了。
+   这里跟 .filled 保持一致：保持主色底，只用亮度变化表示悬停。 */
+.filter-quick-btn.active:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+  filter: brightness(1.08);
+}
+
+/* ── 键值详情网格（弹窗里成组展示字段）─────────────────
+   左侧字段名、右侧值，1px 间隙当分隔线用，比逐行写 border 省事。 */
+.kv-grid {
+  display: grid;
+  grid-template-columns: 190px 1fr;
+  gap: 1px;
+  background: var(--outline-soft);
+  border: 1px solid var(--outline-soft);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-md);
+}
+.kv-grid dt,
+.kv-grid dd { background: var(--surface); padding: 7px 12px; word-break: break-all; }
+.kv-grid dt { color: var(--muted); font-size: var(--fs-sm); }
+.kv-grid dd { font-family: monospace; font-size: var(--fs-xs); }
+.kv-grid .kv-group {
+  grid-column: 1 / -1;
+  background: var(--surface-1);
+  color: var(--on-surface);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 6px 12px;
+}
+.kv-grid .kv-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px 0; }
+
+/* ── 基线状态色块 ────────────────────────────────────── */
+.st-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: var(--fs-nano);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.st-tag.is-official { background: var(--green-c); color: var(--on-green-c); }
+.st-tag.is-test     { background: var(--amber-c); color: var(--on-amber-c); }
+.st-tag.is-dev      { background: var(--info-c);  color: var(--info); }
+.st-tag.is-offline  { background: var(--surface-1); color: var(--muted); }
+
+/* ── 「更多筛选项」折叠头 ──────────────────────────────
+   箭头 + 标题紧挨着，不用 .sub-sec-head 的两端对齐
+   （那个是给弹窗里「标题 + 操作按钮」用的） */
+.more-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+  margin-top: var(--sp2);
+  padding-top: var(--sp2);
+  border-top: 1px solid var(--outline-soft);
+}
+.more-head-title { font-size: var(--fs-md); font-weight: 600; color: var(--on-surface); }
+
+/* ── 表格列宽拖拽把手（js/ui/table-resize.js）─────────
+   挂在表头 <th> 的右边缘；<th> 本身是 position:sticky，绝对定位的子元素
+   相对它定位即可。拖动时给 body 加 .is-resizing 统一改光标。 */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 5;
+}
+/* 视觉上的细分隔线：默认透明，hover / 拖动时亮主色 */
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: transparent;
+  transition: background .12s;
+}
+.col-resizer:hover::after,
+.col-resizer.is-active::after { background: var(--primary); }
+body.is-resizing,
+body.is-resizing * { cursor: col-resize !important; user-select: none !important; }
