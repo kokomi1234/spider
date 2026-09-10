@@ -62,7 +62,7 @@
     dialog.style.overflowY = 'auto';
 
     dialog.innerHTML = `
-      <h2 style="margin:0 0 16px 0;">📌 已订阅服务管理</h2>
+      <h2 style="margin:0 0 16px 0;">已订阅服务管理</h2>
       
       <!-- 统计 -->
       <div class="stats" style="margin-bottom:16px;">
@@ -130,7 +130,7 @@
   /** 更新计数显示 */
   function updateCount() {
     const count = window.SubscribeManager.count();
-    btnSubscribePanel.textContent = `📌 已订阅 (${count})`;
+    btnSubscribePanel.textContent = `已订阅 (${count})`;
     const countEl = $('#subCount');
     if (countEl) countEl.textContent = count;
   }

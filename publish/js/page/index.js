@@ -426,6 +426,22 @@
         }
         return;
       }
+      // 批次：原生 select 的 value 是 "2706pc" 这类代码，但行数据与请求体
+      // 用的都是 label（"2706批次"）。口径必须与请求体一致，否则本地兜底
+      // 过滤会把整页结果误杀（症状：toast「本页数据均不满足筛选条件」）。
+      if (f.id === 'f_prodBatch') {
+        let val = '';
+        if (batchSelectInstance) {
+          const selectedVal = batchSelectInstance.getValue();
+          if (selectedVal && window._batchOptions) {
+            const opt = window._batchOptions.find((o) => o.value === selectedVal);
+            if (opt) val = opt.label;
+          }
+        }
+        if (!val) return;
+        conds.push({ label: f.label, keys: f.local, value: val, exact: false, date: false });
+        return;
+      }
       const el = $(`#${f.id}`);
       if (!el) return;
       const val = el.value.trim();
@@ -1320,7 +1336,7 @@
   function updateSubscribePanelCount() {
     const count = window.SubscribeManager ? window.SubscribeManager.count() : 0;
     const btn = $('#btnSubscribePanel');
-    if (btn) btn.textContent = `📌 已订阅 (${count})`;
+    if (btn) btn.textContent = `已订阅 (${count})`;
   }
 
   /** 初始化页面加载状态 */
