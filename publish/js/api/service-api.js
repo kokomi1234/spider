@@ -319,17 +319,20 @@
     // sysServeNo: 提供者服务编号（如 E00301TO1197），优先用 row 中的值
     const providerSysServeNo = row.sysServeNo || row.serviceId || serverCoding;
 
-    // prodSysServeNoList: 调用方视角的服务编号 = 把 provider 的 sysServeNo 前缀替换为 callerComponent
-    //   例: "E00301TO1197".replace("E00301", "E00406") → "E00406TO1197"
-    const callerComp = pubSub.callerComponent || '';
-    if (providerSysServeNo && callerComp) {
-      // 提取序号部分（TO1197），拼上 callerComponent
-      const seqMatch = providerSysServeNo.match(/(TO\d+)$/);
-      pubSub.prodSysServeNoList = seqMatch ? [callerComp + seqMatch[1]] : [callerComp + 'TO9999'];
-    } else if (serverCoding) {
-      // 兜底：如果没 callerComponent，尝试从 serverCoding 推断
-      const fallbackCaller = pubSub.callerComponent || 'E00406';
-      pubSub.prodSysServeNoList = [fallbackCaller + 'TO9999'];
+    // prodSysServeNoList: 调用方视角的服务编号 = 调用方系统编号 + provider sysServeNo 尾部序号
+    //   例: "E00301TO1197" → 序号 TO1197，拼上调用方 E00406 → "E00406TO1197"
+    //   优先用表单里用户确认过的 callerServiceNo（订阅弹窗选完调用方系统后已自动填入）
+    const formCallerSvc = (form && form.callerServiceNo) ? String(form.callerServiceNo).trim() : '';
+    if (formCallerSvc) {
+      pubSub.prodSysServeNoList = [formCallerSvc];
+    } else {
+      const callerComp = pubSub.callerComponent || '';
+      if (providerSysServeNo && callerComp) {
+        const seqMatch = providerSysServeNo.match(/(TO\d+)$/);
+        pubSub.prodSysServeNoList = seqMatch ? [callerComp + seqMatch[1]] : [];
+      } else {
+        pubSub.prodSysServeNoList = [];
+      }
     }
 
     // 用 row / form 数据填充关键字段

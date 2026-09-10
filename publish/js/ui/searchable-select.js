@@ -93,6 +93,7 @@
     let rendered = [];     // 当前渲染出来的选项对象，按渲染顺序
     let limit = MAX_RENDER; // 当前渲染上限，滚动到底会放大
     let allMatched = [];   // 本次搜索命中的全部选项（渲染的只是前 limit 个）
+    let busyText = '';     // 远程搜索进行中给用户的提示（只在没有可渲染选项时显示）
 
     /**
      * 把选中值写回原生元素。
@@ -194,13 +195,21 @@
         : list;
 
       allMatched = matched;
-      // 上限不允许超过命中数，否则滚动加载会一直追加空批
+      // 渲染上限要跟着命中数「双向」调整：
+      //   收：不能超过命中数，否则滚动到底会一直追加空批次；
+      //   放：命中数涨回来也要放回去。这里的坑是——
+      //       上一轮命中 0 条会把上限压到 0，下一批结果明明有数据却一条都渲染不出来，
+      //       面板上只剩底部「共 X 项」的计数条（异步搜索下拉必踩）。
       if (limit > matched.length) limit = matched.length;
+      const floor = Math.min(MAX_RENDER, matched.length);
+      if (limit < floor) limit = floor;
 
       if (!matched.length) {
         const empty = document.createElement('div');
         empty.className = 'searchable-select-empty';
-        empty.textContent = kw ? `无匹配结果：${query.trim()}` : '暂无可选项';
+        // 远程搜索（如评委工号）在结果回来之前给个提示，别让用户盯着「无匹配结果」发呆。
+        // 本地已经能匹配到选项时优先显示选项，所以 busyText 只在没有命中时才露出来。
+        empty.textContent = busyText || (kw ? `无匹配结果：${query.trim()}` : '暂无可选项');
         frag.appendChild(empty);
       } else {
         // 「已选择数据」section — 仅在无搜索词且已有选中时显示，
@@ -238,13 +247,6 @@
         const shown = matched.slice(0, limit);
         shown.forEach((opt) => frag.appendChild(renderItem(opt, kw)));
         rendered = shown;
-
-        if (matched.length > shown.length) {
-          const more = document.createElement('div');
-          more.className = 'searchable-select-more';
-          more.textContent = `还有 ${matched.length - shown.length} 条，继续输入关键字或滚动加载`;
-          frag.appendChild(more);
-        }
       }
 
       // 底部常驻计数条：大列表（如 889 个提供方系统）打开时给出总量/命中量反馈
@@ -526,8 +528,24 @@
     return {
       updateOptions(newOptions) {
         list = Array.isArray(newOptions) ? newOptions.slice() : [];
+        busyText = '';      // 新选项到了，占位提示自动失效
         if (isOpen) renderDropdown();
         else paintClosed();
+      },
+
+      /**
+       * 占位提示文案（远程搜索在途用）。传空字符串清除。
+       * 只在当前没有任何可渲染选项时显示，不会盖住已经能匹配上的结果。
+       */
+      setBusy(text) {
+        busyText = String(text || '');
+        if (isOpen) renderDropdown();
+      },
+
+      /** 从外部展开面板（输入仍聚焦时才往下拉，避免抢焦点） */
+      open() {
+        if (disabled || isOpen) return;
+        openDropdown();
       },
 
       getValue() {

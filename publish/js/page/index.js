@@ -55,6 +55,13 @@
   // ── 批次下拉搜索组件实例 ────────────────────────────
   let batchSelectInstance = null;
 
+  // 暴露给外部模块（如订阅弹窗）读取首页已选批次
+  window._prodBatchInstance = { _inst: null, get value() { return batchSelectInstance ? batchSelectInstance.getValue() : ''; } };
+  Object.defineProperty(window._prodBatchInstance, 'instance', {
+    get() { return batchSelectInstance; },
+    set(v) { batchSelectInstance = v; window._prodBatchInstance._inst = v; },
+  });
+
   // ── 提供方系统下拉搜索组件实例 ──────────────────────
   let providerSelectInstance = null;
 
@@ -75,6 +82,11 @@
     if (typeof window.createSearchableSelect !== 'function') return null;
     const inst = window.createSearchableSelect(el, options, opts);
     selectInstances.push(inst);
+    // 如果是批次下拉，同步更新全局引用
+    if (el.id === 'f_prodBatch') {
+      batchSelectInstance = inst;
+      window._prodBatchInstance._inst = inst;
+    }
     return inst;
   }
 
@@ -1185,6 +1197,8 @@
 
   function closeDetail() {
     detailOverlay.classList.remove('show');
+    // 详情弹窗里不会再开子层，这里直接一次性解锁（js/ui/dialog-utils.js）
+    if (window.DialogUtils) window.DialogUtils.forceUnlockAll();
     if (detailReturnFocus && typeof detailReturnFocus.focus === 'function') detailReturnFocus.focus();
     detailReturnFocus = null;
   }
@@ -1214,6 +1228,7 @@
     setDetailStatus('loading', '正在加载详情…');
     renderDetailFields(row);   // 先展示本地数据，接口回来后再补/覆盖
     detailOverlay.classList.add('show');
+    if (window.DialogUtils) window.DialogUtils.lockScroll();
     $('#btnDetailClose').focus();
 
     // 详情后端接口（service-api.js）未配置时，fetchServiceDetail 原样返回本地数据，不发请求。
@@ -1465,6 +1480,13 @@
       if (typeof window.createSearchableSelect === 'function') {
         providerSelectInstance = makeSelect(providerSelect, providers);
         console.log('✅ 提供方系统下拉搜索组件初始化完成');
+        // 默认选中 E00301（互联网金融服务平台-BOCNET-G-IFS）
+        try {
+          providerSelectInstance.setValue('E00301');
+          console.log('✅ 已默认选中 E00301（互联网金融服务平台）');
+        } catch (_) {
+          console.warn('默认选中 E00301 失败，列表可能不包含该系统');
+        }
       } else {
         providerSelect.innerHTML = '';
         const allOpt = document.createElement('option');
@@ -1477,6 +1499,8 @@
           option.textContent = p.label;
           providerSelect.appendChild(option);
         });
+        // 默认选中 E00301
+        providerSelect.value = 'E00301';
       }
     } catch (err) {
       console.error('提供方系统列表加载失败:', err);

@@ -511,8 +511,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   margin: 0;
 }
 
-.searchable-select-empty,
-.searchable-select-more {
+.searchable-select-empty {
   padding: 12px;
   text-align: center;
   color: var(--muted);
@@ -1107,7 +1106,12 @@ tbody tr.unsubscribed-row:hover td {
   overflow: hidden;
 }
 
-.doc-dialog { max-width: min(820px, 96vw); }
+.doc-dialog {
+  /* 加宽到 1200px、拉长到 92vh，确保表格一行完整展示 */
+  max-width: min(1200px, 96vw);
+  width: 96vw;
+  max-height: 92vh;
+}
 
 /* ── 标题栏 ─────────────────────────────────────────── */
 .sub-head {
@@ -1118,6 +1122,30 @@ tbody tr.unsubscribed-row:hover td {
   padding: var(--sp2) var(--sp3);
   border-bottom: 1px solid var(--outline-soft);
   flex: 0 0 auto;
+}
+
+/* ── 通用弹窗行为：滚动锁定 / 标题栏拖拽 ─────────────── */
+/* 打开任何弹窗时由 js/ui/dialog-utils.js 给 html/body 加 .dialog-open，
+   这里只负责「不许滚」。html 自带 scrollbar-gutter: stable，
+   滚动条槽位常驻，锁定时页面不会横向跳。 */
+html.dialog-open,
+body.dialog-open { overflow: hidden; }
+
+/* 标题栏 = 拖拽把手；里面的按钮仍然保持各自的光标（.sub-close 已单独定义） */
+.sub-head {
+  cursor: move;
+  user-select: none;
+  touch-action: none;   /* 触摸拖拽时不要顺带滚页面 */
+}
+
+.sub-head.is-dragging,
+.sub-head.is-dragging * { cursor: grabbing; }
+
+/* 拖过之后弹窗脱离 flex 居中，改成绝对定位跟随指针（由 dialog-utils 计算坐标） */
+.sub-dialog.is-dragged,
+.doc-dialog.is-dragged {
+  position: absolute;
+  margin: 0;
 }
 
 .sub-head h2 {
@@ -1161,11 +1189,12 @@ tbody tr.unsubscribed-row:hover td {
 }
 
 /* ── 基础信息表单区 ─────────────────────────────────── */
-.sub-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: var(--sp2) var(--sp3);
-}
+  .sub-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: var(--sp2) var(--sp3);
+    margin-bottom: var(--sp2);
+  }
 
 .sub-sec { margin-top: var(--sp3); }
 
@@ -1287,10 +1316,15 @@ label.req::after {
 
 /* ── 表格（与全局 table / thead th / tbody td 同一套）─── */
 .sub-tbl-wrap {
-  max-height: 260px;
-  overflow: auto;
+  min-height: 76px; /* 单行高度 + padding，避免空状态隐藏后容器塌陷 */
   border: 1px solid var(--outline-soft);
   border-radius: var(--r-sm);
+}
+
+/* 评委信息表格：不设 max-height，让表格自然撑开；
+   长列表的滚动由弹窗 .sub-body 统一处理，避免与下方区块重叠 */
+.sub-sec:has(.judge-empty-hint) .sub-tbl-wrap {
+  max-height: none;
 }
 
 /* 与 .result-table 同一套：padding 10px 9px、正文 --fs-sm、表头 --fs-nano */
@@ -1313,6 +1347,8 @@ label.req::after {
   white-space: nowrap;
   padding: 10px 9px;
   border-bottom: 1px solid var(--outline-soft);
+  /* 显式给行高（td 也是 1.4）：表头高度才能被 .doc-tbl-wrap 精确算进去 */
+  line-height: 1.4;
 }
 
 .sub-tbl td {
@@ -1326,13 +1362,22 @@ label.req::after {
 .sub-tbl tbody tr:last-child td { border-bottom: none; }
 .sub-tbl tbody tr:hover td { background: var(--surface-1); }
 
+/* 关联文档：已勾选的行高亮；非成员文档（不可勾选）压暗，别让它们抢注意力 */
+.sub-tbl tbody tr.is-picked td { background: var(--primary-c); }
+.sub-tbl tbody tr.is-picked:hover td { background: color-mix(in srgb, var(--primary-c) 90%, var(--on-surface)); }
+.sub-tbl tbody tr.is-nonmember td { color: var(--faint); }
+
 .sub-tbl .c-chk { width: 44px; }
 .sub-tbl .c-idx { width: 56px; }
 
-/* 全局没有 checkbox 规则，这里统一成主色 + 16px，避免浏览器默认的 13px 灰盒子 */
+/* 全局没有 checkbox 规则，这里统一成主色 + 16px，避免浏览器默认的 13px 灰盒子。
+   margin 必须清零：浏览器给 checkbox 的默认外边距会把行高顶高 2px，
+   .doc-tbl-wrap「正好 10 行」的 max-height 是按纯文字行高算的，一多就提前出滚动条。 */
 .sub-tbl input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  margin: 0;
+  vertical-align: middle;
   accent-color: var(--primary);
   cursor: pointer;
 }
@@ -1352,6 +1397,15 @@ label.req::after {
   font-size: var(--fs-sm);
   padding: var(--sp3) var(--sp2);
 }
+
+/* 评委信息空状态提示（独立于表格的 div） */
+.judge-empty-hint {
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  padding: 40px 0 24px;
+}
+.judge-empty-hint[hidden] { display: none; }
 
 /* ── 关联文档：筛选 / 表格 / 分页 ─────────────────────── */
 .doc-filter {
@@ -1379,8 +1433,15 @@ label.req::after {
 .doc-filter-item .sub-ctl { min-width: 200px; }
 
 .doc-tbl-wrap {
-  max-height: 340px;
-  overflow: auto;
+  /* 一次正好显示 10 行数据，第 11 行起才出滚动条。
+     高度 = sticky 表头 + 10 行数据 + 容器上下边框，另留 2px 抵消亚像素误差。
+     行高按「字号 × 1.4 + padding 10px×2 + border 1px」算，改字号令牌也不会跑偏
+     （注意：别漏了 sticky 表头，否则 10 条/页时会被表头顶掉一行、提前出滚动条）。 */
+  --doc-row-h: calc(var(--fs-sm) * 1.4 + 10px * 2 + 1px);
+  --doc-head-h: calc(var(--fs-nano) * 1.4 + 10px * 2 + 1px);
+  max-height: calc(var(--doc-head-h) + 10 * var(--doc-row-h) + 2px + 2px);
+  overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid var(--outline-soft);
   border-radius: var(--r-sm);
 }
@@ -1389,11 +1450,12 @@ label.req::after {
 .doc-pager {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--sp1);
   margin-top: var(--sp2);
   font-size: var(--fs-xs);
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .doc-page-size {

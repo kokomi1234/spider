@@ -8,6 +8,11 @@
  * 4. 评委信息表格区：复选框 / 序号 / 评委角色 / 评委工号 / 评委姓名 / 评委部门，支持新增删除
  * 5. 底部：取消 / 确认
  *
+ * ── 弹窗通用行为 ──────────────────────────────────────
+ * 本模块不重复实现，统一用 js/ui/dialog-utils.js：
+ *   - 打开即锁滚动（多级弹窗只锁一次，关最外层统一解锁）
+ *   - 标题栏（.sub-head）可拖拽，重新打开弹窗时复位回居中
+ *
  * ── 对外 ──────────────────────────────────────────────
  *   window.SubscribeDialog.open(row)   // row 为当前行的服务数据
  *   window.SubscribeDialog.close()
@@ -104,7 +109,10 @@
 
   let currentRow = null;       // 当前订阅的行数据
   let returnFocus = null;      // 关闭后要还原的焦点
+  let dragInstances = {};      // 'sub' / 'doc' → dialog-utils 的拖拽句柄（含 reset）
   let judgeSeq = 0;            // 评委行自增 id
+  /** userId -> 用户对象。跨评委行共享，搜过的人下次输入能立刻被本地过滤出来 */
+  const judgeUserCache = new Map();
 
   // 文档选择子弹窗状态
   let docAllRows = [];
@@ -204,14 +212,16 @@
       tpsPeak:   $('#sub_tpsPeak'),
       callerSys: $('#sub_callerSystem'),
 
-      judgeBody:  $('#judgeTableBody'),
-      judgeAll:   $('#judgeCheckAll'),
+      judgeBody:      $('#judgeTableBody'),
+      judgeEmptyHint: $('#judgeEmptyHint'),
+      judgeAll:       $('#judgeCheckAll'),
       btnAddJudge:$('#btnAddJudge'),
       btnDelJudge:$('#btnRemoveJudge'),
       btnFetchJudges: $('#btnFetchJudges'),
       btnSubmitJudges: $('#btnSubmitJudges'),
 
       docOverlay: $('#docSelectOverlay'),
+      docDialog:  $('#docSelectDialog'),
       btnDocClose:$('#btnDocClose'),
       btnDocCancel:$('#btnDocCancel'),
       btnDocConfirm:$('#btnDocConfirm'),
@@ -254,6 +264,7 @@
       // 一并由 buildSearchableSelects() 处理，这里不再单独 fillSelect。
       buildSearchableSelects();
       bindEvents();
+      wireDialogBehaviors();
       renderJudgeTable();
     })();
 
@@ -272,6 +283,17 @@
       selectInstances[f.id] = window.createSearchableSelect(el, resolveOptions(f), {});
       bindTypedCapture(f.id, el);
     });
+  }
+
+  /**
+   * 弹窗通用行为：滚动锁定 + 标题栏拖拽。
+   * 具体逻辑在 js/ui/dialog-utils.js，这里只负责把两个弹窗接上去。
+   */
+  function wireDialogBehaviors() {
+    const du = window.DialogUtils;
+    if (!du) return;
+    dragInstances.sub = du.makeDraggable(dom.dialog, dom.dialog.querySelector('.sub-head'));
+    dragInstances.doc = du.makeDraggable(dom.docDialog, dom.docDialog.querySelector('.sub-head'));
   }
 
   function resolveOptions(f) {
@@ -298,6 +320,25 @@
     dom.btnDocCancel.addEventListener('click', closeDocDialog);
     dom.btnDocConfirm.addEventListener('click', confirmDocSelection);
     dom.btnDocSearch.addEventListener('click', () => { docPage = 1; applyDocFilter(); });
+
+    // 文档编号：输入即筛（250ms 防抖），不必再点「查询」
+    let docFilterTimer = null;
+    dom.docFilterNo.addEventListener('input', () => {
+      clearTimeout(docFilterTimer);
+      docFilterTimer = setTimeout(() => { docPage = 1; applyDocFilter(); }, 250);
+    });
+    dom.docFilterNo.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();          // 别冒泡到 index.js 的全局「回车即查询」
+      e.stopPropagation();
+      clearTimeout(docFilterTimer);
+      docPage = 1;
+      applyDocFilter();
+    });
+
+    // 文档批次：选完立刻过滤（searchable-select 选中/清除都会向原 <select> 派发 change）
+    dom.docFilterBatch.addEventListener('change', () => { docPage = 1; applyDocFilter(); });
+
     dom.btnDocReset.addEventListener('click', () => {
       dom.docFilterNo.value = '';
       if (selectInstances.docFilterBatch) selectInstances.docFilterBatch.clear();
@@ -319,6 +360,24 @@
       if (n >= 1 && n <= docTotalPages()) { docPage = n; renderDocTable(); }
     });
     dom.docCheckAll.addEventListener('change', toggleDocAll);
+
+    // 调用方系统 → 联动自动填入「调用方应用系统服务编号」：
+    //   规则 = 调用方系统编号（如 E00406）+ 当前行服务编号尾部序号（如 TO1197）
+    //   searchable-select 选中/清除时都会向原 <select> 派发 change（bubbles）
+    dom.callerSys.addEventListener('change', () => {
+      const caller = String(dom.callerSys.value || '').trim();
+      const inst = selectInstances['sub_callerServiceNo'];
+      if (!inst) return;
+      const sysServeNo = (currentRow && (currentRow.sysServeNo || currentRow.serverCoding)) || '';
+      const m = sysServeNo.match(/(TO\d+)$/);
+      if (caller && m) {
+        const no = caller + m[1];
+        try { inst.updateOptions([{ value: no, label: no }]); } catch (_) { /* 忽略 */ }
+        try { inst.setValue(no); } catch (_) { /* 忽略 */ }
+      } else {
+        try { inst.clear(); } catch (_) { /* 忽略 */ }
+      }
+    });
 
     // 评委信息
     dom.btnAddJudge.addEventListener('click', () => { addJudgeRow(); renderJudgeTable(); });
@@ -348,6 +407,10 @@
     returnFocus = document.activeElement;
     resetForm();
 
+    // 锁滚动 + 复位到居中（上次拖到哪都算重来）
+    if (window.DialogUtils) window.DialogUtils.lockScroll();
+    if (dragInstances.sub) dragInstances.sub.reset();
+
     dom.overlay.style.display = 'flex';
     requestAnimationFrame(() => dom.overlay.classList.add('show'));
     if (dom.dialog) dom.dialog.focus();
@@ -355,8 +418,11 @@
 
   function close() {
     if (!dom || !dom.overlay) return;
+    // 关最外层时子弹窗可能还开着 → 顺手一起关，然后一次性解锁
+    if (dom.docOverlay && dom.docOverlay.classList.contains('show')) closeDocDialog();
     dom.overlay.classList.remove('show');
     setTimeout(() => { dom.overlay.style.display = 'none'; }, 200);
+    if (window.DialogUtils) window.DialogUtils.forceUnlockAll();
     if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
     returnFocus = null;
     currentRow = null;
@@ -373,13 +439,19 @@
     typedValues = {};
 
     TEXT_FIELDS.forEach((id) => { const el = $('#' + id); if (el) el.value = ''; });
+    dom.tpsPeak.value = '5';  // TPS（峰值）默认值
     dom.remark.value = '';
     dom.relDoc.value = '';
     dom.relDocIds.value = '';
 
     docSelected = new Set();
     judgeSeq = 0;
-    dom.judgeBody.innerHTML = '';
+    // 只移除数据行
+    dom.judgeBody.querySelectorAll('tr.judge-row').forEach((tr) => {
+      if (tr._noInstance) { try { tr._noInstance.destroy(); } catch (_) {} }
+      if (tr._roleInstance) { try { tr._roleInstance.destroy(); } catch (_) {} }
+      tr.remove();
+    });
     dom.judgeAll.checked = false;
     renderJudgeTable();
 
@@ -387,6 +459,14 @@
     $('#sub_serviceCnName').value = row.sysServeName || row.serverName || row.serviceName || '';
     const taskNo = row.taskNo || row.sheetNo || '';
     if (taskNo) $('#sub_taskNo').value = taskNo;
+
+    // 跟随首页已选的提供方批次：如果用户在首页选了批次，订阅弹窗自动填入
+    if (selectInstances['sub_callerBatch'] && window._prodBatchInstance) {
+      const homeBatch = window._prodBatchInstance.value;
+      if (homeBatch) {
+        try { selectInstances['sub_callerBatch'].setValue(homeBatch); } catch (_) { /* 忽略 */ }
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════
@@ -499,8 +579,6 @@
   // ═══════════════════════════════════════════════════
 
   function addJudgeRow() {
-    const emptyRow = dom.judgeBody.querySelector('.judge-empty-row');
-    if (emptyRow) emptyRow.remove();
 
     const tr = document.createElement('tr');
     tr.className = 'judge-row';
@@ -542,40 +620,100 @@
     return tr;
   }
 
-  /** 评委工号在线搜索（UserApi.fetchUserList）：输入 ≥2 字防抖搜索，选中后带出姓名/部门 */
+  // ═══════════════════════════════════════════════════
+  // 评委工号在线搜索
+  // ═══════════════════════════════════════════════════
+
+  // 抓包（har/userinfo.har）确认：getUserList 只认「完整姓名」或「完整工号」，
+  // 中间过程（如“郑梓”“zheng”）后端直接返回 500 查询失败。所以这里：
+  //   ① 边输入边搜（不等点按钮），失败/无结果时把原因写进下拉面板，而不是静默；
+  //   ② 搜到的人沉淀进 judgeUserCache，下次输入同一批人能立刻被本地过滤出来，
+  //      行为就跟「调用方系统 / 批次」这些本地下拉一致。
+  const JUDGE_SEARCH_MIN = 2;      // 少于 2 个字不打请求
+  const JUDGE_SEARCH_DELAY = 300;  // 防抖：够快又不至于每个字母都发请求
+
+  /** 搜到的人存进共享缓存，跨评委行复用 */
+  function cacheUsers(list) {
+    (list || []).forEach((u) => {
+      if (u && u.userId) judgeUserCache.set(String(u.userId), u);
+    });
+  }
+
+  /** 缓存里的全部已搜用户 → 下拉选项；组件会按当前输入实时过滤 */
+  function cachedUserOptions() {
+    return Array.from(judgeUserCache.values()).map((u) => ({
+      value: u.userId,
+      label: u.userName ? `${u.userName}（${u.userId}）` : String(u.userId),
+    }));
+  }
+
+  /** 结果回来时面板若不巧关了就再展开一次（只在输入框仍有焦点时，避免抢焦点） */
+  function ensurePanelOpen(inst, targetEl) {
+    if (!inst || inst.isOpen()) return;
+    const host = targetEl && targetEl.parentElement;
+    const box = host && host.querySelector('.searchable-select .searchable-select-input');
+    if (box && document.activeElement === box) inst.open();
+  }
+
+  /** 评委工号：输入即搜 + 本地缓存即时过滤，选中后带出姓名/部门 */
   function bindJudgeUserSearch(tr, noSel) {
     const host = noSel && noSel.parentElement;
     if (!host) return;
     let timer = null;
-    // 捕获阶段拿输入框实时文本（组件展开下拉时会清空输入框，普通监听拿不到）
-    host.addEventListener('input', () => {
+    let searchSeq = 0;   // 防竞态：只认最后一次搜索的结果
+
+    const readInput = () => {
       const box = host.querySelector('.searchable-select .searchable-select-input');
-      const text = box ? String(box.value || '').trim() : '';
+      return box ? String(box.value || '').trim() : '';
+    };
+
+    // 捕获阶段拿输入框实时文本（组件展开下拉时会清空输入框，普通监听拿不到）
+    host.addEventListener('input', (e) => {
+      if (e && e.isComposing) return;   // 中文组字过程中的拼音不拿去搜
+      const kw = readInput();
+      const inst = tr._noInstance;
       clearTimeout(timer);
-      if (text.length < 2) return;   // 单字太宽，≥2 字再搜
+
+      if (kw.length < JUDGE_SEARCH_MIN) {
+        // 关键字太短：不打请求，让组件在已有候选里自己过滤
+        if (inst) inst.setBusy('');
+        return;
+      }
+      // 立刻给反馈，别让用户对着「无匹配结果」以为坏了
+      if (inst) inst.setBusy('搜索中…');
+
       timer = setTimeout(async () => {
         if (!window.UserApi || typeof window.UserApi.fetchUserList !== 'function') return;
-        const kw = text;
+        const seq = ++searchSeq;
         const r = await window.UserApi.fetchUserList(kw);
-        const box2 = host.querySelector('.searchable-select .searchable-select-input');
-        const now = box2 ? String(box2.value || '').trim() : '';
-        if (!r || !r.ok || now !== kw) return;   // 输入已变或失败 → 丢弃
-        tr._userMap = {};
-        const opts = r.list.map((u) => {
-          tr._userMap[u.userId] = u;
-          return { value: u.userId, label: `${u.userName}（${u.userId}）` };
-        });
-        try { tr._noInstance.updateOptions(opts); } catch (_) { /* 实例已销毁 */ }
-      }, 400);
+        const inst2 = tr._noInstance;
+        if (seq !== searchSeq || !inst2) return;   // 已有更新的搜索 / 行已删除
+        if (readInput() !== kw) return;            // 输入又变了，交给下一次搜索
+
+        try {
+          if (r && r.ok && r.list.length) {
+            cacheUsers(r.list);
+            inst2.updateOptions(cachedUserOptions());
+          } else if (r && r.ok) {
+            inst2.setBusy('未找到匹配用户（接口只认完整姓名或工号）');
+          } else {
+            inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
+          }
+          ensurePanelOpen(inst2, noSel);
+        } catch (_) { /* 实例已销毁（行被删除），忽略 */ }
+      }, JUDGE_SEARCH_DELAY);
     }, true);
+
     // searchable-select 选中项时会向原 <select> 派发 change → 自动带出姓名/部门
     noSel.addEventListener('change', () => {
-      const u = tr._userMap && tr._userMap[noSel.value];
+      const u = judgeUserCache.get(noSel.value) || (tr._userMap && tr._userMap[noSel.value]);
       if (!u) return;
       const nameEl = tr.querySelector('.judge-name');
       const deptEl = tr.querySelector('.judge-dept');
       if (nameEl) nameEl.value = u.userName || '';
-      if (deptEl) deptEl.value = u.orgName || u.teamName || deptEl.value;
+      // 部门要的是小组级的 teamName（如「中国银行软件中心（深圳）开发三部」），
+      // orgName 只有到软件中心一级，所以 teamName 优先。
+      if (deptEl) deptEl.value = u.teamName || u.orgName || deptEl.value;
     });
   }
 
@@ -631,6 +769,8 @@
       if (name) nameEl.value = name;
       if (dept) deptEl.value = dept;
       if (tr._userMap) tr._userMap[no] = { userId: no, userName: name, orgName: dept, teamName: dept };
+      // 顺手沉淀到共享缓存：后面新增的评委行也能即时搜到这批人
+      if (no) cacheUsers([{ userId: no, userName: name, orgName: dept, teamName: dept }]);
       if (no && tr._noInstance) {
         try {
           tr._noInstance.updateOptions([{ value: no, label: name ? `${name}（${no}）` : no }]);
@@ -669,7 +809,7 @@
       return;
     }
     const form = collectForm();
-    // 调用方应用系统服务编号（如 E00406TO1197）；没填则按提供方编号 + 调用方前缀推一份
+    // 调用方应用系统服务编号（如 E00406TO1197）；没填则按调用方系统 + 服务编号尾部序号推一份
     let prodSysServeNoList = form.callerServiceNo ? [form.callerServiceNo] : [];
     if (!prodSysServeNoList.length) {
       const sysServeNo = currentRow.sysServeNo || currentRow.serverCoding || '';
@@ -699,10 +839,6 @@
   function renderJudgeTable() {
     const rows = dom.judgeBody.querySelectorAll('tr.judge-row');
     rows.forEach((tr, i) => { tr.querySelector('.judge-idx').textContent = i + 1; });
-    if (!rows.length) {
-      dom.judgeBody.innerHTML =
-        '<tr class="judge-empty-row"><td colspan="6" class="sub-empty">暂无评委信息，请点击「新增」添加</td></tr>';
-    }
     syncJudgeAllState();
   }
 
@@ -831,6 +967,33 @@
     return await loadDocRows(1, 9999, '', '');
   }
 
+  /**
+   * 文档批次显示名映射（模式匹配）
+   *
+   * 批次分三类：
+   *   1. 含 n6ydlpc → 26年6月独立批次（作废）
+   *   2. dl 结尾    → XX年X月独立批次（如 269dl→26年9月独立, 2610dl→26年10月独立）
+   *   3. 纯数字      → XXYY批次（如 2609→2609批次, 2611→2611批次）
+   */
+  function displayBatch(raw) {
+    if (!raw) return '';
+    const s = String(raw).trim();
+    // 1. 作废批次（精确匹配）
+    if (s === '26n6ydlpc') return '26年6月独立批次(作废)';
+    // 2. dl 结尾的独立批次：提取前缀年月，转为「26年9月独立」格式
+    if (/^\d+dl$/.test(s)) {
+      const prefix = s.replace('dl', '');
+      // 269 → 26年9月, 2610 → 26年10月
+      const year = '20' + prefix.slice(0, 2);
+      const month = prefix.slice(2);
+      return `${year}年${month}月独立`;
+    }
+    // 3. 纯数字常规批次：直接「2609批次」
+    if (/^\d+$/.test(s)) return s + '批次';
+    // 兜底：未知格式原样返回
+    return s;
+  }
+
   async function openDocDialog() {
     await boot();
 
@@ -843,14 +1006,36 @@
       return;
     }
 
-    // 重置选中状态
-    docSelected = new Set();
     // 首次打开时加载文档数据（后续使用缓存）
     if (docAllRows.length === 0) {
       await loadDocRows(1, 9999, '', '');
     }
+    // 再次打开时沿用上次已选的文档（可继续勾选/取消），而不是每次从头再来
+    docSelected = new Set(
+      String(dom.relDocIds.value || '').split(',').map((s) => s.trim()).filter(Boolean)
+    );
     docPage = 1;
-    applyDocFilter();
+
+    // 将主弹窗已选的批次同步到文档弹窗（如果用户已在主弹窗选了批次）
+    const mainBatchVal = selectInstances['sub_callerBatch']
+      ? String(selectInstances['sub_callerBatch'].getValue() || '')
+      : '';
+
+    refreshDocBatchOptions();
+
+    // 先设置批次值（setValue 不派发 change，需手动过滤）
+    if (mainBatchVal && selectInstances.docFilterBatch) {
+      selectInstances.docFilterBatch.setValue(mainBatchVal);
+      applyDocFilter();
+    } else {
+      // 主弹窗没选批次 → 文档弹窗也清空
+      if (selectInstances.docFilterBatch) selectInstances.docFilterBatch.clear();
+      applyDocFilter();
+    }
+
+    if (window.DialogUtils) window.DialogUtils.lockScroll();
+    if (dragInstances.doc) dragInstances.doc.reset();
+
     dom.docOverlay.style.display = 'flex';
     requestAnimationFrame(() => dom.docOverlay.classList.add('show'));
   }
@@ -858,6 +1043,55 @@
   function closeDocDialog() {
     dom.docOverlay.classList.remove('show');
     setTimeout(() => { dom.docOverlay.style.display = 'none'; }, 200);
+    if (window.DialogUtils) window.DialogUtils.unlockScroll();
+  }
+
+  /**
+   * 「文档投产批次」下拉按当前文档去重生成：
+   * 下拉里有的批次，列表里一定有文档，不会出现「选了批次却查不到东西」。
+   * 显示名优先用批次字典的 label（2609批次 / 26年10月独立），取不到再按批次号推。
+   */
+  function refreshDocBatchOptions() {
+    const inst = selectInstances.docFilterBatch;
+    if (!inst) return;
+    const map = new Map();
+    docAllRows.forEach((d) => {
+      const raw = String(d.batchNum || d.batch || '').trim();
+      if (raw && !map.has(raw)) map.set(raw, batchLabel(raw));
+    });
+    // 一条文档都没有时别让下拉空着，退回全局批次字典
+    if (!map.size) {
+      (window._batchOptions || []).forEach((o) => {
+        if (o && o.value != null && String(o.value) !== '') map.set(String(o.value), o.label || String(o.value));
+      });
+    }
+    const list = Array.from(map, ([value, label]) => ({ value, label }))
+      .sort((a, b) => batchSortKey(b.value) - batchSortKey(a.value));
+    inst.updateOptions(list);
+  }
+
+  function batchLabel(raw) {
+    const code = String(raw || '').trim();
+    if (!code) return '';
+    const hit = (window._batchOptions || []).find((o) => String(o.value) === code);
+    if (hit && hit.label) return hit.label;
+    return displayBatch(code);
+  }
+
+  /** 排序键：2606 / 2610dl / 344 都取前导数字，新批次排前面 */
+  function batchSortKey(raw) {
+    const m = /^(\d+)/.exec(String(raw || ''));
+    return m ? Number(m[1]) : 0;
+  }
+
+  /** 文档记录唯一 id（抓包确认字段是 value，其余候选名只是兜底） */
+  function docId(d) {
+    return String(d.value || d.docInstId || d.id || '');
+  }
+
+  /** 只有成员文档（isMember === '1'）允许勾选 */
+  function isMemberDoc(d) {
+    return d.isMember === '1' || d.isMember === 1;
   }
 
   function applyDocFilter() {
@@ -865,16 +1099,29 @@
     const batch = selectInstances.docFilterBatch
       ? String(selectInstances.docFilterBatch.getValue() || '')
       : (dom.docFilterBatch.value || '');
-    docFiltered = docAllRows.filter((d) => {
+    const hit = docAllRows.filter((d) => {
       // 适配接口返回的字段名
-      const docNo = d.docNo || d.no || '';
-      const docName = d.docName || d.name || '';
-      const docBatch = d.batchNum || d.batch || '';
+      const docNo = String(d.docNo || d.no || '');
+      const docName = String(d.docName || d.name || '');
+      const docBatch = String(d.batchNum || d.batch || '');
       const m1 = !kw || docNo.toLowerCase().includes(kw) || docName.toLowerCase().includes(kw);
       const m2 = !batch || docBatch === batch;
       return m1 && m2;
     });
+    docFiltered = sortDocs(hit);
     renderDocTable();
+  }
+
+  /**
+   * 让能操作的文档浮到上面：
+   *   ① 已勾选的排最前（重开弹窗时一眼看得到上次选了谁）
+   *   ② 非成员文档（不可勾选）排最后
+   *   ③ 其余保持接口返回的原顺序
+   * 只在筛选 / 打开时排一次，勾选本身不重排 —— 否则点了复选框行就跳走了。
+   */
+  function sortDocs(list) {
+    const rank = (d) => (docSelected.has(docId(d)) ? 0 : (isMemberDoc(d) ? 1 : 2));
+    return list.slice().sort((a, b) => rank(a) - rank(b));
   }
 
   function docTotalPages() {
@@ -889,23 +1136,31 @@
 
     dom.docBody.innerHTML = pageRows.length
       ? pageRows.map((d) => {
-          const id = d.value || d.docInstId || d.id || '';
+          const id = docId(d);
           const no = d.docNo || d.no || '';
           const name = d.docName || d.name || '';
           const batch = d.batchNum || d.batch || '';
-          return `<tr data-id="${esc(id)}">
-            <td class="c-chk"><input type="checkbox" class="doc-check" data-id="${esc(id)}" ${docSelected.has(id) ? 'checked' : ''}></td>
+          const member = isMemberDoc(d);
+          // 已选文档高亮，不可勾选的非成员文档压暗 —— 一眼看出哪些能操作
+          const cls = [docSelected.has(id) ? 'is-picked' : '', member ? '' : 'is-nonmember']
+            .filter(Boolean).join(' ');
+          return `<tr class="${cls}" data-id="${esc(id)}" data-is-member="${member}"` +
+            (member ? '' : ' title="非成员文档，不可勾选"') + `>
+            <td class="c-chk"><input type="checkbox" class="doc-check" data-id="${esc(id)}"` +
+            (member ? '' : ' disabled') + (docSelected.has(id) ? ' checked' : '') + `></td>
             <td>${esc(no)}</td>
             <td title="${esc(name)}">${esc(name)}</td>
-            <td>${esc(batch)}</td>
+            <td title="${esc(batch)}">${esc(displayBatch(batch))}</td>
           </tr>`;
         }).join('')
       : '<tr><td colspan="4" class="sub-empty">没有匹配的文档</td></tr>';
 
     dom.docBody.querySelectorAll('.doc-check').forEach((cb) => {
       cb.addEventListener('change', () => {
+        // 非成员文档的 checkbox 已 disabled，不会触发此事件
         if (cb.checked) docSelected.add(cb.dataset.id);
         else docSelected.delete(cb.dataset.id);
+        cb.closest('tr').classList.toggle('is-picked', cb.checked);
         syncDocAllState();
       });
     });
@@ -923,7 +1178,8 @@
     const on = dom.docCheckAll.checked;
     const start = (docPage - 1) * docSize;
     docFiltered.slice(start, start + docSize).forEach((d) => {
-      const id = d.value || d.docInstId || d.id || '';
+      if (!isMemberDoc(d)) return;   // 只勾选成员文档（isMember === '1'）
+      const id = docId(d);
       if (on) docSelected.add(id);
       else docSelected.delete(id);
     });
@@ -934,7 +1190,7 @@
     const start = (docPage - 1) * docSize;
     const pageRows = docFiltered.slice(start, start + docSize);
     if (!pageRows.length) { dom.docCheckAll.checked = false; dom.docCheckAll.indeterminate = false; return; }
-    const on = pageRows.filter((d) => docSelected.has(d.value || d.docInstId || d.id || '')).length;
+    const on = pageRows.filter((d) => docSelected.has(docId(d))).length;
     dom.docCheckAll.checked = on === pageRows.length;
     dom.docCheckAll.indeterminate = on > 0 && on < pageRows.length;
   }
@@ -944,15 +1200,12 @@
       toast('⚠️ 请至少选择一个文档', 2200, 'warn');
       return;
     }
-    const picked = docAllRows.filter((d) => {
-      const id = d.value || d.docInstId || d.id || '';
-      return docSelected.has(id);
-    });
+    const picked = docAllRows.filter((d) => docSelected.has(docId(d)));
     dom.relDoc.value = picked.map((d) => d.docName || d.name || '').join('、');
-    dom.relDocIds.value = picked.map((d) => d.value || d.docInstId || d.id || '').join(',');
+    dom.relDocIds.value = picked.map(docId).join(',');
 
     // 选完文档 → 联动拉取调用方应用系统服务编号（getDocSysServeNoList，来自 har/订阅.json 抓包）
-    const docInstIds = picked.map((d) => d.value || d.docInstId || d.id || '').filter(Boolean);
+    const docInstIds = picked.map(docId).filter(Boolean);
     if (docInstIds.length && window.ToolApi && window.ToolApi.isEnabled('docSysServeNoList')) {
       window.ToolApi.fetchDocSysServeNoList(docInstIds).then((r) => {
         if (!r || !r.ok || !r.list.length) return;

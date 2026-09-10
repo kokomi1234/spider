@@ -535,171 +535,41 @@
 
       <!-- 主体：长滚动区 -->
       <div class="sub-body">
-        <!-- A. 基础信息表单区 -->
-        <h3 class="sub-sec-title">基础信息</h3>
-        <div class="sub-grid">
-          <div class="sub-row">
-            <label for="sub_callerSystem" class="req">调用方系统</label>
-            <select id="sub_callerSystem" class="sub-ctl" placeholder="请输入或选择调用方系统"></select>
-          </div>
 
-          <div class="sub-row">
-            <label for="sub_relDoc">关联文档</label>
-            <div class="sub-ctl-group">
-              <input type="text" id="sub_relDoc" class="sub-input" placeholder="请选择关联文档" disabled>
-              <input type="hidden" id="sub_relDocIds">
-              <button type="button" class="outlined btn-xs sub-pick-btn" id="btnSelectDoc">选 择</button>
+        <!-- ====== 必要信息 ====== -->
+        <div class="sub-sec">
+          <h3 class="sub-sec-title">必要信息</h3>
+          <!-- 依赖顺序：调用方系统 → 关联文档（按系统编号查文档） → 调用方应用系统服务编号（由系统 + 文档带出） -->
+          <div class="sub-grid">
+            <div class="sub-row">
+              <label for="sub_callerSystem" class="req">调用方系统</label>
+              <select id="sub_callerSystem" class="sub-ctl" placeholder="请输入或选择调用方系统"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_relDoc" class="req">关联文档</label>
+              <div class="sub-ctl-group">
+                <input type="text" id="sub_relDoc" class="sub-input" placeholder="请选择关联文档" disabled>
+                <input type="hidden" id="sub_relDocIds">
+                <button type="button" class="outlined btn-xs sub-pick-btn" id="btnSelectDoc">选 择</button>
+              </div>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_callerServiceNo" class="req" title="由「调用方系统」自动拼接，选定「关联文档」后会再按文档带出候选">调用方应用系统服务编号</label>
+              <select id="sub_callerServiceNo" class="sub-ctl" placeholder="请输入或选择服务编号"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_callerBatch" class="req">调用方投产/变更批次</label>
+              <select id="sub_callerBatch" class="sub-ctl" placeholder="请输入或选择批次"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_tpsPeak" class="req">TPS（峰值）</label>
+              <input type="text" id="sub_tpsPeak" class="sub-input" placeholder="必填">
             </div>
           </div>
-
-          <div class="sub-row">
-            <label for="sub_callerServiceNo">调用方应用系统服务编号</label>
-            <select id="sub_callerServiceNo" class="sub-ctl" placeholder="请输入或选择服务编号"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_serviceCnName">应用系统服务中文名称</label>
-            <input type="text" id="sub_serviceCnName" class="sub-input" placeholder="请输入应用系统服务中文名称">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_serviceMode">服务方式</label>
-            <select id="sub_serviceMode" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_callerBatch">调用方投产/变更批次</label>
-            <select id="sub_callerBatch" class="sub-ctl" placeholder="请输入或选择批次"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_taskNo">任务编号</label>
-            <input type="text" id="sub_taskNo" class="sub-input" placeholder="请输入任务编号">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_protocol">通讯协议</label>
-            <input type="text" id="sub_protocol" class="sub-input" placeholder="请输入通讯协议">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_msgSpec">报文规范</label>
-            <input type="text" id="sub_msgSpec" class="sub-input" placeholder="请输入报文规范">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_codeSystem">码制</label>
-            <input type="text" id="sub_codeSystem" class="sub-input" placeholder="请输入码制">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_ifaceMode">接口方式</label>
-            <select id="sub_ifaceMode" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_gatewayCode">网关服务编码</label>
-            <select id="sub_gatewayCode" class="sub-ctl" placeholder="请输入或选择网关服务编码"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_groupContext">分组CONTEXT</label>
-            <select id="sub_groupContext" class="sub-ctl" placeholder="请输入或选择分组CONTEXT"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_mcisCode">MCIS交易码</label>
-            <select id="sub_mcisCode" class="sub-ctl" placeholder="请输入或选择MCIS交易码"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_ipsCode">IPS交易码</label>
-            <select id="sub_ipsCode" class="sub-ctl" placeholder="请输入或选择IPS交易码"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_mq">消息中间件</label>
-            <select id="sub_mq" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_tdmqCluster">订阅方TDMQ集群编码</label>
-            <input type="text" id="sub_tdmqCluster" class="sub-input" placeholder="请输入订阅方TDMQ集群编码">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_topicName">消息主题名</label>
-            <input type="text" id="sub_topicName" class="sub-input" placeholder="请输入消息主题名">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_msgOwner">是否消息资源归属方</label>
-            <select id="sub_msgOwner" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_msgCommType">消息通信类型</label>
-            <select id="sub_msgCommType" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_subName">消息订阅名</label>
-            <input type="text" id="sub_subName" class="sub-input" placeholder="请输入消息订阅名">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_idempotent">是否已进行业务幂等</label>
-            <select id="sub_idempotent" class="sub-ctl"></select>
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_noIdemReason">无需幂等原因</label>
-            <input type="text" id="sub_noIdemReason" class="sub-input" placeholder="请输入无需幂等原因">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_implUnit">产品实施单元</label>
-            <input type="text" id="sub_implUnit" class="sub-input" placeholder="请输入产品实施单元">
-          </div>
-
-          <div class="sub-row">
-            <label for="sub_needCopy">是否做副本</label>
-            <select id="sub_needCopy" class="sub-ctl"></select>
-          </div>
-        </div>
-
-        <!-- 性能指标组 -->
-        <h3 class="sub-sec-title">性能指标</h3>
-        <div class="sub-grid">
-          <div class="sub-row">
-            <label for="sub_tpsDaily">TPS（日常）</label>
-            <input type="text" id="sub_tpsDaily" class="sub-input" placeholder="请输入TPS">
-          </div>
-          <div class="sub-row">
-            <label for="sub_volumeDaily">日交易量（日常）</label>
-            <input type="text" id="sub_volumeDaily" class="sub-input" placeholder="请输入日交易量">
-          </div>
-          <div class="sub-row">
-            <label for="sub_rtDaily">响应时间（日常）</label>
-            <input type="text" id="sub_rtDaily" class="sub-input" placeholder="请输入响应时间">
-          </div>
-          <div class="sub-row">
-            <label for="sub_tpsPeak" class="req">TPS（峰值）</label>
-            <input type="text" id="sub_tpsPeak" class="sub-input" placeholder="必填">
-          </div>
-          <div class="sub-row">
-            <label for="sub_volumePeak">日交易量（峰值）</label>
-            <input type="text" id="sub_volumePeak" class="sub-input" placeholder="请输入日交易量">
-          </div>
-          <div class="sub-row">
-            <label for="sub_rtPeak">响应时间（峰值）</label>
-            <input type="text" id="sub_rtPeak" class="sub-input" placeholder="请输入响应时间">
-          </div>
-        </div>
-
-        <div class="sub-row sub-row-full">
-          <label for="sub_remark">订阅备注</label>
-          <textarea id="sub_remark" class="sub-textarea" placeholder="请输入订阅备注"></textarea>
         </div>
 
         <!-- B. 评委信息表格区 -->
@@ -715,6 +585,7 @@
               <button type="button" class="outlined btn-xs danger" id="btnRemoveJudge">－ 删除</button>
             </div>
           </div>
+          <!-- 评委信息操作提示（始终显示在评委表格下方） -->
           <div class="sub-tbl-wrap">
             <table class="sub-tbl">
               <thead>
@@ -729,7 +600,152 @@
               </thead>
               <tbody id="judgeTableBody"></tbody>
             </table>
+            <div class="judge-empty-hint" id="judgeEmptyHint">请点击「＋ 新增」添加评委，或点击「chu⤓ 拉取评委」从接口获取已有数据</div>
+
           </div>
+        </div>
+
+        <!-- ====== 基础信息 ====== -->
+        <div class="sub-sec">
+          <h3 class="sub-sec-title">基础信息</h3>
+          <div class="sub-grid">
+            <div class="sub-row">
+              <label for="sub_serviceCnName">应用系统服务中文名称</label>
+              <input type="text" id="sub_serviceCnName" class="sub-input" placeholder="请输入应用系统服务中文名称">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_taskNo">任务编号</label>
+              <input type="text" id="sub_taskNo" class="sub-input" placeholder="请输入任务编号">
+            </div>
+
+            <!-- ↓ 服务方式是通道类字段的上游：直接调用→网关服务编码，通过MCIS→MCIS交易码，通过IPS→IPS交易码 -->
+            <div class="sub-row">
+              <label for="sub_serviceMode">服务方式</label>
+              <select id="sub_serviceMode" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_gatewayCode">网关服务编码</label>
+              <select id="sub_gatewayCode" class="sub-ctl" placeholder="请输入或选择网关服务编码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_mcisCode">MCIS交易码</label>
+              <select id="sub_mcisCode" class="sub-ctl" placeholder="请输入或选择MCIS交易码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_ipsCode">IPS交易码</label>
+              <select id="sub_ipsCode" class="sub-ctl" placeholder="请输入或选择IPS交易码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_ifaceMode">接口方式</label>
+              <select id="sub_ifaceMode" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_groupContext">分组CONTEXT</label>
+              <select id="sub_groupContext" class="sub-ctl" placeholder="请输入或选择分组CONTEXT"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_protocol">通讯协议</label>
+              <input type="text" id="sub_protocol" class="sub-input" placeholder="请输入通讯协议">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_msgSpec">报文规范</label>
+              <input type="text" id="sub_msgSpec" class="sub-input" placeholder="请输入报文规范">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_codeSystem">码制</label>
+              <input type="text" id="sub_codeSystem" class="sub-input" placeholder="请输入码制">
+            </div>
+
+            <!-- ↓ 消息中间件是消息类字段的上游：选了 TDMQ 才要填集群编码 -->
+            <div class="sub-row">
+              <label for="sub_mq">消息中间件</label>
+              <select id="sub_mq" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_tdmqCluster">订阅方TDMQ集群编码</label>
+              <input type="text" id="sub_tdmqCluster" class="sub-input" placeholder="请输入订阅方TDMQ集群编码">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_topicName">消息主题名</label>
+              <input type="text" id="sub_topicName" class="sub-input" placeholder="请输入消息主题名">
+            </div>
+
+            <!-- ↓ 归属方决定下面两个消息字段怎么填 -->
+            <div class="sub-row">
+              <label for="sub_msgOwner">是否消息资源归属方</label>
+              <select id="sub_msgOwner" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_msgCommType">消息通信类型</label>
+              <select id="sub_msgCommType" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_subName">消息订阅名</label>
+              <input type="text" id="sub_subName" class="sub-input" placeholder="请输入消息订阅名">
+            </div>
+
+            <!-- ↓ 先定幂等，再填原因 -->
+            <div class="sub-row">
+              <label for="sub_idempotent">是否已进行业务幂等</label>
+              <select id="sub_idempotent" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_noIdemReason">无需幂等原因</label>
+              <input type="text" id="sub_noIdemReason" class="sub-input" placeholder="请输入无需幂等原因">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_implUnit">产品实施单元</label>
+              <input type="text" id="sub_implUnit" class="sub-input" placeholder="请输入产品实施单元">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_needCopy">是否做副本</label>
+              <select id="sub_needCopy" class="sub-ctl"></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-grid">
+          <div class="sub-row">
+            <label for="sub_tpsDaily">TPS（日常）</label>
+            <input type="text" id="sub_tpsDaily" class="sub-input" placeholder="请输入TPS">
+          </div>
+          <div class="sub-row">
+            <label for="sub_volumeDaily">日交易量（日常）</label>
+            <input type="text" id="sub_volumeDaily" class="sub-input" placeholder="请输入日交易量">
+          </div>
+          <div class="sub-row">
+            <label for="sub_rtDaily">响应时间（日常）</label>
+            <input type="text" id="sub_rtDaily" class="sub-input" placeholder="请输入响应时间">
+          </div>
+          <div class="sub-row">
+            <label for="sub_volumePeak">日交易量（峰值）</label>
+            <input type="text" id="sub_volumePeak" class="sub-input" placeholder="请输入日交易量">
+          </div>
+          <div class="sub-row">
+            <label for="sub_rtPeak">响应时间（峰值）</label>
+            <input type="text" id="sub_rtPeak" class="sub-input" placeholder="请输入响应时间">
+          </div>
+        </div>
+
+        <div class="sub-row sub-row-full">
+          <label for="sub_remark">订阅备注</label>
+          <textarea id="sub_remark" class="sub-textarea" placeholder="请输入订阅备注"></textarea>
         </div>
       </div>
 
@@ -827,6 +843,7 @@
   <script src="js/data/provider-data.js"></script>
   <script src="js/ui/searchable-select.js"></script>
   <script src="js/ui/date-picker.js"></script>
+  <script src="js/ui/dialog-utils.js"></script>
   <script src="js/data/department-data.js"></script>
   <script src="js/ui/subscribe-manager.js"></script>
   <script src="js/ui/subscribe-ui.js"></script>

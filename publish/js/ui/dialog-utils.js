@@ -1,0 +1,212 @@
+/**
+ * 弹窗通用行为：滚动锁定 + 标题栏拖拽
+ *
+ * ── 为什么抽出来 ──────────────────────────────────────
+ * 这两件事跟「订阅」业务无关，任何弹窗（订阅弹窗、文档子弹窗、
+ * 服务详情弹窗）都要用。放业务模块里会各写一遍，还容易漏掉某层，
+ * 所以单独成文件，对外只暴露 4 个函数。
+ *
+ * ── 对外 ──────────────────────────────────────────────
+ *   DialogUtils.lockScroll()              打开弹窗时调用（内部计数，嵌套只锁一次）
+ *   DialogUtils.unlockScroll()            关闭弹窗时调用（计数归零才真正解锁）
+ *   DialogUtils.forceUnlockAll()         兜底：关闭最外层弹窗时一次性解锁
+ *   DialogUtils.makeDraggable(dialog, handle)  让标题栏可以拖动整个弹窗
+ *
+ * ── 滚动锁定的做法 ────────────────────────────────────
+ * CSS 侧只有一条 `body.dialog-open { overflow: hidden }`（在 theme.css）。
+ * JS 侧维护一个计数器：
+ *   订阅弹窗打开 → 计数 1 → 锁
+ *   再开文档子弹窗 → 计数 2 → 已经锁了，什么都不做（这就是「始终只锁一次」）
+ *   关文档子弹窗 → 计数 1 → 还锁着
+ *   关订阅弹窗 → 计数 0 → 解锁
+ * 页面自带 `html { scrollbar-gutter: stable }`，滚动条槽位常驻，
+ * 所以不用补 padding-right，也没有「锁定瞬间横向抖一下」的问题。
+ *
+ * ── 拖拽的做法 ────────────────────────────────────────
+ * 弹窗默认由 `.overlay` 的 flex 居中。第一次按下标题栏时，把它切成
+ * absolute + left/top（位置取当前居中后的坐标），之后跟着指针走。
+ * 好处是没拖过的时候完全不动 CSS 结构，拖过的下次打开由调用方
+ * reset() 复位回居中。
+ */
+(function () {
+  'use strict';
+
+  // ═══════════════════════════════════════════════════
+  // 滚动锁定
+  // ═══════════════════════════════════════════════════
+
+  let lockCount = 0;
+
+  function lockScroll() {
+    lockCount += 1;
+    if (lockCount > 1) return;          // 已经锁了，嵌套层什么都不做
+    // html 和 body 都加：不同浏览器页面滚动容器不一样，双保险
+    document.documentElement.classList.add('dialog-open');
+    document.body.classList.add('dialog-open');
+  }
+
+  function unlockScroll() {
+    if (lockCount === 0) return;
+    lockCount -= 1;
+    if (lockCount > 0) return;          // 上层弹窗还开着，保持锁定
+    releaseLock();
+  }
+
+  /** 不管计数器，直接解锁（关最外层弹窗 / 异常兜底用） */
+  function forceUnlockAll() {
+    if (lockCount === 0) return;
+    lockCount = 0;
+    releaseLock();
+  }
+
+  function releaseLock() {
+    document.documentElement.classList.remove('dialog-open');
+    document.body.classList.remove('dialog-open');
+  }
+
+  // ═══════════════════════════════════════════════════
+  // 标题栏拖拽
+  // ═══════════════════════════════════════════════════
+
+  /** 拖到最接近边缘还要留一点点，免得标题栏被贴死在屏幕边上 */
+  const EDGE_GAP = 4;
+
+  /**
+   * @param {HTMLElement} dialog 弹窗本体（.sub-dialog / .doc-dialog / .dialog）
+   * @param {HTMLElement} handle 拖拽把手（一般是标题栏 .sub-head）
+   * @returns {{reset: Function} | null}
+   */
+  function makeDraggable(dialog, handle) {
+    if (!dialog || !handle) return null;
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let origin = null;   // 按下那一刻的 { left, top, w, h, ow, oh }
+
+    /** 弹窗相对 overlay（也就是视口）的位置和尺寸 */
+    function measure() {
+      const overlay = dialog.parentElement;
+      const d = dialog.getBoundingClientRect();
+      const o = overlay ? overlay.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      return {
+        left: d.left - o.left,
+        top: d.top - o.top,
+        w: d.width,
+        h: d.height,
+        ow: o.width,
+        oh: o.height,
+      };
+    }
+
+    /** 夹在可视区内：左边/上边不小于 EDGE_GAP，右边/下边不超出 overlay */
+    function clamp(left, top, box) {
+      const maxLeft = Math.max(0, box.ow - box.w - EDGE_GAP);
+      const maxTop = Math.max(0, box.oh - box.h - EDGE_GAP);
+      return [
+        Math.min(Math.max(left, EDGE_GAP), Math.max(EDGE_GAP, maxLeft)),
+        Math.min(Math.max(top, EDGE_GAP), Math.max(EDGE_GAP, maxTop)),
+      ];
+    }
+
+    /** 标题栏上的按钮/输入框不参与拖拽，否则关不掉、选不中 */
+    function isInteractiveTarget(e) {
+      const el = e.target;
+      if (!el || !el.closest) return false;
+      return Boolean(el.closest('button, input, select, textarea, a, [data-no-drag]'));
+    }
+
+    function onPointerDown(e) {
+      if (e.button != null && e.button !== 0) return;   // 只响应左键
+      if (isInteractiveTarget(e)) return;
+
+      const box = measure();
+      dragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      origin = box;
+
+      // 第一次拖动才脱离 flex 居中，之后一直用绝对定位
+      if (dialog.style.position !== 'absolute') {
+        dialog.style.position = 'absolute';
+        dialog.style.margin = '0';
+        dialog.classList.add('is-dragged');
+      }
+      const [l, t] = clamp(box.left, box.top, box);
+      dialog.style.left = l + 'px';
+      dialog.style.top = t + 'px';
+
+      handle.classList.add('is-dragging');
+      if (handle.setPointerCapture && e.pointerId != null) {
+        try { handle.setPointerCapture(e.pointerId); } catch (_) { /* 部分浏览器不支持 */ }
+      }
+      e.preventDefault();   // 阻止拖拽时选中标题文字
+    }
+
+    function onPointerMove(e) {
+      if (!dragging || !origin) return;
+      const [l, t] = clamp(origin.left + (e.clientX - startX), origin.top + (e.clientY - startY), origin);
+      dialog.style.left = l + 'px';
+      dialog.style.top = t + 'px';
+      e.preventDefault();
+    }
+
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      origin = null;
+      handle.classList.remove('is-dragging');
+      if (handle.releasePointerCapture && e && e.pointerId != null) {
+        try { handle.releasePointerCapture(e.pointerId); } catch (_) { /* 已自动释放 */ }
+      }
+    }
+
+    /** 回到 flex 居中（每次打开弹窗时调用） */
+    function reset() {
+      dragging = false;
+      origin = null;
+      dialog.style.position = '';
+      dialog.style.left = '';
+      dialog.style.top = '';
+      dialog.style.margin = '';
+      dialog.classList.remove('is-dragged');
+      handle.classList.remove('is-dragging');
+    }
+
+    // 窗口变小后，已拖到右下角的弹窗会被截掉，resize 时夹回来
+    function onResize() {
+      if (dialog.style.position !== 'absolute') return;
+      const box = measure();
+      const [l, t] = clamp(box.left, box.top, box);
+      dialog.style.left = l + 'px';
+      dialog.style.top = t + 'px';
+    }
+
+    handle.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('resize', onResize);
+
+    // 兜底：老 Safari 没有 Pointer Events 时用鼠标事件
+    const noPointer = typeof window.PointerEvent === 'undefined';
+    if (noPointer) {
+      handle.addEventListener('mousedown', onPointerDown);
+      window.addEventListener('mousemove', onPointerMove);
+      window.addEventListener('mouseup', endDrag);
+    }
+
+    return { reset };
+  }
+
+  // ═══════════════════════════════════════════════════
+
+  if (typeof window !== 'undefined') {
+    window.DialogUtils = {
+      lockScroll,
+      unlockScroll,
+      forceUnlockAll,
+      makeDraggable,
+    };
+  }
+})();
