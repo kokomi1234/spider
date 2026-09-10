@@ -152,8 +152,6 @@
       <div class="toolbar" data-page-node-id="gkjfH8qhqyzf6r0cyxDnRR">
         <a class="outlined btn-sm" href="index.html" data-page-node-id="H3YoFnGBOOV5kiZoHUJK9M">← 返回首页</a>
         <a class="outlined btn-sm" href="subscription.html">服务订阅关系查询</a>
-        <button class="filled btn-sm" id="btnQuery" data-page-node-id="DPExQcLaXQpQDSLi8zuv1t">查 询</button>
-        <button class="outlined btn-sm" id="btnReset" data-page-node-id="GJHAFzRBsidcbI90Qe4jSD">重 置</button>
         <button class="outlined btn-sm" id="btnExportCsv" title="导出当前筛选结果" data-page-node-id="j1j0RfBYlH0aFLRKOBG7HG">导 出</button>
       </div>
     </div>
@@ -185,6 +183,7 @@
         <button type="button" class="chevron" id="filterToggle"
                 aria-expanded="true" aria-controls="filterBody"
                 title="展开 / 收起筛选条件" data-page-node-id="HnOitHksR8arR3TkJsdd8d">▼</button>
+
       </div>
       <div class="card-body" id="filterBody" data-page-node-id="YdrZ547ihfHFhn4BgdaWvw">
         <div class="form-grid" data-page-node-id="wizr6ouDbx3q6wzsNU6ECV">
@@ -297,6 +296,13 @@
           </div>
         </div>
       </div>
+
+
+        <!-- 筛选区操作行：查询在前、重置在后（三页统一） -->
+        <div class="filter-actions">
+          <button class="filled btn-sm" id="btnQuery" data-page-node-id="DPExQcLaXQpQDSLi8zuv1t">查 询</button>
+          <button class="outlined btn-sm" id="btnReset" data-page-node-id="GJHAFzRBsidcbI90Qe4jSD">重 置</button>
+        </div>
     </div>
 
     <!-- ═══ 人员查询卡片（userinfo.har：按姓名搜用户 / 按工号查详情） ═══ -->

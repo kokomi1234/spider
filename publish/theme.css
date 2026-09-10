@@ -1877,3 +1877,19 @@ body {
 .tbl-scroll .subq-table thead th.col-prio {
   background: #FBFBF9;
 }
+
+/* ── 筛选区操作行（三页统一）─────────────────────────
+   位置：筛选卡片 body 的末尾；对齐：右对齐；顺序：查询在前、重置在后。
+   按钮给一个最小宽度，让「查 询」「重 置」视觉重量一致，
+   不会因为字数不同显得参差。 */
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--sp1);
+  flex-wrap: wrap;
+  margin-top: var(--sp2);
+}
+.filter-actions > .btn-sm {
+  min-width: 96px;
+}
