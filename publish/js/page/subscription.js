@@ -395,6 +395,10 @@
       const sorted = sortRows(state.allRows);
       const start = (state.pageNum - 1) * state.pageSize;
       state.rows = sorted.slice(start, start + state.pageSize);
+    } else if (state.sort && state.mode === 'server' && state.rows) {
+      // 后端分页：本页内按当前优先级方向排（全局排序已在超阈值时提示，仅作用于当前页）。
+      // 之前这里只排了 client 模式，server 模式下列头指示器变了但行序没动——排序形同虚设。
+      state.rows = sortRows(state.rows);
     }
     return state.rows;
   }
@@ -708,6 +712,7 @@
       } else {
         const all = await fetchAll();
         rows = all.rows;
+        rows = sortRows(rows);     // 与屏幕一致：按当前优先级方向排（byBatch 分支会再覆盖为批次序）
         truncated = all.truncated;
       }
       if (!rows.length) { toast('⚠️ 没有可导出的数据', 2200); return; }
