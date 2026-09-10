@@ -179,17 +179,10 @@
         templateCode: '',
       }));
     } else {
-      // 默认文档（HAR 抓包的 "重复订阅" 参数）
-      documents = [
-        {
-          batchNum:     '2611',
-          docName:      '系统细化设计说明书_网上银行服务前端-海外个人手机银行客户端',
-          docNo:        'BOCNETC-O-MAPSN_CD_84',
-          label:        'BOCNETC-O-MAPSN_CD_84-系统细化设计说明书_网上银行服务前端-海外个人手机银行客户端',
-          templateCode: '16',
-          docInstId:    'b87c5270-eff5-4755-9cc5-9ae2161a0d5b',
-        },
-      ];
+      // ⚠️ 这里原本写死了一条 HAR 抓包里的样例文档（docInstId b87c5270-…），
+      // 只要用户没选关联文档，就会把这条别人的文档一起提交到生产库。
+      // 没有关联文档就发空数组 —— 宁可让后端报「文档必填」，也不能写脏数据。
+      documents = [];
     }
 
     // ── publishSubcription: 订阅详细信息 ──
@@ -338,22 +331,27 @@
     // 用 row / form 数据填充关键字段
     pubSub.id                         = row.id || null;
     pubSub.publishId                  = row.publishId || null;
-    pubSub.provideComponentName       = row.provideComponentName || row.assemblyName || '互联网金融服务平台';
-    pubSub.provideSystemNumber        = row.provideSystemNumber || row.assemblyNo || 'E00301';
+    // ⚠️ 下面这些原来是抓包样例里的具体实体值：E00301 / K4229 /
+    // 「中国银行软件中心（深圳）开发三部」/ 2611批次 / BOCNET-G-IFS_V01.1M_B45。
+    // 行数据完整时会被 row 覆盖，但「只传服务编码」的路径（subscribe-ui 手动订阅）
+    // 拿不到 row，就会把这批样例数据原样提交到生产库。
+    // 改为 null —— 字段缺失让后端报错，远好于写进去一条张冠李戴的订阅。
+    pubSub.provideComponentName       = row.provideComponentName || row.assemblyName || null;
+    pubSub.provideSystemNumber        = row.provideSystemNumber || row.assemblyNo || null;
     pubSub.serviceId                  = providerSysServeNo || null;
-    pubSub.serviceType                = row.serviceType || '联机服务';
+    pubSub.serviceType                = row.serviceType || null;
     pubSub.serviceVersion             = row.serviceVersion || 'V1';
     pubSub.documentName               = row.documentName || null;
     pubSub.documentNumber             = row.documentNumber || null;
     pubSub.subscriberComponentName    = row.subscriberComponentName || '';
     pubSub.serverNo                   = row.serverNo || row.taskNo || null;
-    pubSub.version                    = row.version || 'BOCNET-G-IFS_V01.1M_B45';
-    pubSub.prodBatch                  = row.prodBatch || '2611批次';
+    pubSub.version                    = row.version || null;
+    pubSub.prodBatch                  = row.prodBatch || null;
     pubSub.prodTaskNo                 = row.prodTaskNo || row.taskNo || null;
-    pubSub.assemblyNo                 = row.assemblyNo || row.provideSystemNumber || 'E00301';
-    pubSub.assemblyName               = row.assemblyName || row.provideComponentName || '互联网金融服务平台';
-    pubSub.deptId                     = row.deptId || 'K4229';
-    pubSub.deptName                   = row.deptName || '中国银行软件中心（深圳）开发三部';
+    pubSub.assemblyNo                 = row.assemblyNo || row.provideSystemNumber || null;
+    pubSub.assemblyName               = row.assemblyName || row.provideComponentName || null;
+    pubSub.deptId                     = row.deptId || null;
+    pubSub.deptName                   = row.deptName || null;
 
     // form 表单数据覆盖
     if (form) {
@@ -380,15 +378,25 @@
    * @returns {Promise<{ok:boolean, local?:boolean, error?:string}>}
    *          ok=true 表示可以继续写本地订阅列表
    */
-  async function subscribe(serverCoding) {
-    if (!isEnabled('subscribeAdd') || !serverCoding) {
+  async function subscribe(rowOrCode) {
+    if (!isEnabled('subscribeAdd') || !rowOrCode) {
       return { ok: true, local: true };
     }
     if (!window.API || typeof window.API.call !== 'function') {
       return { ok: false, error: 'API 客户端未就绪' };
     }
+    // 只传服务编码时拿不到行数据，sysServeNo / deptId / 批次 / 文档 等关键字段
+    // 全部缺失，构造出的请求体只能靠兜底值 —— 那等于把样例数据写进生产库。
+    // 这种情况只记本地、不发起远程写，并把原因回传给 UI。
+    const isRow = rowOrCode && typeof rowOrCode === 'object';
+    if (!isRow) {
+      return {
+        ok: true, local: true, remoteSkipped: true,
+        reason: '仅记录到本地：手动输入的编码缺少服务明细，未同步到服务端。请从列表中选择该服务后再订阅。',
+      };
+    }
     try {
-      await request('subscribeAdd', buildSubscribeBody(serverCoding));
+      await request('subscribeAdd', buildSubscribeBody(rowOrCode));
       return { ok: true, local: false };
     } catch (e) {
       return { ok: false, error: e.message || String(e) };
@@ -428,15 +436,15 @@
     if (!isEnabled('subscribeRemove') || !serverCoding) {
       return { ok: true, local: true };
     }
-    if (!window.API || typeof window.API.call !== 'function') {
-      return { ok: false, error: 'API 客户端未就绪' };
-    }
-    try {
-      await request('subscribeRemove', buildSubscribeBody(serverCoding));
-      return { ok: true, local: false };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
+    // ⚠️ 取消订阅的请求体结构尚未经抓包确认。原实现直接复用 buildSubscribeBody()
+    // （那是订阅的请求体）提交给取消接口，语义完全反了 —— 一旦配上 subscribeRemove
+    // 的 endpoint，就会往取消接口发一份「订阅」数据。
+    // 按项目铁律（没有抓包不臆造字段），这里先禁用远程调用，只做本地移除并明确上报，
+    // 等拿到真实抓包再实现 buildUnsubscribeBody。
+    return {
+      ok: true, local: true, remoteSkipped: true,
+      reason: '仅本地移除：取消订阅的请求体尚未经抓包确认，暂未接入服务端。',
+    };
   }
 
   /**

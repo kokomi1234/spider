@@ -174,7 +174,10 @@
         window.SubscribeManager.remove(code);
         updateCount();
         renderSubList();
-        showToast(`已移除: ${code}`);
+        // remoteSkipped：只改了本地，服务端并未收到请求。必须说清楚，
+        // 否则用户会以为服务端也一起删掉了。
+        showToast(res.remoteSkipped ? `⚠️ ${res.reason || '仅本地移除，未同步服务端'}` : `已移除: ${code}`,
+                  res.remoteSkipped ? 4000 : 2500, res.remoteSkipped ? 'warn' : 'info');
       });
     });
   }
@@ -199,7 +202,9 @@
     window.SubscribeManager.add(trimmed);
     updateCount();
     renderSubList();
-    showToast(`✅ 已添加: ${trimmed}`);
+    // remoteSkipped：只写进本地列表，服务端没有这条订阅。必须说清楚。
+    showToast(res.remoteSkipped ? `⚠️ ${res.reason || '仅本地记录，未同步服务端'}` : `✅ 已添加: ${trimmed}`,
+              res.remoteSkipped ? 4000 : 2500, res.remoteSkipped ? 'warn' : 'info');
   }
 
   /** 显示批量导入表单 */
