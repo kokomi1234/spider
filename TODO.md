@@ -14,15 +14,6 @@
       需要补抓一次「页面上点在 WPSN 上、批次留空、点查询」的 har，交给我导入即可。
       现有抓包（`服务订阅关系查询.har`）里该条件的真实结果是 **0 条**。
 
-## ❓ 待验证（已实现初版，缺真实环境确认）
-
-- [ ] **跳转 ITAMP 服务搜索的参数预填**：首页「🔗 ITAMP 服务搜索」按钮已按
-      `2026-09-11` 的 `serviceSearchView` 抓包字段名拼 URL（`compNum / putBatch /
-      providerServiceNameAndId / useNum / serverCodingList / sysServeNoList / deptId /
-      isSendOutsideSystem`），但目标 Vue 单页**是否认这些 query 参数、预填后是否自动查询**
-      尚未在真实环境确认（该页登录后跳 `?sessionid=...&statuscode=10000`，说明它至少读 query）。
-      内网可访问时点一次验证；若目标页不认，退化为「跳过去手动填」。
-
 ## 📝 使用约定
 
 - 一条待办写清三件事：**目标是什么、卡在哪、需要什么**。
