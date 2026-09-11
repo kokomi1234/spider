@@ -37,9 +37,11 @@
   const DEFAULT_CALLER = 'E00406';
 
   /** 表格列：[字段 key, 中文列名, 是否等宽字体]，顺序与 HTML 表头一致。
-      第一列是算出来的优先级（不是报文字段），一眼就能看到该先处理哪条。 */
+      前两列是固定左列：优先级（算出来的，一眼看该先处理哪条）+ 订阅关系基线状态。
+      剩下的是可横向滚动的数据列。 */
   const COLUMNS = [
     ['_prioText',              '优先级',                       false],
+    ['status',                 '订阅关系基线状态',             false],   // 与优先级一起固定左列
     ['sysNo',                  '提供方应用系统编号',           true],
     ['assemblyEnName',         '提供方应用系统英文简称',       true],
     ['sysServeNo',             '提供方应用系统服务编号',       true],
@@ -54,7 +56,6 @@
     ['prodBatch',              '调用方投产/变更批次',          false],
     ['prodTaskNo',             '调用方任务编号',               true],
     ['reviewStatus',           '订阅关系审核流程状态',         false],
-    ['status',                 '订阅关系基线状态',             false],
     ['prodImplementationUnit', '订阅方产品实施单元',           false],
     ['subscriberUserName',     '订阅人',                       false],
     ['prodDeptName',           '调用方部门名称',               false],
@@ -142,6 +143,8 @@
   const EXPORT_MAX = 5000;
   /** 结果不超过这个条数时，排序走「整批拉回来 + 前端分页」，逾期/临期才是全局排在最前 */
   const CLIENT_SORT_MAX = 1000;
+  /** 窗口扇出的并发上限：12 个批次分 2 波（6×2），墙钟时间≈最慢单个批次，避免一次性打爆 */
+  const WINDOW_CONCURRENCY = 6;
 
   // ═══════════════════════════════════════════════════
   // 状态
@@ -266,6 +269,10 @@
   // 查询 & 渲染
   // ═══════════════════════════════════════════════════
 
+  /**
+   * 入口：没指定调用方批次时，按「近 12 个月窗口」把每个批次并行拉回来合并
+   * （避免一次查出 years 历史导致响应慢）；指定了批次就走原来的单批次查询。
+   */
   async function query(pageNum) {
     if (!window.ToolApi) { toast('⚠️ 接口层未加载', 2500); return; }
     state.pageNum = pageNum || state.pageNum || 1;
@@ -284,69 +291,181 @@
     const seq = ++state.reqSeq;
     setLoading(true);
     try {
-      // 第一步：先按当前页大小探一次，拿到总数
-      const first = await fetchPage(1);
-      if (seq !== state.reqSeq) return;              // 已经有更新的请求发出去了
-      if (!first.ok) {
-        toast(`⚠️ 查询失败：${shortError(first.error)}`, 3500);
-        showQueryFail(first.error || '未知错误');
-        if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
-        return;
-      }
-      hideQueryFail();
-      state.total = first.total;
-      state.queried = true;
-
-      // 第二步：排序开启且总量不大时，整批拉回来做「全局」排序 + 前端分页，
-      // 这样逾期 / 临期的才是真的排在最前面，而不是只在当前页里排。
-      if (state.sort && first.total > 0 && first.total <= CLIENT_SORT_MAX) {
-        let all = null;
-        if (first.total <= first.rows.length) {
-          all = first.rows.map(decorateRow);          // 一页就装得下，不用再请求
-        } else {
-          try {
-            all = (await fetchAll()).rows;
-          } catch (e) {
-            // 整批拉取失败（网络抖动 / 离线回放缺条目）不该让整个查询报错 ——
-            // 第一页的数据是好的，退化成后端分页照样能用，只是排序只作用于当前页。
-            all = null;
-            if (!state.fetchAllWarned) {
-              state.fetchAllWarned = true;
-              toast(`⚠️ 未能整批拉取全部 ${num(first.total)} 条（${shortError(e.message)}），`
-                + '已退化为按页展示，排序只作用于当前页', 4200);
-            }
-          }
-          if (seq !== state.reqSeq) return;
-        }
-        if (all && all.length) {
-          state.allRows = all;
-          state.total = all.length;
-          state.mode = 'client';
-        } else {
-          state.mode = 'server';
-          state.allRows = null;
-          state.rows = first.rows.map((r) => decorateRow(r));
-        }
-      } else {
-        state.mode = 'server';
-        state.allRows = null;
-        state.rows = first.rows.map((r) => decorateRow(r));
-        if (state.sort && first.total > CLIENT_SORT_MAX && !state.sortLimited) {
-          state.sortLimited = true;
-          toast(`⚠️ 结果共 ${num(first.total)} 条，超过 ${CLIENT_SORT_MAX} 条上限，`
-            + '只对当前页排序；可缩小筛选范围后查看全局顺序', 4000);
-        }
-      }
-
-      render();
-      if (!state.total) toast('查询完成，没有匹配的订阅关系', 2200);
-      if (first.local) toast('⚠️ 查询接口未接入（endpoint 为空），返回空结果', 3000);
+      // 指定了调用方批次 → 后端已经按该批次过滤，单条查询最快；
+      // 没指定 → 用窗口内各批次并行扇出，合并后前端分页（见 runWindowQuery）。
+      if (nextCond.prodBatch) await runSingleQuery(seq, nextCond);
+      else await runWindowQuery(seq, nextCond);
     } catch (e) {
       toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
       console.error('[subscription] query 异常', e);
     } finally {
       if (seq === state.reqSeq) setLoading(false);
     }
+  }
+
+  /** 指定了调用方批次：与原逻辑一致，单条查询 +（可选）整批拉回排序 */
+  async function runSingleQuery(seq, cond) {
+    const first = await fetchPage(1);
+    if (seq !== state.reqSeq) return;              // 已经有更新的请求发出去了
+    if (!first.ok) {
+      toast(`⚠️ 查询失败：${shortError(first.error)}`, 3500);
+      showQueryFail(first.error || '未知错误');
+      if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
+      return;
+    }
+    hideQueryFail();
+    state.total = first.total;
+    state.queried = true;
+
+    // 排序开启且总量不大时，整批拉回来做「全局」排序 + 前端分页，
+    // 这样逾期 / 临期的才是真的排在最前面，而不是只在当前页里排。
+    if (state.sort && first.total > 0 && first.total <= CLIENT_SORT_MAX) {
+      let all = null;
+      if (first.total <= first.rows.length) {
+        all = first.rows.map(decorateRow);          // 一页就装得下，不用再请求
+      } else {
+        try {
+          all = (await fetchAll()).rows;
+        } catch (e) {
+          // 整批拉取失败（网络抖动 / 离线回放缺条目）不该让整个查询报错 ——
+          // 第一页的数据是好的，退化成后端分页照样能用，只是排序只作用于当前页。
+          all = null;
+          if (!state.fetchAllWarned) {
+            state.fetchAllWarned = true;
+            toast(`⚠️ 未能整批拉取全部 ${num(first.total)} 条（${shortError(e.message)}），`
+              + '已退化为按页展示，排序只作用于当前页', 4200);
+          }
+        }
+        if (seq !== state.reqSeq) return;
+      }
+      if (all && all.length) {
+        state.allRows = all;
+        state.total = all.length;
+        state.mode = 'client';
+      } else {
+        state.mode = 'server';
+        state.allRows = null;
+        state.rows = first.rows.map((r) => decorateRow(r));
+      }
+    } else {
+      state.mode = 'server';
+      state.allRows = null;
+      state.rows = first.rows.map((r) => decorateRow(r));
+      if (state.sort && first.total > CLIENT_SORT_MAX && !state.sortLimited) {
+        state.sortLimited = true;
+        toast(`⚠️ 结果共 ${num(first.total)} 条，超过 ${CLIENT_SORT_MAX} 条上限，`
+          + '只对当前页排序；可缩小筛选范围后查看全局顺序', 4000);
+      }
+    }
+
+    render();
+    if (!state.total) toast('查询完成，没有匹配的订阅关系', 2200);
+    if (first.local) toast('⚠️ 查询接口未接入（endpoint 为空），返回空结果', 3000);
+  }
+
+  /**
+   * 没指定调用方批次：默认只看「当月 −2 个月 → 当月 +9 个月」这 12 个批次
+   * （如 26年9月 ⇒ 2607批次 ~ 2706批次），把窗口内每个批次并行拉回、合并、
+   * 去重后统一前端分页 + 优先级排序。相比一次查出全部历史，响应更快也更聚焦。
+   */
+  async function runWindowQuery(seq, cond) {
+    const res = await fetchWindowAll(cond, seq);
+    if (seq !== state.reqSeq) return;              // 已被更新的查询取代，安静退出
+    if (res.aborted) return;
+    if (!res.ok) {
+      toast(`⚠️ 查询失败：${shortError(res.error)}`, 3500);
+      showQueryFail(res.error || '未知错误');
+      if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
+      return;
+    }
+    hideQueryFail();
+    state.queried = true;
+
+    // 窗口内全量已在本地，统一走 client 模式（排序 / 分页 / 导出 / 统计都复用现成逻辑）
+    const all = res.rows.map(decorateRow);
+    state.allRows = all;
+    state.total = all.length;
+    state.mode = 'client';
+    state.rows = [];
+
+    if (res.partial.length) {
+      toast(`⚠️ 窗口内有 ${res.partial.length} 个批次查询失败（${res.partial.join('、')}），已展示其余批次`, 4200);
+    }
+
+    render();
+    if (!state.total) toast('查询完成，窗口内（近 12 个月）没有匹配的订阅关系', 2400);
+    if (res.local) toast('⚠️ 查询接口未接入（endpoint 空），返回空结果', 3000);
+  }
+
+  /**
+   * 生成「近 12 个月」批次 label 列表：从 (当前月 −2) 到 (当前月 +9)，含两端。
+   * 例：26年9月 ⇒ [2607批次, 2608批次, …, 2706批次]，共 12 个。
+   * label 格式与抓包一致（YYMM批次），直接作为 prodBatch 过滤值发后端。
+   */
+  function batchWindow() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 9, 1);
+    const out = [];
+    const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cur <= end) {
+      const yy = String(cur.getFullYear()).slice(2);
+      const mm = String(cur.getMonth() + 1).padStart(2, '0');
+      out.push(`${yy}${mm}批次`);
+      cur.setMonth(cur.getMonth() + 1);
+    }
+    return out;
+  }
+
+  /**
+   * 窗口扇出：按批次并行拉取（并发上限 WINDOW_CONCURRENCY，避免一次性打爆），
+   * 合并去重。返回 { ok, rows, partial[], local, aborted }。
+   * 全部批次都失败才算失败；部分失败仍展示成功的，并提示哪些批次没拿到。
+   */
+  async function fetchWindowAll(cond, seq) {
+    const batches = batchWindow();
+    const seen = new Set();
+    const rows = [];
+    const partial = [];
+    let local = false;
+
+    for (let i = 0; i < batches.length; i += WINDOW_CONCURRENCY) {
+      if (seq !== state.reqSeq) return { aborted: true };
+      const slice = batches.slice(i, i + WINDOW_CONCURRENCY);
+      const results = await Promise.all(slice.map((b) => fetchBatchAllPages(cond, b)));
+      results.forEach((r, idx) => {
+        if (r.local) local = true;
+        if (!r.ok) { partial.push(slice[idx]); return; }
+        for (const row of r.rows) {
+          const k = rowKey(row);
+          if (!seen.has(k)) { seen.add(k); rows.push(row); }
+        }
+      });
+    }
+    const ok = partial.length < batches.length;     // 全失败才算失败
+    return { ok, rows, partial, local, error: ok ? '' : `批次 ${partial.join('、')} 查询失败` };
+  }
+
+  /** 单个批次：翻页拉全（默认 pageSize 500），返回 { ok, rows, local } */
+  async function fetchBatchAllPages(cond, batch) {
+    const out = [];
+    let page = 1;
+    while (true) {
+      const res = await window.ToolApi.fetchSubscriptionPublishHistory({
+        ...cond,
+        prodBatch: batch,
+        pageNum: page,
+        pageSize: EXPORT_PAGE_SIZE,
+      });
+      if (!res.ok) return { ok: false, error: res.error, local: res.local };
+      if (res.local) { /* 未接入时 res.rows 为空，下面的判断会自然收尾 */ }
+      out.push(...(res.rows || []));
+      if (!res.rows || !res.rows.length) break;
+      if (out.length >= (res.total || 0)) break;
+      if (out.length >= EXPORT_MAX) break;
+      page++;
+    }
+    return { ok: true, local: false, rows: out };
   }
 
   /** 取某一页（默认按当前每页条数） */
@@ -518,7 +637,7 @@
       const cells = COLUMNS.map(([k, , mono]) => {
         const raw = r[k];
         const text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
-        if (k === 'status') return `<td title="${esc(text)}">${statusTag(raw)}</td>`;
+        if (k === 'status') return `<td class="col-st" title="${esc(text)}">${statusTag(raw)}</td>`;
         if (k === '_prioText') return prioCell(r);
         return `<td class="${mono ? 'cell-code' : ''}" title="${esc(text)}">${esc(text)}</td>`;
       }).join('');
@@ -1028,7 +1147,9 @@
       window.createTableResizer(document.querySelector('.subq-table'), {
         minWidth: 60,
         skipFirst: true,                     // 复选框列固定 55px，不参与拖拽
-        storageKey: 'itamp.subq.colWidths',
+        skipIndices: [1, 2],                 // 优先级列 + 基线状态列（左固定区，拖动会破坏 sticky 偏移）
+        // v2：列顺序调整（基线状态移到优先级右侧）后旧存档已失效，换 key 防错位
+        storageKey: 'itamp.subq.colWidths.v2',
       });
     }
 

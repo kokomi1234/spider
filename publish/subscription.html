@@ -49,8 +49,8 @@
     .subq-table tbody tr.is-picked td { background: var(--primary-c); }
     .subq-table tbody tr.is-picked:hover td { background: var(--primary-c); }
 
-    /* 左固定区：复选框列（55px）+ 优先级列（紧贴其后）。
-       优先级是最该先看的信息，横向滚动时不能丢，所以两列一起固定。 */
+    /* 左固定区：复选框列（55px）+ 优先级列（130px）+ 基线状态列（130px）。
+       优先级、基线状态是最该先看的信息，横向滚动时不能丢，三列一起固定。 */
     .subq-table th.col-chk,
     .subq-table td.col-chk {
       position: sticky;
@@ -64,14 +64,24 @@
       left: 55px;                        /* = 复选框列宽，见 colgroup */
       z-index: 2;
       background: var(--surface);
+    }
+    .subq-table th.col-st,
+    .subq-table td.col-st {
+      position: sticky;
+      left: 185px;                       /* = 复选框(55) + 优先级(130)，见 colgroup */
+      z-index: 2;
+      background: var(--surface);
       box-shadow: 6px 0 8px -8px rgba(26, 28, 30, .45);   /* 左固定区的最右一列投阴影 */
     }
     .subq-table thead th.col-chk,
-    .subq-table thead th.col-prio { z-index: 3; background: var(--surface-1); }
+    .subq-table thead th.col-prio,
+    .subq-table thead th.col-st { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-chk,
-    .subq-table tbody tr:hover td.col-prio { background: var(--surface-1); }
+    .subq-table tbody tr:hover td.col-prio,
+    .subq-table tbody tr:hover td.col-st { background: var(--surface-1); }
     .subq-table tbody tr.is-picked td.col-chk,
-    .subq-table tbody tr.is-picked td.col-prio { background: var(--primary-c); }
+    .subq-table tbody tr.is-picked td.col-prio,
+    .subq-table tbody tr.is-picked td.col-st { background: var(--primary-c); }
     .subq-table th.col-op,
     .subq-table td.col-op {
       position: sticky;
@@ -131,6 +141,7 @@
     }
     .subq-table tbody tr.is-overdue td.col-chk,
     .subq-table tbody tr.is-overdue td.col-prio,
+    .subq-table tbody tr.is-overdue td.col-st,
     .subq-table tbody tr.is-overdue td.col-op {
       background: var(--red-c);
       color: var(--on-red-c);
@@ -332,6 +343,7 @@
           <colgroup>
             <col class="col-chk" style="width:55px">
             <col class="col-prio" style="width:130px">
+            <col class="col-st" style="width:130px">
             <col style="width:180px"><col style="width:200px"><col style="width:200px">
             <col style="width:220px"><col style="width:200px"><col style="width:160px">
             <col style="width:140px"><col style="width:140px"><col style="width:200px">
@@ -348,6 +360,7 @@
                   title="默认按优先级排序：逾期 / 临期的在最上面。点击循环切换 宽松在前 → 恢复后端顺序 → 紧急在前（后端分页，仅排当前页）；规则见 js/ui/priority.js">
                 优先级<span class="sort-ind" id="prioSortInd">↑</span>
               </th>
+              <th class="col-st" title="status">订阅关系基线状态</th>
               <th title="sysNo">提供方应用系统编号</th>
               <th title="assemblyEnName">提供方应用系统英文简称</th>
               <th title="sysServeNo">提供方应用系统服务编号</th>
@@ -362,7 +375,6 @@
               <th title="prodBatch">调用方投产/变更批次</th>
               <th title="prodTaskNo">调用方任务编号</th>
               <th title="reviewStatus">订阅关系审核流程状态</th>
-              <th title="status">订阅关系基线状态</th>
               <th title="prodImplementationUnit">订阅方产品实施单元</th>
               <th title="subscriberUserName">订阅人</th>
               <th title="prodDeptName">调用方部门名称</th>

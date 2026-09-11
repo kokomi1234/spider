@@ -15,6 +15,7 @@
  * createTableResizer(tableEl, {
  *   minWidth: 60,                    // 单列最小宽度
  *   skipFirst: true,                 // 第一列（复选框）不给把手
+ *   skipIndices: [],                 // 额外跳过的列下标（如固定左列：复选框/优先级/基线状态）
  *   storageKey: 'subq.colWidths',    // 记到 localStorage（留空则不记）
  *   onChange(widths, total) {},
  *   onReset(index) {},
@@ -28,6 +29,10 @@
     const options = opts || {};
     const MIN = Number(options.minWidth) || 60;
     const SKIP_FIRST = options.skipFirst !== false;
+    // 固定左列（复选框 / 优先级 / 基线状态）下标——这些列宽度写死在 colgroup，
+    // 拖动会破坏 sticky 的 left 偏移，所以一律不给把手。
+    const SKIP = new Set([...(options.skipIndices || [])]);
+    if (SKIP_FIRST) SKIP.add(0);
     const STORAGE_KEY = options.storageKey || '';
 
     const cols = Array.from(table.querySelectorAll('colgroup > col'));
@@ -67,7 +72,7 @@
 
     function attachHandles() {
       ths.forEach((th, i) => {
-        if (SKIP_FIRST && i === 0) return;
+        if (SKIP.has(i)) return;
         if (th.querySelector('.col-resizer')) return;
 
         const handle = document.createElement('span');
