@@ -196,6 +196,84 @@
     .prio-summary .prio-chip.is-unknown  { background: var(--surface); color: var(--faint); }
     .prio-summary .prio-summary-note { color: var(--faint); font-size: var(--fs-nano); }
     .prio-summary .text-btn { margin-left: auto; }
+
+    /* ── 点击复制功能 ────────────────────────────────────── */
+    .copy-cell {
+      cursor: pointer;
+      position: relative;
+      transition: background 0.15s ease;
+    }
+    .copy-cell:hover {
+      background: var(--primary-c) !important;
+    }
+    .copy-cell::after {
+      content: '📋';
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      pointer-events: none;
+    }
+    .copy-cell:hover::after {
+      opacity: 0.6;
+    }
+    .copy-cell:active::after {
+      opacity: 1;
+    }
+    /* 详情弹窗的 dd 元素也支持复制 */
+    .kv-grid dd.copy-cell {
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .kv-grid dd.copy-cell:hover {
+      background: var(--primary-c) !important;
+    }
+
+    /* ── 批量修改批次时间弹窗 ─────────────────────────────────────── */
+    .batch-time-dialog { max-width: 720px; min-width: 600px; }
+    .batch-time-body { max-height: 60vh; overflow-y: auto; padding: 16px 20px; }
+    .batch-time-hint {
+      font-size: var(--fs-sm);
+      color: var(--muted);
+      margin: 0 0 16px;
+      line-height: 1.6;
+    }
+    .batch-time-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: var(--fs-sm);
+    }
+    .batch-time-table th,
+    .batch-time-table td {
+      padding: 8px 10px;
+      border: 1px solid var(--outline-soft);
+      text-align: left;
+    }
+    .batch-time-table thead th {
+      background: var(--surface-1);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: var(--fs-nano);
+    }
+    .batch-time-table tbody tr:hover td {
+      background: var(--surface-1);
+    }
+    .batch-time-table input[type="date"] {
+      width: 100%;
+      padding: 4px 8px;
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      font-size: var(--fs-sm);
+      color: var(--on-surface);
+      background: var(--surface);
+    }
+    .batch-time-table .batch-label {
+      font-weight: 600;
+      color: var(--on-surface);
+    }
   </style>
 </head>
 <body>
@@ -324,6 +402,8 @@
                 title="勾选会跨页累计，导出时包含全部勾选行"></span>
           <button class="outlined btn-xs" id="btnCountAll"
                   title="拉取全部查询结果做一次逾期统计（最多 5000 条）">统计全部逾期</button>
+          <button class="outlined btn-xs" id="btnBatchTimeEdit"
+                  title="批量修改近 12 个月各批次的功能测试时间和上线时间">批量修改批次时间</button>
           <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">刷 新</button>
           <button class="outlined btn-xs" id="btnExportByBatch" title="按接口变更批次导出">按接口变更批次导出</button>
           <button class="filled btn-xs" id="btnExport" title="按查询结果导出">按查询结果导出</button>
@@ -428,6 +508,35 @@
       </div>
       <div class="sub-foot">
         <button type="button" class="filled btn-sm" id="btnDetailConfirm">关 闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量修改批次时间弹窗 -->
+  <div class="overlay sub-overlay" id="batchTimeOverlay" role="presentation">
+    <div class="dialog sub-dialog batch-time-dialog" id="batchTimeDialog" role="dialog" aria-modal="true"
+         aria-labelledby="batchTimeTitle" tabindex="-1">
+      <div class="sub-head">
+        <h2 id="batchTimeTitle">批量修改批次时间</h2>
+        <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
+      </div>
+      <div class="sub-body batch-time-body" id="batchTimeBody">
+        <p class="batch-time-hint">设置批次时间后，对应批次内处于「开发基线」的订阅关系将自动转为「功能测试基线」；
+           处于「功能测试基线」的将自动转为「正式版基线」。</p>
+        <table class="batch-time-table">
+          <thead>
+            <tr>
+              <th style="width:160px">批次</th>
+              <th style="width:200px">功能测试时间</th>
+              <th style="width:200px">上线时间</th>
+            </tr>
+          </thead>
+          <tbody id="batchTimeList"></tbody>
+        </table>
+      </div>
+      <div class="sub-foot">
+        <button type="button" class="outlined btn-sm" id="btnBatchTimeCancel">取 消</button>
+        <button type="button" class="filled btn-sm" id="btnBatchTimeSave">保 存</button>
       </div>
     </div>
   </div>

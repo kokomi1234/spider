@@ -10,8 +10,6 @@
  * 两个仍未抓包、按铁律只做预留的点：
  *   1. 导出接口 → ToolApi.exportSubscriptionPublishHistory，endpoint 为空，
  *      未配置时不发请求，直接走本地 CSV（见 exportRows()）。
- *   2. 「订阅关系审核流程状态」只有裸值（"00"/"03"），没有字典接口，
- *      按任务单页的先例**原样展示**，不臆造中文含义。
  *
  * ── 一个需要复核的字段映射 ──────────────────────────────────
  * 行内有 prodBatch 和 prodBatchList 两个批次字段，本页按下面推断取值：
@@ -51,7 +49,7 @@
     ['prodSysServeNo',         '调用方应用系统服务编号',       true],
     ['prodBatch',              '调用方投产/变更批次',          false],
     ['prodTaskNo',             '调用方任务编号',               true],
-    ['reviewStatus',           '订阅关系审核流程状态',         false],
+    ['prodReviewStatus',       '订阅关系审核流程状态',         false],
     ['prodImplementationUnit', '订阅方产品实施单元',           false],
     ['subscriberUserName',     '订阅人',                       false],
     ['prodDeptName',           '调用方部门名称',               false],
@@ -99,6 +97,7 @@
       ['offerEffectiveTime', '调用方生效时间'],
       ['offerOfflineTime', '调用方下线时间'],
       ['prodReviewStatus', '调用方审核流程状态'],
+      ['reviewStatus', '订阅关系审核流程状态（原值）'],
       ['isBranch', '是否分行'],
     ]],
     ['订阅关系', [
@@ -107,6 +106,7 @@
       ['_prioDeadline', '里程碑截止日'],
       ['status', '订阅关系基线状态'],
       ['reviewStatus', '订阅关系审核流程状态（原值）'],
+      ['prodReviewStatus', '调用方审核流程状态（原值）'],
       ['subscriberId', '订阅人EHR号'],
       ['subscriberUserName', '订阅人姓名'],
       ['subscriberStatus', '订阅人状态'],
@@ -133,14 +133,23 @@
     '下线':         'is-offline',
   };
 
-  const PAGE_SIZE = 10;          // 抓包里的默认 pageSize
+  /** 审核流程状态 → { text, class }（值来自后端裸值 "00"/"01"/"02"/"03"/"04"） */
+  const REVIEW_STATUS_MAP = {
+    '00': { text: '未审核', cls: '' },
+    '01': { text: '审核中', cls: 'is-soon' },
+    '02': { text: '审核中', cls: 'is-soon' },
+    '03': { text: '审核完成', cls: 'is-official' },
+    '04': { text: '关闭', cls: 'is-offline' },
+  };
+
+  const PAGE_SIZE = 10;          // 抓包里的默认 pageSize（=10）
   const MIN_PAGE_SIZE = 10;      // 小于等于这个条数就不显示分页条
-  const EXPORT_PAGE_SIZE = 500;
+  const EXPORT_PAGE_SIZE = 50;
   const EXPORT_MAX = 5000;
   /** 结果不超过这个条数时，排序走「整批拉回来 + 前端分页」，逾期/临期才是全局排在最前 */
   const CLIENT_SORT_MAX = 1000;
   /** 窗口扇出的并发上限：12 个批次分 2 波（6×2），墙钟时间≈最慢单个批次，避免一次性打爆 */
-  const WINDOW_CONCURRENCY = 6;
+  const WINDOW_CONCURRENCY = 12;
 
   // ═══════════════════════════════════════════════════
   // 状态
@@ -197,6 +206,28 @@
 
   function num(n) {
     return typeof n === 'number' ? n.toLocaleString('zh-CN') : String(n ?? '—');
+  }
+
+  /** 复制到剪贴板：点击时把文本写入剪贴板，toast 提示成功 */
+  async function copyToClipboard(text, toastEl) {
+    const raw = String(text ?? '').trim();
+    if (!raw || raw === '—') return;
+    try {
+      await navigator.clipboard.writeText(raw);
+      toast('✅ 已复制: ' + raw, 1500);
+    } catch (e) {
+      // 降级方案：创建临时 textarea 复制
+      const ta = document.createElement('textarea');
+      ta.value = raw;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast('✅ 已复制: ' + raw, 1500); } catch (_) {
+        toast('⚠️ 复制失败，请手动复制', 2000);
+      }
+      document.body.removeChild(ta);
+    }
   }
 
   /** 行唯一 key：订阅关系ID 优先，退化为几个编号拼起来 */
@@ -279,6 +310,14 @@
     if (!window.ToolApi) { toast('⚠️ 接口层未加载', 2500); return; }
     state.pageNum = pageNum || state.pageNum || 1;
 
+    // 必须指定调用方系统或提供方系统其中一个
+    const callerComp = selValue('f_callerCompNum');
+    const providerComp = selValue('f_providerCompNum');
+    if (!callerComp && !providerComp) {
+      toast('⚠️ 请至少选择「调用方系统/分行」或「提供方系统」之一', 3000);
+      return;
+    }
+
     // 只有「查询条件真的变了」才清空勾选：翻页 / 刷新 / 切换排序只是重新取数，
     // 不该把用户已经勾好的行丢掉（勾选是按行 key 跨页累计的）。
     const nextCond = collectCond();
@@ -293,9 +332,18 @@
     const seq = ++state.reqSeq;
     setLoading(true);
     try {
-      // 指定了调用方批次 → 后端已经按该批次过滤，单条查询最快；
-      // 没指定 → 用窗口内各批次并行扇出，合并后前端分页（见 runWindowQuery）。
-      if (nextCond.prodBatch) await runSingleQuery(seq, nextCond);
+      // 满足以下任一条件 → 后端已有精确过滤，单条查询最快，不走12个月窗口：
+      //   · 调用方批次 / 提供方批次
+      //   · 提供方应用系统服务编号 / 接口编码 / 服务中文名称
+      //   · 调用方应用系统服务编号
+      // 以上条件都没有时才走窗口扇出（避免一次查出 years 历史导致响应慢）。
+      const hasSpecificFilter = nextCond.prodBatch
+        || nextCond.putBatch
+        || (nextCond.sysServeNoList && nextCond.sysServeNoList.length > 0)
+        || (nextCond.serverCodingList && nextCond.serverCodingList.length > 0)
+        || nextCond.providerServiceNameAndId
+        || (nextCond.prodSysServeNoList && nextCond.prodSysServeNoList.length > 0);
+      if (hasSpecificFilter) await runSingleQuery(seq, nextCond);
       else await runWindowQuery(seq, nextCond);
     } catch (e) {
       toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
@@ -611,6 +659,15 @@
     return `<span class="st-tag ${cls}">${esc(s)}</span>`;
   }
 
+  /** 审核流程状态标签：裸值 → 中文 + 色块 */
+  function reviewStatusTag(v) {
+    const code = String(v ?? '').trim();
+    if (!code) return '<span class="st-tag is-offline">—</span>';
+    const info = REVIEW_STATUS_MAP[code];
+    if (!info) return `<span class="st-tag is-offline">${esc(code)}</span>`;
+    return `<span class="st-tag ${info.cls}">${esc(info.text)}</span>`;
+  }
+
   /** 优先级单元格：色块 + 天数，title 里写清「为什么」 */
   function prioCell(r) {
     const p = r._prio || { level: 'unknown', text: '—' };
@@ -639,9 +696,10 @@
       const cells = COLUMNS.map(([k, , mono]) => {
         const raw = r[k];
         const text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
-        if (k === 'status') return `<td class="col-st" title="${esc(text)}">${statusTag(raw)}</td>`;
+        if (k === 'status') return `<td class="col-st copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制">${statusTag(raw)}</td>`;
+        if (k === 'prodReviewStatus') return `<td class="col-st copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制">${reviewStatusTag(raw)}</td>`;
         if (k === '_prioText') return prioCell(r);
-        return `<td class="${mono ? 'cell-code' : ''}" title="${esc(text)}">${esc(text)}</td>`;
+        return `<td class="${mono ? 'cell-code' : ''} copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制: ${esc(text)}">${esc(text)}</td>`;
       }).join('');
       return `<tr class="${(picked + overdue).trim()}" data-key="${key}" data-index="${index}">
         <td class="col-chk"><input type="checkbox" data-pick="${key}" ${picked ? 'checked' : ''}></td>
@@ -652,6 +710,14 @@
 
     body.querySelectorAll('button[data-detail]').forEach((b) => {
       b.addEventListener('click', () => openDetail(Number(b.dataset.detail)));
+    });
+    // 表格数据单元格：点击复制到剪贴板
+    body.querySelectorAll('td.copy-cell').forEach((td) => {
+      td.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const text = td.dataset.copy;
+        if (text) copyToClipboard(text);
+      });
     });
     body.querySelectorAll('input[data-pick]').forEach((cb) => {
       cb.addEventListener('change', () => {
@@ -723,8 +789,15 @@
     $('#detailBody').innerHTML = DETAIL_GROUPS.map(([group, fields]) => {
       const rowsHtml = fields.map(([key, label]) => {
         const raw = row[key];
-        const text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
-        return `<dt>${esc(label)}</dt><dd>${esc(text)}</dd>`;
+        let text;
+        // 审核流程状态字段：用中文映射展示，同时保留原值在 title 里
+        if (key === 'prodReviewStatus' || key === 'reviewStatus') {
+          const info = REVIEW_STATUS_MAP[String(raw ?? '').trim()];
+          text = info ? info.text : (raw == null || raw === '' ? '—' : String(raw));
+        } else {
+          text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
+        }
+        return `<dt>${esc(label)}</dt><dd class="copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制: ${esc(text)}">${esc(text)}</dd>`;
       }).join('');
       return `<div class="kv-group">${esc(group)}</div>${rowsHtml}`;
     }).join('');
@@ -733,6 +806,15 @@
     ov.classList.add('show');
     if (window.DialogUtils && window.DialogUtils.lockScroll) window.DialogUtils.lockScroll();
     $('#detailDialog').focus();
+
+    // 详情弹窗的 dd 元素：点击复制到剪贴板
+    $('#detailBody').querySelectorAll('dd.copy-cell').forEach((dd) => {
+      dd.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const text = dd.dataset.copy;
+        if (text) copyToClipboard(text);
+      });
+    });
   }
 
   function closeDetail() {
@@ -1014,6 +1096,165 @@
   }
 
   // ═══════════════════════════════════════════════════
+  // 批量修改批次时间
+  // ═══════════════════════════════════════════════════
+
+  let batchTimeData = [];   // { batch, testDate, releaseDate }
+
+  /** 打开批次时间修改弹窗 */
+  function openBatchTimeDialog() {
+    const batches = batchWindow();
+    batchTimeData = batches.map((b) => ({ batch: b, testDate: '', releaseDate: '' }));
+    renderBatchTimeList();
+    const ov = $('#batchTimeOverlay');
+    ov.classList.add('show');
+    if (window.DialogUtils && window.DialogUtils.lockScroll) window.DialogUtils.lockScroll();
+    $('#batchTimeDialog').focus();
+  }
+
+  /** 渲染批次时间列表 */
+  function renderBatchTimeList() {
+    const tbody = $('#batchTimeList');
+    tbody.innerHTML = batchTimeData.map((item, idx) => {
+      return `<tr>
+        <td class="batch-label">${esc(item.batch)}</td>
+        <td><input type="date" data-idx="${idx}" data-field="testDate" value="${esc(item.testDate)}"></td>
+        <td><input type="date" data-idx="${idx}" data-field="releaseDate" value="${esc(item.releaseDate)}"></td>
+      </tr>`;
+    }).join('');
+
+    // 绑定日期选择器变化事件（仅用于 UI 反馈，不触发 API）
+    tbody.querySelectorAll('input[type="date"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const idx = Number(input.dataset.idx);
+        const field = input.dataset.field;
+        batchTimeData[idx][field] = input.value;
+      });
+    });
+  }
+
+  /** 关闭批次时间修改弹窗 */
+  function closeBatchTimeDialog() {
+    $('#batchTimeOverlay').classList.remove('show');
+    if (window.DialogUtils && window.DialogUtils.unlockScroll) window.DialogUtils.unlockScroll();
+    batchTimeData = [];
+  }
+
+  /**
+   * 基线状态转换规则：设置日期后，该批次下所有订阅关系按以下规则自动升级 status。
+   * 规则与 priority.js 的里程碑一致：
+   *   · 设了功能测试时间（testDate） → 「开发基线」→「功能测试基线」
+   *   · 设了上线时间（releaseDate）  → 「功能测试基线」→「正式版基线」
+   * 注意：这是前端预演的转换清单（实际转换由后端在 updateBatchTimes 里执行），
+   * 用于给用户看「改了哪些东西」，以及保存成功后让页面用新状态重绘。
+   */
+  const BASELINE_TRANSITIONS = [
+    { from: '开发基线',     to: '功能测试基线', dateField: 'testDate' },
+    { from: '功能测试基线', to: '正式版基线',   dateField: 'releaseDate' },
+  ];
+
+  /**
+   * 保存批次时间：逐个批次调用后端 API 更新，同时预演基线状态转换。
+   *
+   * 流程：
+   *   1. 校验有修改的批次
+   *   2. 预演基线状态转换（仅前端展示，不实际改数据）
+   *   3. 逐个调用 updateBatchTimes API
+   *   4. 全部成功后关闭弹窗、重新查询（后端已更新日期 + 基线状态）
+   */
+  async function saveBatchTimes() {
+    const btn = $('#btnBatchTimeSave');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    setLoading(true);
+
+    try {
+      // 找出有修改的批次
+      const changed = batchTimeData.filter((item) => item.testDate || item.releaseDate);
+      if (!changed.length) {
+        toast('⚠️ 没有需要修改的批次时间', 2000);
+        closeBatchTimeDialog();
+        return;
+      }
+
+      // ── 预演基线状态转换（仅用于展示给用户看）──
+      // 按批次预演：对每个有改动的批次，按 BASELINE_TRANSITIONS 检查它设了哪些日期。
+      const transitions = [];
+      for (const item of changed) {
+        for (const rule of BASELINE_TRANSITIONS) {
+          if (!item[rule.dateField]) continue;
+          const dateLabel = rule.dateField === 'testDate' ? '功能测试时间' : '上线时间';
+          transitions.push({
+            batch: item.batch,
+            from: rule.from,
+            to: rule.to,
+            hint: `设了${dateLabel}后，该批次「${rule.from}」的记录将转为「${rule.to}」`,
+          });
+        }
+      }
+
+      // ── 确认对话框（如果有转换发生）──
+      if (transitions.length > 0) {
+        const transText = transitions.map((t) => `${t.batch}：${t.from} → ${t.to}`).join('；\n');
+        const confirmMsg =
+          `以下批次的基线状态将自动更新：\n${transText}\n\n` +
+          `是否继续保存？`;
+        if (!window.confirm(confirmMsg)) {
+          btn.disabled = false;
+          btn.textContent = '保 存';
+          setLoading(false);
+          return;
+        }
+      }
+
+      // ── 逐个调用 API 保存批次时间──
+      let successCount = 0;
+      let failCount = 0;
+      const errors = [];
+      let firstNotConfigured = false;
+
+      for (const item of changed) {
+        const res = await window.ToolApi.updateBatchTimes({
+          batch: item.batch,
+          testDate: item.testDate || null,
+          releaseDate: item.releaseDate || null,
+        });
+        if (res.ok) {
+          successCount++;
+        } else {
+          failCount++;
+          // 标记是否为未配置导致的失败（前端不弹 notConfigured 提示，只在日志里记）
+          if (res.notConfigured) firstNotConfigured = true;
+          errors.push(`${item.batch}: ${res.error || '未知错误'}`);
+        }
+      }
+
+      // ── 构建结果消息（toast 不支持 \n，用 | 分隔）──
+      let msg = `✅ 成功 ${successCount} 个批次`;
+      if (failCount > 0) {
+        msg += ` | ❌ 失败 ${failCount} 个批次`;
+        if (errors.length <= 5) {
+          msg += ' | ' + errors.join(' | ');
+        } else {
+          msg += `（前 ${errors.length} 条错误见上）`;
+        }
+      }
+
+      toast(msg, failCount > 0 ? 4000 : 2500);
+
+      // ── 全部成功 → 关闭弹窗、重新查询（后端已更新日期 + 触发基线状态转换）──
+      if (failCount === 0) {
+        closeBatchTimeDialog();
+        query(state.pageNum);
+      }
+    } catch (e) {
+      toast(`⚠️ 保存失败：${e.message || String(e)}`, 3000);
+    } finally {
+      setLoading(false);
+      if (btn) { btn.disabled = false; btn.textContent = '保 存'; }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════
   // 初始化
   // ═══════════════════════════════════════════════════
 
@@ -1109,6 +1350,16 @@
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#detailOverlay').classList.contains('show')) closeDetail();
+      if (e.key === 'Escape' && $('#batchTimeOverlay').classList.contains('show')) closeBatchTimeDialog();
+    });
+
+    // 批量修改批次时间弹窗
+    $('#btnBatchTimeEdit').addEventListener('click', openBatchTimeDialog);
+    $('#btnBatchTimeClose').addEventListener('click', closeBatchTimeDialog);
+    $('#btnBatchTimeCancel').addEventListener('click', closeBatchTimeDialog);
+    $('#btnBatchTimeSave').addEventListener('click', saveBatchTimes);
+    $('#batchTimeOverlay').addEventListener('click', (e) => {
+      if (e.target === $('#batchTimeOverlay')) closeBatchTimeDialog();
     });
   }
 
