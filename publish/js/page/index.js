@@ -431,6 +431,11 @@
       // 批次：走 searchable-select 实例，取 label（后端需要 "2611批次" 而非 "2611"）
       if (id === 'f_prodBatch') {
         const r = resolveBatchLabel();
+        // 选了批次却解析不出 label（下拉 options 没加载成功等）：doQuery 会用 !r.ok
+        // 拦截整次查询，这里再留条痕，否则「以为查了某批次、实际拿到全量」毫无线索。
+        if (r.value && !r.label) {
+          console.warn('[collectApiBody] 批次已选但解析不出 label（options 未加载？），该条件被丢弃：', r.value);
+        }
         if (!r.label) return;
         body[key] = r.label;
         return;
@@ -477,6 +482,9 @@
       // 过滤会把整页结果误杀（症状：toast「本页数据均不满足筛选条件」）。
       if (f.id === 'f_prodBatch') {
         const r = resolveBatchLabel();   // 与请求体同源，口径必须一致
+        if (r.value && !r.label) {
+          console.warn('[collectLocalFilters] 批次已选但解析不出 label，本地兜底条件被丢弃：', r.value);
+        }
         if (!r.label) return;
         conds.push({ label: f.label, keys: f.local, value: r.label, exact: false, date: false });
         return;
