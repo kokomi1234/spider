@@ -187,17 +187,40 @@ function serveStatic(req, res) {
   }
 
   function serveFile(fullPath) {
+    // 先取文件元信息（本地文件，同步足够），用于 ETag / Last-Modified
+    let stat;
+    try { stat = fs.statSync(fullPath); }
+    catch (_) {
+      if (!res.headersSent) res.writeHead(404);
+      res.end('Not Found');
+      return;
+    }
     const ext = path.extname(fullPath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
 
     // 默认不缓存：缓存 1 天时改完 HTML/CSS/JS 不硬刷新就看不到效果，
     // 是「改了没生效」最常见的误判来源。部署场景用 PROXY_STATIC_MAX_AGE=86400 打开。
     const maxAge = Number(process.env.PROXY_STATIC_MAX_AGE) || 0;
-    const headers = {
-      'Content-Type': contentType,
-      'Cache-Control': maxAge > 0 ? `public, max-age=${maxAge}` : 'no-store',
-    };
+    const cacheControl = maxAge > 0 ? `public, max-age=${maxAge}` : 'no-store';
 
+    // ETag 用「尺寸 + 修改时间」拼，避免每个请求都读全文件算哈希（改内容必改 mtime）。
+    // 仅在 PROXY_STATIC_MAX_AGE>0（生产）时才有意义：默认 no-store 下浏览器不缓存，
+    // 也就不会带 If-None-Match，304 分支不会触发，对开发体验零影响。
+    const etag = `"${stat.size}-${stat.mtimeMs}"`;
+    const lastModified = stat.mtime.toUTCString();
+
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, { 'ETag': etag, 'Cache-Control': cacheControl });
+      res.end();
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': cacheControl,
+      'ETag': etag,
+      'Last-Modified': lastModified,
+    });
     const stream = fs.createReadStream(fullPath);
     stream.on('error', () => {
       if (!res.headersSent) res.writeHead(500);
@@ -475,8 +498,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 缓存管理
-  if (req.url === '/cache/list') {
+  // 缓存管理：设了 PROXY_ADMIN_TOKEN 才需要带 ?token= 才放行（默认不设=不鉴权，方便本地开发）
+  const ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN || '';
+  const cachePath = (() => { try { return new URL(req.url, 'http://localhost').pathname; } catch (_) { return req.url; } })();
+  const adminOk = () => {
+    if (!ADMIN_TOKEN) return true;
+    try {
+      const t = new URL(req.url, 'http://localhost').searchParams.get('token') || '';
+      return t === ADMIN_TOKEN;
+    } catch (_) { return false; }
+  };
+
+  if (cachePath === '/cache/list') {
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     const idx = readIndex();
     sendJson(res, 200, {
       code: 200,
@@ -487,7 +521,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.url === '/cache/clear') {
+  if (cachePath === '/cache/clear') {
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     try {
       let removed = 0;
       for (const f of fs.readdirSync(CACHE_DIR)) {
