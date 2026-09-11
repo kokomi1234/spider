@@ -15,16 +15,38 @@
  *   "2606批次"  "2507-仿真"  "26年8月独立"  "技术支持类-2026年批次"
  * 前三种能解析出年月；最后一种只有年份，解析不出月份 → 不参与优先级。
  *
+ * ── 截止日的「批次时间覆盖」─────────────────────────────
+ * 订阅页「批量修改批次时间」里为某批次设了日期后，该批次的截止日**以所设日期为准**，
+ * 不再用上面按批次月推算的默认值（由 setBatchTimes() 注入，见 js/page/subscription.js）。
+ * 对应关系：testDate → 开发基线→功能测试基线；releaseDate → 功能测试基线→正式版基线。
+ *
  * 本文件只做纯计算，不碰 DOM；改规则只需动 MILESTONES / LEVELS 两处。
  */
 (function () {
   'use strict';
 
-  /** 状态机：当前状态 → 下一个里程碑（offsetMonth 相对批次月，day 为当月几号） */
+  /** 状态机：当前状态 → 下一个里程碑（offsetMonth 相对批次月，day 为当月几号）
+      dateField：该里程碑可被「批次时间配置」中的哪个日期覆盖（'' 表示不覆盖） */
   const MILESTONES = [
-    { from: '开发基线',     to: '功能测试基线', offsetMonth: -3, day: 15 },
-    { from: '功能测试基线', to: '正式版基线',   offsetMonth: 0,  day: 15 },
+    { from: '开发基线',     to: '功能测试基线', offsetMonth: -3, day: 15, dateField: 'testDate' },
+    { from: '功能测试基线', to: '正式版基线',   offsetMonth: 0,  day: 15, dateField: 'releaseDate' },
   ];
+
+  /** 批次时间覆盖表：{ '2609批次': { testDate, releaseDate } }（由 setBatchTimes 注入） */
+  let batchTimeOverrides = {};
+
+  /** 注入批次时间配置（来自本地配置文件 config/batch-times.json） */
+  function setBatchTimes(map) {
+    batchTimeOverrides = (map && typeof map === 'object') ? map : {};
+  }
+
+  /** 解析 'YYYY-MM-DD' → Date（当地 0 点）；非法返回 null */
+  function parseYmd(s) {
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(String(s ?? '').trim());
+    if (!m) return null;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
 
   /** 终点状态：不用再催 */
   const DONE_STATUS = ['正式版基线', '下线'];
@@ -106,20 +128,30 @@
 
     // 已到终点
     if (DONE_STATUS.includes(status)) {
-      return { level: 'done', days: null, text: '已完成', next: '', deadline: '', sortKey: 9e6, overdue: false };
+      return { level: 'done', days: null, text: '已完成', next: '', deadline: '', sortKey: 9e6, overdue: false, from: 'done' };
     }
 
     const step = MILESTONES.find((m) => m.from === status);
-    const ym = parseBatchYearMonth(batchLabel);
-    if (!step || !ym) {
+    if (!step) {
       return {
         level: 'unknown', days: null, text: '—', next: '', deadline: '',
-        sortKey: 9e6 + 1, overdue: false,
-        reason: !step ? '基线状态不在里程碑里' : '批次解析不出年月',
+        sortKey: 9e6 + 1, overdue: false, from: 'unknown', reason: '基线状态不在里程碑里',
       };
     }
 
-    const deadline = deadlineOf(ym, step.offsetMonth, step.day);
+    // 截止日：优先用「批量修改批次时间」为该批次设的日期，否则按批次月推算
+    const ovRaw = step.dateField ? (batchTimeOverrides[batchLabel] || {})[step.dateField] : '';
+    const ovDate = ovRaw ? parseYmd(ovRaw) : null;
+    const ym = ovDate ? null : parseBatchYearMonth(batchLabel);
+    const deadline = ovDate || (ym ? deadlineOf(ym, step.offsetMonth, step.day) : null);
+
+    if (!deadline) {
+      return {
+        level: 'unknown', days: null, text: '—', next: '', deadline: '',
+        sortKey: 9e6 + 1, overdue: false, from: 'unknown', reason: '批次解析不出年月',
+      };
+    }
+
     const days = daysBetween(base, deadline);
     const level = levelOf(days);
     const overdue = days < 0;
@@ -133,6 +165,7 @@
       // 逾期：拖得越久越靠前（-days 越大 → 值越小）；未逾期：剩得越少越靠前
       sortKey: overdue ? -100000 - Math.abs(days) : days,
       overdue,
+      from: ovDate ? 'config' : 'rule',   // 截止日来源：批次时间配置 / 批次月规则
     };
   }
 
@@ -154,6 +187,7 @@
   if (typeof window !== 'undefined') {
     window.Priority = {
       MILESTONES, LEVELS, DONE_STATUS,
+      setBatchTimes, parseYmd,
       parseBatchYearMonth, deadlineOf, evaluate, decorate, compare,
     };
   }

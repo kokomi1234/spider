@@ -671,8 +671,9 @@
   /** 优先级单元格：色块 + 天数，title 里写清「为什么」 */
   function prioCell(r) {
     const p = r._prio || { level: 'unknown', text: '—' };
+    const src = p.from === 'config' ? '（按批次时间配置）' : '';
     const hint = p.next
-      ? `${r.prodBatch || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}`
+      ? `${r.prodBatch || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}${src}`
       : (p.level === 'done' ? '已到正式版基线 / 已下线' : '批次或基线状态无法判断');
     return `<td class="col-prio" title="${esc(hint)}">
       <span class="prio-tag is-${esc(p.level)}">${esc(p.text)}</span>
@@ -1102,6 +1103,21 @@
   let batchTimeData = [];   // 弹窗内的可编辑行 { batch, testDate, releaseDate }
   let batchTimes = {};      // 已落盘的配置 { '2609批次': { testDate, releaseDate } }
 
+  /** 把批次时间配置注入优先级计算（设了日期 → 该批次截止日以所设日期为准） */
+  function applyBatchTimesToPriority() {
+    if (window.Priority && typeof window.Priority.setBatchTimes === 'function') {
+      window.Priority.setBatchTimes(batchTimes);
+    }
+  }
+
+  /** 批次时间变化后：重算已加载行的优先级并重绘（不重新请求后端） */
+  function refreshPriority() {
+    applyBatchTimesToPriority();
+    if (Array.isArray(state.allRows)) state.allRows.forEach(decorateRow);
+    else if (Array.isArray(state.rows)) state.rows.forEach(decorateRow);
+    if (state.queried) render();
+  }
+
   /**
    * 读取批次时间配置（不走 ITAMP 后端）。三级降级：
    *   1) 代理的本地端点 GET /local/batch-times（可写回文件，开发态首选）
@@ -1110,15 +1126,21 @@
    */
   async function loadBatchTimes() {
     const pick = (obj) => (obj && typeof obj.batchTimes === 'object' && obj.batchTimes) || {};
+    let loaded = false;
     try {
       const r = await fetch('local/batch-times', { headers: { Accept: 'application/json' } });
-      if (r.ok) { batchTimes = pick((await r.json()).data); return; }
+      if (r.ok) { batchTimes = pick((await r.json()).data); loaded = true; }
     } catch (_) { /* 代理端点不可用，继续降级 */ }
-    try {
-      const r2 = await fetch('config/batch-times.json', { cache: 'no-store' });
-      if (r2.ok) { batchTimes = pick(await r2.json()); return; }
-    } catch (_) { /* 文件不存在，继续降级 */ }
-    try { batchTimes = JSON.parse(localStorage.getItem('itamp.batchTimes') || '{}') || {}; } catch (_) { batchTimes = {}; }
+    if (!loaded) {
+      try {
+        const r2 = await fetch('config/batch-times.json', { cache: 'no-store' });
+        if (r2.ok) { batchTimes = pick(await r2.json()); loaded = true; }
+      } catch (_) { /* 文件不存在，继续降级 */ }
+    }
+    if (!loaded) {
+      try { batchTimes = JSON.parse(localStorage.getItem('itamp.batchTimes') || '{}') || {}; } catch (_) { batchTimes = {}; }
+    }
+    refreshPriority();   // 注入优先级计算（设了日期就覆盖默认里程碑截止日）
   }
 
   /** 保存批次时间：优先写回配置文件（代理端点）；失败落 localStorage。返回 { ok, where|error } */
@@ -1265,6 +1287,7 @@
       batchTimes = next;
       toast(`✅ 已保存 ${changed.length} 个批次的日期（${savedRes.where}）`, 2600);
       closeBatchTimeDialog();
+      refreshPriority();   // 优先级截止日随之更新（设了日期 → 覆盖默认里程碑）
     } catch (e) {
       toast(`⚠️ 保存失败：${e.message || String(e)}`, 3000);
     } finally {

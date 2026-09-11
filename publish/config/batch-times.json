@@ -1,4 +1,4 @@
 {
-  "_comment": "批次时间配置（订阅关系页「批量修改批次时间」用）。结构：{ \"2609批次\": { \"testDate\": \"YYYY-MM-DD\", \"releaseDate\": \"YYYY-MM-DD\" } }。可由页面对话框保存（走代理 /local/batch-times 写回本文件），也可手工编辑。",
+  "_comment": "批次时间配置（订阅关系页「批量修改批次时间」用）。结构：{ \"2609批次\": { \"testDate\": \"YYYY-MM-DD\", \"releaseDate\": \"YYYY-MM-DD\" } }。可由页面对话框保存（走代理 /local/batch-times 写回本文件），也可手工编辑。设了日期后会覆盖「优先级」的默认里程碑截止日。",
   "batchTimes": {}
 }

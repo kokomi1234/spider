@@ -5,12 +5,6 @@
 
 ## ⏳ 等外部条件
 
-- [ ] **批次时间是否驱动优先级（待定）**：订阅页「批量修改批次时间」已改为**本地落盘**
-      ——存 `publish/config/batch-times.json`（走代理 `/local/batch-times` 读写；静态部署/无代理时
-      降级 localStorage），**不走后端接口**（原 updateBatchTimes 预留已删）。
-      目前只做「记录/记忆」，**尚未**参与 `js/ui/priority.js` 的截止日计算；
-      如需让设定的日期覆盖「批次月 −3 的 15 日 / 批次月 15 日」这条默认里程碑，再单独加。
-
 - [ ] **订阅关系页导出接口**：两个导出按钮（「导出」/「按变更批次导出」）目前走前端本地 CSV
       （上限 5000 条，不支持服务端格式）。需要用户提供**导出接口的抓包**，然后在
       `publish/js/api/tool-api.js` 把 `toolEndpoints.subscriptionExport` 填上真实路径，

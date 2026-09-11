@@ -521,9 +521,9 @@
         <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
       </div>
       <div class="sub-body batch-time-body" id="batchTimeBody">
-        <p class="batch-time-hint">设置批次日期后保存到本地配置文件（config/batch-times.json，不调后端）。
-           在真实系统里，对应批次内「开发基线」的订阅关系会转为「功能测试基线」，
-           「功能测试基线」的会转为「正式版基线」。</p>
+        <p class="batch-time-hint">设置批次日期后保存到本地配置文件（config/batch-times.json，不调后端），
+           并<strong>覆盖</strong>「优先级」的里程碑截止日（默认按 批次月−3 的 15 日 / 批次月 15 日 推算）。
+           对应关系：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
         <table class="batch-time-table">
           <thead>
             <tr>
