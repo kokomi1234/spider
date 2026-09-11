@@ -1267,6 +1267,33 @@
 
   btnReset.addEventListener('click', resetForm);
 
+  // ── 跳转到 ITAMP「服务搜索查看」页并预填当前筛选 ──────────────
+  // 参数名必须用**目标页的表单字段名**（来源：2026-09-11 serviceSearchView 抓包），
+  // 映射关系：查询体 batch→putBatch、serviceName→providerServiceNameAndId，其余同名。
+  const btnServiceSearch = $('#btnServiceSearch');
+  if (btnServiceSearch) {
+    btnServiceSearch.addEventListener('click', () => {
+      if (!window.AppNavigator || typeof window.AppNavigator.openServiceSearch !== 'function') {
+        console.warn('[index] AppNavigator 未加载，无法跳转 ITAMP 服务搜索');
+        return;
+      }
+      const b = collectApiBody();   // 复用查询体，字段口径与后端一致
+      const params = {
+        compNum:                  b.compNum,              // 提供方系统
+        putBatch:                 b.batch,                // 提供方变更批次
+        providerServiceNameAndId: b.serviceName,          // 提供方应用系统服务中文名称
+        serverCodingList:         b.serverCodingList,     // 提供方接口编码（数组）
+        sysServeNoList:           b.sysServeNoList,       // 提供方应用系统服务编号（数组）
+        isSendOutsideSystem:      b.isSendOutsideSystem,  // 是否发送行外系统
+        deptId:                   b.deptId,               // 提供方部门
+        useNum:                   b.callerComponent,      // 调用方系统/分行
+        callerComponent:          b.callerComponent,
+      };
+      const url = window.AppNavigator.openServiceSearch(params);
+      debugLog('🔗 跳转 ITAMP 服务搜索:', url);
+    });
+  }
+
   btnPrev.addEventListener('click', () => {
     if (pageNum > 1) {
       pageNum--;
