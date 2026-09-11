@@ -5,6 +5,12 @@
 
 ## ⏳ 等外部条件
 
+- [ ] **批量修改批次时间接口（updateBatchTimes）**：订阅关系页「批量修改批次时间」弹窗的 UI
+      与「基线状态转换预演」已就绪，但**后端接口没有抓包**，`publish/js/api/tool-api.js` 里
+      endpoint 留空（未配置时不发请求、返回 `notConfigured`，不会误改数据）。
+      需要补抓一次「保存批次时间」的请求（URL、请求体字段名是否就是 `batch/testDate/releaseDate`、
+      响应格式），然后在 `__APP_CONFIG__.toolEndpoints.updateBatchTimes` 填上真实路径。
+
 - [ ] **订阅关系页导出接口**：两个导出按钮（「导出」/「按变更批次导出」）目前走前端本地 CSV
       （上限 5000 条，不支持服务端格式）。需要用户提供**导出接口的抓包**，然后在
       `publish/js/api/tool-api.js` 把 `toolEndpoints.subscriptionExport` 填上真实路径，
@@ -14,8 +20,19 @@
       需要补抓一次「页面上点在 WPSN 上、批次留空、点查询」的 har，交给我导入即可。
       现有抓包（`服务订阅关系查询.har`）里该条件的真实结果是 **0 条**。
 
+## ❓ 待验证（已实现初版，缺真实环境确认）
+
+- [ ] **跳转 ITAMP 服务搜索的参数预填**：首页「🔗 ITAMP 服务搜索」按钮已按
+      `2026-09-11` 的 `serviceSearchView` 抓包字段名拼 URL（`compNum / putBatch /
+      providerServiceNameAndId / useNum / serverCodingList / sysServeNoList / deptId /
+      isSendOutsideSystem`），但目标 Vue 单页**是否认这些 query 参数、预填后是否自动查询**
+      尚未在真实环境确认（该页登录后跳 `?sessionid=...&statuscode=10000`，说明它至少读 query）。
+      内网可访问时点一次验证；若目标页不认，退化为「跳过去手动填」。
+
 ## 📝 使用约定
 
 - 一条待办写清三件事：**目标是什么、卡在哪、需要什么**。
 - 已完成直接删，不保留「已完成」小节。
 - 实现细节不写在这里——放在对应文档（设计方案 / ONBOARDING / 记忆文件）里，这里只做索引。
+- **不要把抓包 / 接口报文贴进本文件**：报文里含 token / Cookie / ssopSessionId，而本文件是入库文件。
+  抓包统一放 `analysis/har/`（`.gitignore` 已忽略）。
