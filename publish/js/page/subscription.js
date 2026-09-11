@@ -87,6 +87,9 @@
   const CLIENT_SORT_MAX = 1000;
   /** 窗口扇出的并发上限：12 个批次分 2 波（6×2），墙钟时间≈最慢单个批次，避免一次性打爆 */
   const WINDOW_CONCURRENCY = 12;
+  /** 单个批次内部翻页的并发上限（先取第 1 页拿到 total，再并发拉剩余页）。
+      原来是串行 page++，批次条数一多就成了「一个批次 N 次往返」的瓶颈。 */
+  const PAGE_CONCURRENCY = 3;
 
   // ═══════════════════════════════════════════════════
   // 状态
@@ -107,6 +110,7 @@
     allRows: null,            // client 模式下的全量结果（已算好优先级）
     sortLimited: false,       // 已提示过「数据量过大，只排当前页」，避免重复弹
     fetchAllWarned: false,    // 已提示过「整批拉取失败，退化为按页展示」
+    progress: null,           // 取数中：{ done, total } —— 用于「先展示部分结果」的进度提示
   };
 
   const selected = new Set();   // 勾选的行 key（当前页）
@@ -311,8 +315,22 @@
       if (first.total <= first.rows.length) {
         all = first.rows.map(decorateRow);          // 一页就装得下，不用再请求
       } else {
+        // 先把第 1 页画出来 —— 整批拉完才渲染的话，几百条也要等十几秒才出第一屏
+        state.mode = 'server';
+        state.allRows = null;
+        state.rows = first.rows.map((r) => decorateRow(r));
+        state.progress = {
+          done: 1,
+          total: Math.ceil(Math.min(first.total, EXPORT_MAX) / EXPORT_PAGE_SIZE),
+          unit: '页',
+        };
+        render();
         try {
-          all = (await fetchAll()).rows;
+          all = (await fetchAll((done, total) => {
+            if (seq !== state.reqSeq) return;
+            state.progress = { done, total, unit: '页' };
+            render();
+          })).rows;
         } catch (e) {
           // 整批拉取失败（网络抖动 / 离线回放缺条目）不该让整个查询报错 ——
           // 第一页的数据是好的，退化成后端分页照样能用，只是排序只作用于当前页。
@@ -323,6 +341,7 @@
               + '已退化为按页展示，排序只作用于当前页', 4200);
           }
         }
+        state.progress = null;
         if (seq !== state.reqSeq) return;
       }
       if (all && all.length) {
@@ -356,9 +375,22 @@
    * 去重后统一前端分页 + 优先级排序。相比一次查出全部历史，响应更快也更聚焦。
    */
   async function runWindowQuery(seq, cond) {
-    const res = await fetchWindowAll(cond, seq);
+    // 增量渲染：每有一个批次返回就先画一版（onProgress），不再等 12 个批次全部完成。
+    const res = await fetchWindowAll(cond, seq, (rows, done, total) => {
+      if (seq !== state.reqSeq) return;
+      hideQueryFail();
+      state.queried = true;
+      state.allRows = rows.map(decorateRow);
+      state.total = rows.length;
+      state.mode = 'client';
+      state.rows = [];
+      state.progress = { done, total };
+      render();
+    });
     if (seq !== state.reqSeq) return;              // 已被更新的查询取代，安静退出
     if (res.aborted) return;
+    state.progress = null;
+
     if (!res.ok) {
       toast(`⚠️ 查询失败：${shortError(res.error)}`, 3500);
       showQueryFail(res.error || '未知错误');
@@ -405,54 +437,101 @@
   }
 
   /**
-   * 窗口扇出：按批次并行拉取（并发上限 WINDOW_CONCURRENCY，避免一次性打爆），
-   * 合并去重。返回 { ok, rows, partial[], local, aborted }。
-   * 全部批次都失败才算失败；部分失败仍展示成功的，并提示哪些批次没拿到。
+   * 窗口扇出：按批次并行拉取（并发上限 WINDOW_CONCURRENCY），**增量**合并。
+   *
+   * 关键：给每个批次的 promise 单独挂 then —— 谁先回来就把当时的合并结果通过
+   * onProgress 交给上层先渲染一版，用户几秒内就能看到并开始操作，而不是等
+   * 12 个批次全部完成才有第一屏。
+   * 行序稳定：结果按批次存 Map，组装时按窗口顺序遍历 + 去重，不依赖完成顺序。
+   *
+   * @param {object}   cond
+   * @param {number}   seq
+   * @param {Function} [onProgress] (rows, done, total) => void，每完成一个批次调用一次
+   * @returns {Promise<{ok, rows, partial[], local, error, aborted}>}
    */
-  async function fetchWindowAll(cond, seq) {
+  async function fetchWindowAll(cond, seq, onProgress) {
     const batches = batchWindow();
-    const seen = new Set();
-    const rows = [];
+    const batchRows = new Map();   // batch -> rows
     const partial = [];
     let local = false;
+    let done = 0;
 
-    for (let i = 0; i < batches.length; i += WINDOW_CONCURRENCY) {
-      if (seq !== state.reqSeq) return { aborted: true };
-      const slice = batches.slice(i, i + WINDOW_CONCURRENCY);
-      const results = await Promise.all(slice.map((b) => fetchBatchAllPages(cond, b)));
-      results.forEach((r, idx) => {
-        if (r.local) local = true;
-        if (!r.ok) { partial.push(slice[idx]); return; }
-        for (const row of r.rows) {
+    const assemble = () => {
+      const seen = new Set();
+      const rows = [];
+      batches.forEach((b) => {
+        for (const row of (batchRows.get(b) || [])) {
           const k = rowKey(row);
           if (!seen.has(k)) { seen.add(k); rows.push(row); }
         }
       });
+      return rows;
+    };
+
+    for (let i = 0; i < batches.length; i += WINDOW_CONCURRENCY) {
+      if (seq !== state.reqSeq) return { aborted: true };
+      const slice = batches.slice(i, i + WINDOW_CONCURRENCY);
+      await Promise.all(slice.map((b) => fetchBatchAllPages(cond, b).then((r) => {
+        if (seq !== state.reqSeq) return;              // 已被更新的查询取代
+        if (r.local) local = true;
+        if (!r.ok) { partial.push(b); return; }
+        batchRows.set(b, r.rows);
+        done++;
+        if (onProgress) onProgress(assemble(), done, batches.length);
+      })));
     }
     const ok = partial.length < batches.length;     // 全失败才算失败
-    return { ok, rows, partial, local, error: ok ? '' : `批次 ${partial.join('、')} 查询失败` };
+    return { ok, rows: assemble(), partial, local, error: ok ? '' : `批次 ${partial.join('、')} 查询失败` };
   }
 
-  /** 单个批次：翻页拉全（默认 pageSize 500），返回 { ok, rows, local } */
+  /**
+   * 单个批次：先取第 1 页拿到 total，再**并发**拉剩余页（PAGE_CONCURRENCY 个 worker），
+   * 最后按页码顺序拼接（并发完成顺序不确定，边拉边 concat 会让行序随网络抖动变化）。
+   * 返回 { ok, rows, local }。
+   */
   async function fetchBatchAllPages(cond, batch) {
-    const out = [];
-    let page = 1;
-    while (true) {
-      const res = await window.ToolApi.fetchSubscriptionPublishHistory({
-        ...cond,
-        prodBatch: batch,
-        pageNum: page,
-        pageSize: EXPORT_PAGE_SIZE,
-      });
-      if (!res.ok) return { ok: false, error: res.error, local: res.local };
-      if (res.local) { /* 未接入时 res.rows 为空，下面的判断会自然收尾 */ }
-      out.push(...(res.rows || []));
-      if (!res.rows || !res.rows.length) break;
-      if (out.length >= (res.total || 0)) break;
-      if (out.length >= EXPORT_MAX) break;
-      page++;
+    const fetchP = (page) => window.ToolApi.fetchSubscriptionPublishHistory({
+      ...cond,
+      prodBatch: batch,
+      pageNum: page,
+      pageSize: EXPORT_PAGE_SIZE,
+    });
+
+    const first = await fetchP(1);
+    if (!first.ok) return { ok: false, error: first.error, local: first.local };
+    const pageRows = new Map([[1, first.rows || []]]);
+    const total = Number(first.total) || 0;
+    let got = (first.rows || []).length;
+
+    // 一页就装完（或接口未接入）→ 直接收尾
+    if (!got || got >= total || got >= EXPORT_MAX) {
+      return { ok: true, local: !!first.local, rows: (first.rows || []).slice(0, EXPORT_MAX) };
     }
-    return { ok: true, local: false, rows: out };
+
+    const pageCount = Math.min(
+      Math.ceil(total / EXPORT_PAGE_SIZE),
+      Math.ceil(EXPORT_MAX / EXPORT_PAGE_SIZE)
+    );
+    const pending = [];
+    for (let p = 2; p <= pageCount; p++) pending.push(p);
+
+    let failed = null;
+    const worker = async () => {
+      while (pending.length && !failed) {
+        const p = pending.shift();
+        const res = await fetchP(p);
+        if (!res.ok) { failed = res.error || '未知错误'; return; }
+        pageRows.set(p, res.rows || []);
+        got += (res.rows || []).length;
+        if (!(res.rows || []).length || got >= total || got >= EXPORT_MAX) return;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PAGE_CONCURRENCY, pending.length) }, worker));
+    if (failed) return { ok: false, error: failed, local: false };
+
+    const out = [];
+    for (let p = 1; p <= pageCount; p++) out.push(...(pageRows.get(p) || []));
+    return { ok: true, local: !!first.local, rows: out.slice(0, EXPORT_MAX) };
   }
 
   /** 取某一页（默认按当前每页条数） */
@@ -541,9 +620,11 @@
   }
 
   function renderCount() {
-    $('#resultCount').textContent = state.queried
-      ? `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条`
-      : '';
+    const base = state.queried ? `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条` : '';
+    // 取数还没完时告诉用户进度：先出来的这批已经是可用结果，不是「卡住了」
+    $('#resultCount').textContent = state.progress
+      ? `${base} · 加载中 ${state.progress.done}/${state.progress.total}${state.progress.unit || '批次'}`
+      : base;
     const overdue = state.rows.filter((r) => r._prio && r._prio.overdue).length;
     const el = $('#overdueCount');
     if (el) el.textContent = overdue ? `⚠️ 本页逾期 ${overdue} 条` : '';
@@ -783,17 +864,46 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  /** 按页把当前查询结果全部拉回来（服务端分页），顺手算好优先级 */
-  async function fetchAll() {
-    const want = Math.min(state.total, EXPORT_MAX);    const out = [];
-    for (let p = 1; out.length < want; p++) {
-      const res = await window.ToolApi.fetchSubscriptionPublishHistory({
-        ...state.cond, pageNum: p, pageSize: EXPORT_PAGE_SIZE,
-      });
-      if (!res.ok) throw new Error(res.error || '未知错误');
-      if (!res.rows.length) break;
-      out.push(...res.rows.map((r) => decorateRow(r)));
+  /**
+   * 按页把当前查询结果全部拉回来（服务端分页），顺手算好优先级。
+   * 并发拉（PAGE_CONCURRENCY 个 worker），按页码顺序拼接 —— 原来是串行 for，
+   * EXPORT_PAGE_SIZE=50 时 5000 条要 100 次串行往返，导出/统计会明显卡顿。
+   * @param {Function} [onProgress] (done, total) => void，每完成一页调用一次
+   */
+  async function fetchAll(onProgress) {
+    const want = Math.min(state.total, EXPORT_MAX);
+    const fetchP = (p) => window.ToolApi.fetchSubscriptionPublishHistory({
+      ...state.cond, pageNum: p, pageSize: EXPORT_PAGE_SIZE,
+    });
+
+    const first = await fetchP(1);
+    if (!first.ok) throw new Error(first.error || '未知错误');
+    const pageRows = new Map([[1, (first.rows || []).map(decorateRow)]]);
+    let got = (first.rows || []).length;
+
+    if (!got || got >= want) {
+      return { rows: (pageRows.get(1) || []).slice(0, want), truncated: state.total > EXPORT_MAX };
     }
+
+    const pageCount = Math.ceil(want / EXPORT_PAGE_SIZE);
+    const pending = [];
+    for (let p = 2; p <= pageCount; p++) pending.push(p);
+
+    const worker = async () => {
+      while (pending.length) {
+        const p = pending.shift();
+        const res = await fetchP(p);
+        if (!res.ok) throw new Error(res.error || '未知错误');
+        if (!res.rows.length) return;
+        pageRows.set(p, res.rows.map(decorateRow));
+        got += res.rows.length;
+        if (onProgress) onProgress(pageRows.size, pageCount);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PAGE_CONCURRENCY, pending.length) }, worker));
+
+    const out = [];
+    for (let p = 1; p <= pageCount; p++) out.push(...(pageRows.get(p) || []));
     return { rows: out.slice(0, want), truncated: state.total > EXPORT_MAX };
   }
 
@@ -831,12 +941,12 @@
         // 勾选是跨页累计的（key 存 Set），导出要把其他页勾中的也带上
         const pool = (state.mode === 'client' && state.allRows)
           ? state.allRows
-          : (await fetchAll()).rows;
+          : (await fetchAll((d, t) => { if (btn) btn.textContent = `导出中 ${d}/${t} 页`; })).rows;
         rows = pool.filter((r) => selected.has(rowKey(r)));
       } else if (state.mode === 'client' && state.allRows) {
         rows = sortRows(state.allRows);      // 全量已在手上，顺序与页面一致
       } else {
-        const all = await fetchAll();
+        const all = await fetchAll((d, t) => { if (btn) btn.textContent = `导出中 ${d}/${t} 页`; });
         rows = all.rows;
         rows = sortRows(rows);     // 与屏幕一致：按当前优先级方向排（byBatch 分支会再覆盖为批次序）
         truncated = all.truncated;
@@ -890,7 +1000,7 @@
       // 全量已在手上就不要再拉一遍
       const all = (state.mode === 'client' && state.allRows)
         ? { rows: state.allRows, truncated: false }
-        : await fetchAll();
+        : await fetchAll((d, t) => { if (btn) btn.textContent = `统计中 ${d}/${t} 页`; });
       const { rows, truncated } = all;
       if (!rows.length) { toast('⚠️ 没有可统计的数据', 2200); return; }
 
