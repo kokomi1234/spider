@@ -521,8 +521,9 @@
         <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
       </div>
       <div class="sub-body batch-time-body" id="batchTimeBody">
-        <p class="batch-time-hint">设置批次时间后，对应批次内处于「开发基线」的订阅关系将自动转为「功能测试基线」；
-           处于「功能测试基线」的将自动转为「正式版基线」。</p>
+        <p class="batch-time-hint">设置批次日期后保存到本地配置文件（config/batch-times.json，不调后端）。
+           在真实系统里，对应批次内「开发基线」的订阅关系会转为「功能测试基线」，
+           「功能测试基线」的会转为「正式版基线」。</p>
         <table class="batch-time-table">
           <thead>
             <tr>

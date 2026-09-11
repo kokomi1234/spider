@@ -70,8 +70,6 @@
       prodSysServeNo:     '/itamp-tool/publish/getProdSysServeNoList',
       // 导出接口没有抓包，留空 = 关闭；配置后才会真的发请求
       subscriptionExport: '',
-      // 批量修改批次时间（未抓包，留空 = 关闭）
-      updateBatchTimes: '',
     },
     CONFIG.toolEndpoints || {}
   );
@@ -97,7 +95,6 @@
       subscriptionHistory: 'POST',
       prodSysServeNo:     'POST',
       subscriptionExport: 'POST',
-      updateBatchTimes: 'POST',
     },
     CONFIG.toolEndpointMethods || {}
   );
@@ -611,42 +608,6 @@
     }
   }
 
-  /**
-   * 批量修改批次时间（预留）。
-   *
-   * ⚠️ 该接口**没有抓包**，路径/参数都未经确认，所以默认 endpoint 为空：
-   *    · 未配置 → 返回 { ok:false, notConfigured:true }，前端不发起请求
-   *    · 抓包确认后在 __APP_CONFIG__.toolEndpoints.updateBatchTimes 填上路径即可
-   *
-   * 后端预期行为（待抓包确认）：
-   *   1. 保存批次的时间字段（功能测试日期、上线日期）
-   *   2. 自动触发基线状态转换：
-   *      - 设了功能测试日期 → 该批次 status='开发基线' 的记录 → '功能测试基线'
-   *      - 设了上线日期     → 该批次 status='功能测试基线' 的记录 → '正式版基线'
-   *
-   * @param {object} p { batch: '2609批次', testDate: '2026-06-15', releaseDate: '2026-09-15' }
-   * @returns {Promise<{ok:boolean, notConfigured?:boolean, error?:string}>}
-   */
-  async function updateBatchTimes(p) {
-    if (!isEnabled('updateBatchTimes')) {
-      console.warn('[ToolApi] updateBatchTimes 接口未配置（endpoint 为空），批次时间修改功能不可用');
-      return { ok: false, notConfigured: true, error: '批次时间修改接口未接入（缺抓包），请联系管理员配置 endpoint' };
-    }
-    if (!window.API || typeof window.API.call !== 'function') {
-      return { ok: false, error: 'API 客户端未就绪' };
-    }
-    try {
-      const json = await request('updateBatchTimes', {
-        batch:       (p && p.batch) || '',
-        testDate:    p && p.testDate ? String(p.testDate) : '',
-        releaseDate: p && p.releaseDate ? String(p.releaseDate) : '',
-      });
-      return { ok: true, local: false };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  }
-
   if (typeof window !== 'undefined') {
     window.ToolApi = {
       endpoints: ENDPOINTS,
@@ -670,7 +631,6 @@
       fetchSubscriptionPublishHistory,
       fetchProdSysServeNoList,
       exportSubscriptionPublishHistory,
-      updateBatchTimes,
     };
   }
 })();

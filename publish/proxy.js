@@ -538,6 +538,49 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 订阅页「批量修改批次时间」的本地落盘（不走 ITAMP 后端）。
+  // 存到 config/batch-times.json：页面可直接读写，也可手改该文件。
+  //   GET  /local/batch-times → { code:200, data:{ batchTimes:{...} } }
+  //   POST /local/batch-times   body { batchTimes:{...} } → 写回文件
+  if (cachePath === '/local/batch-times') {
+    const FILE = path.join(__dirname, 'config', 'batch-times.json');
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      try {
+        const raw = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : '';
+        const data = raw ? JSON.parse(raw) : { batchTimes: {} };
+        sendJson(res, 200, { code: 200, data });
+      } catch (e) {
+        sendJson(res, 500, { code: 500, msg: '读取批次时间失败: ' + e.message });
+      }
+      return;
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const bufs = [];
+      req.on('data', (c) => bufs.push(c));
+      req.on('end', () => {
+        try {
+          const text = Buffer.concat(bufs).toString('utf8') || '{}';
+          if (text.length > 64 * 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
+          const parsed = JSON.parse(text);   // 必须是合法 JSON，避免把配置文件写坏
+          // 页面只写 batchTimes，保留文件里的 _comment（让配置自带说明）
+          try {
+            const old = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+            if (old && old._comment && parsed._comment == null) parsed._comment = old._comment;
+          } catch (_) { /* 旧文件不存在/损坏 → 忽略 */ }
+          fs.mkdirSync(path.dirname(FILE), { recursive: true });
+          fs.writeFileSync(FILE, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
+          sendJson(res, 200, { code: 200, msg: '已保存', file: 'config/batch-times.json' });
+        } catch (e) {
+          sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
+        }
+      });
+      req.on('error', (e) => sendJson(res, 400, { code: 400, msg: '读取请求体失败: ' + e.message }));
+      return;
+    }
+    sendJson(res, 405, { code: 405, msg: 'Method Not Allowed' });
+    return;
+  }
+
   // 请求体要参与缓存 key，必须先缓冲（不能再直接 req.pipe）
   const chunks = [];
   req.on('data', (c) => chunks.push(c));

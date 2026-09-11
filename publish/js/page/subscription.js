@@ -1099,12 +1099,55 @@
   // 批量修改批次时间
   // ═══════════════════════════════════════════════════
 
-  let batchTimeData = [];   // { batch, testDate, releaseDate }
+  let batchTimeData = [];   // 弹窗内的可编辑行 { batch, testDate, releaseDate }
+  let batchTimes = {};      // 已落盘的配置 { '2609批次': { testDate, releaseDate } }
 
-  /** 打开批次时间修改弹窗 */
+  /**
+   * 读取批次时间配置（不走 ITAMP 后端）。三级降级：
+   *   1) 代理的本地端点 GET /local/batch-times（可写回文件，开发态首选）
+   *   2) 静态文件 config/batch-times.json（手改即可生效；静态部署时走这条）
+   *   3) localStorage（无代理、无文件时的兜底）
+   */
+  async function loadBatchTimes() {
+    const pick = (obj) => (obj && typeof obj.batchTimes === 'object' && obj.batchTimes) || {};
+    try {
+      const r = await fetch('local/batch-times', { headers: { Accept: 'application/json' } });
+      if (r.ok) { batchTimes = pick((await r.json()).data); return; }
+    } catch (_) { /* 代理端点不可用，继续降级 */ }
+    try {
+      const r2 = await fetch('config/batch-times.json', { cache: 'no-store' });
+      if (r2.ok) { batchTimes = pick(await r2.json()); return; }
+    } catch (_) { /* 文件不存在，继续降级 */ }
+    try { batchTimes = JSON.parse(localStorage.getItem('itamp.batchTimes') || '{}') || {}; } catch (_) { batchTimes = {}; }
+  }
+
+  /** 保存批次时间：优先写回配置文件（代理端点）；失败落 localStorage。返回 { ok, where|error } */
+  async function persistBatchTimes(map) {
+    try {
+      const r = await fetch('local/batch-times', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchTimes: map }),
+      });
+      if (r.ok) return { ok: true, where: 'config/batch-times.json' };
+      const j = await r.json().catch(() => ({}));
+      return { ok: false, error: (j && j.msg) || ('HTTP ' + r.status) };
+    } catch (_) { /* 无代理端点 → localStorage 兜底 */ }
+    try {
+      localStorage.setItem('itamp.batchTimes', JSON.stringify(map));
+      return { ok: true, where: 'localStorage' };
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
+  /** 打开批次时间修改弹窗（并入已保存、但不在当前窗口里的批次，避免看不到） */
   function openBatchTimeDialog() {
-    const batches = batchWindow();
-    batchTimeData = batches.map((b) => ({ batch: b, testDate: '', releaseDate: '' }));
+    const batches = Array.from(new Set([...batchWindow(), ...Object.keys(batchTimes)]));
+    batchTimeData = batches.map((b) => {
+      const saved = batchTimes[b] || {};
+      return { batch: b, testDate: saved.testDate || '', releaseDate: saved.releaseDate || '' };
+    });
     renderBatchTimeList();
     const ov = $('#batchTimeOverlay');
     ov.classList.add('show');
@@ -1145,8 +1188,8 @@
    * 规则与 priority.js 的里程碑一致：
    *   · 设了功能测试时间（testDate） → 「开发基线」→「功能测试基线」
    *   · 设了上线时间（releaseDate）  → 「功能测试基线」→「正式版基线」
-   * 注意：这是前端预演的转换清单（实际转换由后端在 updateBatchTimes 里执行），
-   * 用于给用户看「改了哪些东西」，以及保存成功后让页面用新状态重绘。
+   * 本页只负责把日期存进本地配置（config/batch-times.json），**不调后端**；
+   * 这里预演「会触发哪些转换」给用户确认，也是优先级里程碑规则的书面说明。
    */
   const BASELINE_TRANSITIONS = [
     { from: '开发基线',     to: '功能测试基线', dateField: 'testDate' },
@@ -1154,13 +1197,12 @@
   ];
 
   /**
-   * 保存批次时间：逐个批次调用后端 API 更新，同时预演基线状态转换。
+   * 保存批次时间：把弹窗里填的日期写入本地配置（不走 ITAMP 后端）。
    *
    * 流程：
    *   1. 校验有修改的批次
-   *   2. 预演基线状态转换（仅前端展示，不实际改数据）
-   *   3. 逐个调用 updateBatchTimes API
-   *   4. 全部成功后关闭弹窗、重新查询（后端已更新日期 + 基线状态）
+   *   2. 预演基线状态转换（提示用户「真实系统里会触发什么」）
+   *   3. 合并进 batchTimes 并落盘（config/batch-times.json；无代理时降级 localStorage）
    */
   async function saveBatchTimes() {
     const btn = $('#btnBatchTimeSave');
@@ -1168,8 +1210,12 @@
     setLoading(true);
 
     try {
-      // 找出有修改的批次
-      const changed = batchTimeData.filter((item) => item.testDate || item.releaseDate);
+      // 找出相对「已保存配置」有变化的批次（预填但没动过的行不算变更）
+      const changed = batchTimeData.filter((item) => {
+        const saved = batchTimes[item.batch] || {};
+        return (item.testDate || '') !== (saved.testDate || '')
+            || (item.releaseDate || '') !== (saved.releaseDate || '');
+      });
       if (!changed.length) {
         toast('⚠️ 没有需要修改的批次时间', 2000);
         closeBatchTimeDialog();
@@ -1196,8 +1242,8 @@
       if (transitions.length > 0) {
         const transText = transitions.map((t) => `${t.batch}：${t.from} → ${t.to}`).join('；\n');
         const confirmMsg =
-          `以下批次的基线状态将自动更新：\n${transText}\n\n` +
-          `是否继续保存？`;
+          `以下批次设置了日期，真实系统里会触发对应基线状态转换：\n${transText}\n\n` +
+          `（本页只把日期保存到本地配置，不调后端）是否继续保存？`;
         if (!window.confirm(confirmMsg)) {
           btn.disabled = false;
           btn.textContent = '保 存';
@@ -1206,46 +1252,19 @@
         }
       }
 
-      // ── 逐个调用 API 保存批次时间──
-      let successCount = 0;
-      let failCount = 0;
-      const errors = [];
-      let firstNotConfigured = false;
-
-      for (const item of changed) {
-        const res = await window.ToolApi.updateBatchTimes({
-          batch: item.batch,
-          testDate: item.testDate || null,
-          releaseDate: item.releaseDate || null,
-        });
-        if (res.ok) {
-          successCount++;
-        } else {
-          failCount++;
-          // 标记是否为未配置导致的失败（前端不弹 notConfigured 提示，只在日志里记）
-          if (res.notConfigured) firstNotConfigured = true;
-          errors.push(`${item.batch}: ${res.error || '未知错误'}`);
-        }
+      // ── 合并进配置并落盘（不走后端）──
+      const next = Object.assign({}, batchTimes);
+      changed.forEach((it) => {
+        next[it.batch] = { testDate: it.testDate || '', releaseDate: it.releaseDate || '' };
+      });
+      const savedRes = await persistBatchTimes(next);
+      if (!savedRes.ok) {
+        toast(`⚠️ 保存失败：${savedRes.error}`, 3500);
+        return;
       }
-
-      // ── 构建结果消息（toast 不支持 \n，用 | 分隔）──
-      let msg = `✅ 成功 ${successCount} 个批次`;
-      if (failCount > 0) {
-        msg += ` | ❌ 失败 ${failCount} 个批次`;
-        if (errors.length <= 5) {
-          msg += ' | ' + errors.join(' | ');
-        } else {
-          msg += `（前 ${errors.length} 条错误见上）`;
-        }
-      }
-
-      toast(msg, failCount > 0 ? 4000 : 2500);
-
-      // ── 全部成功 → 关闭弹窗、重新查询（后端已更新日期 + 触发基线状态转换）──
-      if (failCount === 0) {
-        closeBatchTimeDialog();
-        query(state.pageNum);
-      }
+      batchTimes = next;
+      toast(`✅ 已保存 ${changed.length} 个批次的日期（${savedRes.where}）`, 2600);
+      closeBatchTimeDialog();
     } catch (e) {
       toast(`⚠️ 保存失败：${e.message || String(e)}`, 3000);
     } finally {
@@ -1422,6 +1441,7 @@
 
     setQuickCaller('', false);   // 默认不限定调用方（全部），用户可点快捷按钮或下拉选具体系统
     loadDicts();
+    loadBatchTimes();            // 批次时间本地配置（弹窗打开时用它预填）
   }
 
   if (document.readyState === 'loading') {
