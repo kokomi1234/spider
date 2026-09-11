@@ -495,23 +495,6 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
-  <!-- 详情弹窗 -->
-  <div class="overlay sub-overlay" id="detailOverlay" role="presentation">
-    <div class="dialog sub-dialog" id="detailDialog" role="dialog" aria-modal="true"
-         aria-labelledby="detailTitle" tabindex="-1">
-      <div class="sub-head">
-        <h2 id="detailTitle">订阅关系详情</h2>
-        <button type="button" class="sub-close" id="btnDetailClose" aria-label="关闭">✕</button>
-      </div>
-      <div class="sub-body">
-        <dl class="kv-grid subq-detail-body" id="detailBody"></dl>
-      </div>
-      <div class="sub-foot">
-        <button type="button" class="filled btn-sm" id="btnDetailConfirm">关 闭</button>
-      </div>
-    </div>
-  </div>
-
   <!-- 批量修改批次时间弹窗 -->
   <div class="overlay sub-overlay" id="batchTimeOverlay" role="presentation">
     <div class="dialog sub-dialog batch-time-dialog" id="batchTimeDialog" role="dialog" aria-modal="true"
@@ -553,6 +536,7 @@
   <script src="js/ui/table-resize.js"></script>
   <script src="js/ui/priority.js"></script>
   <script src="js/ui/dialog-utils.js"></script>
+  <script src="js/core/app-navigator.js"></script>
   <script src="js/page/subscription.js"></script>
 </body>
 </html>

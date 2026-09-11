@@ -58,72 +58,9 @@
     ['implementationUnit',     '产品实施单元',                 false],
   ];
 
-  /** 详情弹窗分组（key 全部是抓包响应里真实存在的字段） */
-  const DETAIL_GROUPS = [
-    ['提供方', [
-      ['sysNo', '提供方应用系统编号'],
-      ['assemblyNo', '提供方组件编号'],
-      ['assemblyName', '提供方组件名称'],
-      ['assemblyEnName', '提供方应用系统英文简称'],
-      ['sysServeNo', '提供方应用系统服务编号'],
-      ['sysServeName', '提供方应用系统服务中文名称'],
-      ['sysServeEnName', '提供方应用系统服务英文名称'],
-      ['serverCoding', '接口编码'],
-      ['serverVsn', '服务版本'],
-      ['sysType', '服务类型'],
-      ['serveTyep', '服务类别'],
-      ['serverState', '提供方服务基线状态'],
-      ['prodBatchList', '提供方最新变更批次'],
-      ['deptId', '提供方部门编号'],
-      ['deptName', '提供方部门名称'],
-      ['principal', '负责人'],
-      ['implementationUnit', '产品实施单元'],
-      ['version', '提供方版本'],
-      ['approvalNo', '审批编号'],
-      ['effectiveTime', '生效时间'],
-      ['offlineTime', '下线时间'],
-    ]],
-    ['调用方', [
-      ['callerComponent', '调用方系统/分行编号'],
-      ['callerComponentEnName', '调用方系统英文简称/分行名称'],
-      ['subscriberComponentName', '调用方组件全称'],
-      ['prodSysServeNo', '调用方应用系统服务编号'],
-      ['prodBatch', '调用方投产/变更批次'],
-      ['prodTaskNo', '调用方任务编号'],
-      ['prodDeptId', '调用方部门编号'],
-      ['prodDeptName', '调用方部门名称'],
-      ['prodImplementationUnit', '订阅方产品实施单元'],
-      ['pubVersion', '调用方发布版本'],
-      ['offerEffectiveTime', '调用方生效时间'],
-      ['offerOfflineTime', '调用方下线时间'],
-      ['prodReviewStatus', '调用方审核流程状态'],
-      ['reviewStatus', '订阅关系审核流程状态（原值）'],
-      ['isBranch', '是否分行'],
-    ]],
-    ['订阅关系', [
-      ['_prioText', '优先级'],
-      ['_prioNext', '下一步里程碑'],
-      ['_prioDeadline', '里程碑截止日'],
-      ['status', '订阅关系基线状态'],
-      ['reviewStatus', '订阅关系审核流程状态（原值）'],
-      ['prodReviewStatus', '调用方审核流程状态（原值）'],
-      ['subscriberId', '订阅人EHR号'],
-      ['subscriberUserName', '订阅人姓名'],
-      ['subscriberStatus', '订阅人状态'],
-      ['isBackup', '是否做副本'],
-      ['backupInfo', '副本使用场景说明'],
-      ['isSend', '是否发送'],
-      ['isSendOutsideSystem', '是否发送行外系统'],
-      ['publishSubcriptionId', '订阅关系ID'],
-      ['publishId', '发布ID'],
-      ['serverNo', '服务编号'],
-      ['remark', '备注'],
-      ['creater', '创建人'],
-      ['createTime', '创建时间'],
-      ['updater', '更新人'],
-      ['updateTime', '更新时间'],
-    ]],
-  ];
+  // 结果行的「查 看」不再弹本地详情，而是跳转 ITAMP 真实系统的「服务搜索查看」页
+  // 并带上该行条件（见 jumpToServiceSearch）。原详情弹窗的字段分组已移除，
+  // 字段清单在 COLUMNS 里，需要时可从 git 历史（49fa429 之前）取回 DETAIL_GROUPS。
 
   /** 基线状态 → 色块样式（值来自抓包里真实出现的 status） */
   const STATUS_CLASS = {
@@ -705,12 +642,13 @@
       return `<tr class="${(picked + overdue).trim()}" data-key="${key}" data-index="${index}">
         <td class="col-chk"><input type="checkbox" data-pick="${key}" ${picked ? 'checked' : ''}></td>
         ${cells}
-        <td class="col-op"><button class="text-btn" type="button" data-detail="${index}">查 看</button></td>
+        <td class="col-op"><button class="text-btn" type="button" data-jump="${index}"
+                title="在 ITAMP 服务搜索中查看该订阅关系（新窗口，预填该行条件）">查 看</button></td>
       </tr>`;
     }).join('');
 
-    body.querySelectorAll('button[data-detail]').forEach((b) => {
-      b.addEventListener('click', () => openDetail(Number(b.dataset.detail)));
+    body.querySelectorAll('button[data-jump]').forEach((b) => {
+      b.addEventListener('click', () => jumpToServiceSearch(state.rows[Number(b.dataset.jump)]));
     });
     // 表格数据单元格：点击复制到剪贴板
     body.querySelectorAll('td.copy-cell').forEach((td) => {
@@ -777,54 +715,38 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // 详情弹窗
+  // 结果行「查 看」→ 跳转 ITAMP 服务搜索
   // ═══════════════════════════════════════════════════
 
-  let detailTrigger = null;   // 打开弹窗的那个「查看」按钮，关掉后把焦点还回去
-
-  function openDetail(index) {
-    const row = state.rows[index];
+  /**
+   * 结果行「查 看」：新窗口打开 ITAMP 真实系统的「服务搜索查看」页
+   * （/asserInstruments/serviceSearchView），并带上该行的条件，尽量让目标页预填并查询。
+   *
+   * 参数名用目标页的表单字段名（来源：2026-09-11 serviceSearchView 抓包），
+   * 只带「能定位这条订阅关系」的条件，不带 status —— 否则在真实系统里会把
+   * 「本该核对的基线状态」也当成过滤条件，反而查不到待处理的记录。
+   *
+   * ⚠️ 目标页是否认这些 query 参数、预填后是否自动查询，尚未在真实环境确认；
+   *    不认就退化成「跳过去手动填」。
+   */
+  function jumpToServiceSearch(row) {
     if (!row) return;
-    detailTrigger = document.activeElement;
-    $('#detailTitle').textContent = row.sysServeName || row.sysServeNo || '订阅关系详情';
-    $('#detailBody').innerHTML = DETAIL_GROUPS.map(([group, fields]) => {
-      const rowsHtml = fields.map(([key, label]) => {
-        const raw = row[key];
-        let text;
-        // 审核流程状态字段：用中文映射展示，同时保留原值在 title 里
-        if (key === 'prodReviewStatus' || key === 'reviewStatus') {
-          const info = REVIEW_STATUS_MAP[String(raw ?? '').trim()];
-          text = info ? info.text : (raw == null || raw === '' ? '—' : String(raw));
-        } else {
-          text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
-        }
-        return `<dt>${esc(label)}</dt><dd class="copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制: ${esc(text)}">${esc(text)}</dd>`;
-      }).join('');
-      return `<div class="kv-group">${esc(group)}</div>${rowsHtml}`;
-    }).join('');
-
-    const ov = $('#detailOverlay');
-    ov.classList.add('show');
-    if (window.DialogUtils && window.DialogUtils.lockScroll) window.DialogUtils.lockScroll();
-    $('#detailDialog').focus();
-
-    // 详情弹窗的 dd 元素：点击复制到剪贴板
-    $('#detailBody').querySelectorAll('dd.copy-cell').forEach((dd) => {
-      dd.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const text = dd.dataset.copy;
-        if (text) copyToClipboard(text);
-      });
-    });
-  }
-
-  function closeDetail() {
-    $('#detailOverlay').classList.remove('show');
-    if (window.DialogUtils && window.DialogUtils.unlockScroll) window.DialogUtils.unlockScroll();
-    if (detailTrigger && document.contains(detailTrigger)) {
-      try { detailTrigger.focus(); } catch (_) { /* ignore */ }
+    if (!window.AppNavigator || typeof window.AppNavigator.openServiceSearch !== 'function') {
+      toast('⚠️ 跳转模块未加载，无法打开 ITAMP 服务搜索', 2600);
+      return;
     }
-    detailTrigger = null;
+    const params = {
+      compNum:                  row.sysNo || '',                              // 提供方系统编号
+      sysServeNoList:           row.sysServeNo ? [row.sysServeNo] : [],       // 提供方服务编号
+      serverCodingList:         row.serverCoding ? [row.serverCoding] : [],   // 接口编码
+      providerServiceNameAndId: row.sysServeName || '',                       // 提供方应用系统服务中文名称
+      useNum:                   row.callerComponent || '',                    // 调用方系统/分行
+      callerComponent:          row.callerComponent || '',
+      prodBatch:                row.prodBatch || '',                          // 调用方投产/变更批次
+    };
+    const url = window.AppNavigator.openServiceSearch(params);
+    console.log('[subscription] 跳转 ITAMP 服务搜索:', url);
+    toast('🔗 已在新窗口打开 ITAMP 服务搜索（预填该行条件）', 2600);
   }
 
   // ═══════════════════════════════════════════════════
@@ -1384,14 +1306,8 @@
       renderCount();
     });
 
-    // 详情弹窗
-    $('#btnDetailClose').addEventListener('click', closeDetail);
-    $('#btnDetailConfirm').addEventListener('click', closeDetail);
-    $('#detailOverlay').addEventListener('click', (e) => {
-      if (e.target === $('#detailOverlay')) closeDetail();
-    });
+    // ESC 关闭批次时间弹窗（详情弹窗已移除，「查 看」改为跳转 ITAMP 服务搜索）
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && $('#detailOverlay').classList.contains('show')) closeDetail();
       if (e.key === 'Escape' && $('#batchTimeOverlay').classList.contains('show')) closeBatchTimeDialog();
     });
 
@@ -1460,7 +1376,7 @@
     buildSelects();
 
     if (window.DialogUtils && window.DialogUtils.makeDraggable) {
-      window.DialogUtils.makeDraggable($('#detailDialog'), $('#detailDialog .sub-head'));
+      window.DialogUtils.makeDraggable($('#batchTimeDialog'), $('#batchTimeDialog .sub-head'));
     }
 
     setQuickCaller('', false);   // 默认不限定调用方（全部），用户可点快捷按钮或下拉选具体系统
