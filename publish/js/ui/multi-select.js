@@ -39,13 +39,14 @@
     host.innerHTML = `
       <input type="text" class="msel-display" readonly placeholder="${esc(placeholder || '全部')}"
              title="点击选择（可多选）">
+      <span class="msel-arrow" aria-hidden="true">▼</span>
       <div class="msel-panel">
         <input type="text" class="msel-search" placeholder="搜索">
         <div class="msel-list"></div>
         <div class="msel-foot">
           <button type="button" class="outlined btn-xs" data-act="all">全 选</button>
           <button type="button" class="outlined btn-xs" data-act="clear">清 空</button>
-          <button type="button" class="filled btn-xs" data-act="ok">确 定</button>
+          <button type="button" class="filled btn-xs" data-act="ok">确 认</button>
         </div>
       </div>`;
 
@@ -74,11 +75,15 @@
 
     function open() {
       panel.classList.add('show');
+      host.classList.add('is-open');   // 箭头旋转 + 变主色（与可搜索下拉一致）
       search.value = '';
       renderList();
       search.focus();
     }
-    function close() { panel.classList.remove('show'); }
+    function close() {
+      panel.classList.remove('show');
+      host.classList.remove('is-open');
+    }
     function isOpen() { return panel.classList.contains('show'); }
 
     display.addEventListener('click', () => (isOpen() ? close() : open()));

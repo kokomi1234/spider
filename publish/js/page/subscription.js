@@ -1407,10 +1407,11 @@
 
   function buildSelects() {
     if (typeof window.createSearchableSelect !== 'function') return;
-    // 单选下拉一律走 searchable-select（含小字典），保持全站控件外观一致
+    // 单选下拉一律走 searchable-select（含小字典），保持全站控件外观一致。
+    // pageSizeSelect（每页条数）也包进来：不选中它时它是全站仅剩的原生下拉，观感突兀。
     ['f_providerCompNum', 'f_providerBatch', 'f_isSendOutside',
      'f_callerCompNum', 'f_callerBatch', 'f_status',
-     'f_deptId', 'f_prodDeptId'].forEach((id) => {
+     'f_deptId', 'f_prodDeptId', 'pageSizeSelect'].forEach((id) => {
       const el = document.getElementById(id);
       if (el) selects[id] = window.createSearchableSelect(el, [], {});
     });

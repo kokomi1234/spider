@@ -529,12 +529,14 @@
   <!-- 详情弹窗 -->
   <div class="overlay" id="detailOverlay" role="presentation" data-page-node-id="mNpDiuC6QMQfG655iXYrVs">
     <div class="dialog" id="detailDialog" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1" data-page-node-id="bGCCegV8JaUJ3xkNGgfhio">
+      <!-- 右上角 ✕：与订阅页详情弹窗同款（.sub-close），绝对定位适配本页无 .sub-head 的旧结构 -->
+      <button type="button" class="sub-close dlg-close" id="btnDetailCloseX" aria-label="关闭">✕</button>
       <h2 id="detailTitle" data-page-node-id="6nXAIEDcDasHaUz6uGNSIp">服务详情</h2>
       <!-- 详情接口预留：加载中 / 接口失败回退本地的状态提示 -->
       <div class="detail-status" id="detailStatus" role="status" aria-live="polite" hidden></div>
       <dl class="detail-body" id="detailBody" data-page-node-id="BdItznhCtOoBBRWpAPwG4b"></dl>
       <div class="foot" data-page-node-id="EonAmNCPPdNvryKq1Gd8Y2">
-        <button class="outlined btn-sm" id="btnDetailClose" type="button" data-page-node-id="crPBGE9pxRZwh19P1tj5ZF">关闭</button>
+        <button class="outlined btn-sm" id="btnDetailClose" type="button" data-page-node-id="crPBGE9pxRZwh19P1tj5ZF">关 闭</button>
       </div>
     </div>
   </div>
@@ -830,7 +832,7 @@
       <!-- 4. 底部按钮 -->
       <div class="sub-foot">
         <button type="button" class="outlined btn-sm" id="btnDocCancel">取 消</button>
-        <button type="button" class="filled btn-sm" id="btnDocConfirm">确 定</button>
+        <button type="button" class="filled btn-sm" id="btnDocConfirm">确 认</button>
       </div>
     </div>
   </div>

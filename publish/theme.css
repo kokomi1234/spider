@@ -903,6 +903,15 @@ tbody tr.unsubscribed-row:hover td {
   max-width: 520px;
   width: 90%;
   padding: var(--sp3);
+  position: relative;   /* 右上角 ✕（.dlg-close）的定位基准 */
+}
+
+/* index/task 详情弹窗是无 .sub-head 的旧 .dialog 结构，右上角 ✕ 直接绝对定位；
+   外观沿用订阅弹窗的 .sub-close，保证三页弹窗关闭按钮一致 */
+.dialog > .sub-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
 }
 
 .dialog h2 {
@@ -1520,7 +1529,7 @@ label.req::after {
 .msel .msel-display {
   width: 100%;
   height: 42px;
-  padding: 0 34px 0 12px;
+  padding: 0 34px 0 12px;   /* 右侧留出箭头位置 */
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
   font-size: var(--fs-md);
@@ -1529,11 +1538,25 @@ label.req::after {
   font-family: inherit;
   cursor: pointer;
   transition: border-color .15s, box-shadow .15s;
-  /* 与统一下拉框同款的灰色 V 形箭头 */
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='14'%20height='14'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2373777f'%20stroke-width='2.5'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpolyline%20points='6%209%2012%2015%2018%209'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 14px 14px;
+}
+/* 箭头与可搜索下拉（.searchable-select-arrow）同款：▼ / hover 变主色 / 展开旋转 180°。
+   之前这里是 input 背景图里的细 V 形箭头，和单选下拉的 ▼ 两种样子，已统一。 */
+.msel .msel-arrow {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--fs-nano);
+  line-height: 1;
+  color: var(--muted);
+  pointer-events: none;   /* 点击穿透到只读输入框（它负责开合） */
+  user-select: none;
+  transition: transform .2s ease, color .15s;
+}
+.msel:hover .msel-arrow { color: var(--primary); }
+.msel.is-open .msel-arrow {
+  transform: translateY(-50%) rotate(180deg);
+  color: var(--primary);
 }
 .msel .msel-display:hover { border-color: var(--primary); }
 .msel .msel-display:focus {
@@ -1596,6 +1619,8 @@ label.req::after {
 
 /* ── 分页页码条（订阅关系页用）───────────────────────── */
 .pagination .page-total { margin-right: var(--sp1); }
+/* 每页条数已包成可搜索下拉（与全站一致）；原生 select 样式仅作组件未加载时的兜底 */
+.pagination .searchable-select { width: 108px; flex: 0 0 auto; }
 .pagination .page-size-select {
   height: 32px;
   padding: 0 8px;

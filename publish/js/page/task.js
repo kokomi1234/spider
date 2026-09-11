@@ -399,6 +399,9 @@
 
     // 详情弹窗
     $('#btnTaskDetailClose').addEventListener('click', closeDetail);
+    // 右上角 ✕（与订阅页详情弹窗同款），关的是同一个弹窗
+    const taskDetailCloseX = $('#btnTaskDetailCloseX');
+    if (taskDetailCloseX) taskDetailCloseX.addEventListener('click', closeDetail);
     $('#taskDetailOverlay').addEventListener('click', (e) => {
       if (e.target === $('#taskDetailOverlay')) closeDetail();
     });

@@ -1375,6 +1375,9 @@
   }
 
   $('#btnDetailClose').addEventListener('click', closeDetail);
+  // 右上角 ✕（与订阅页详情弹窗同款），关的是同一个弹窗
+  const detailCloseX = $('#btnDetailCloseX');
+  if (detailCloseX) detailCloseX.addEventListener('click', closeDetail);
   detailOverlay.addEventListener('click', (e) => {
     if (e.target === detailOverlay) closeDetail();   // 点遮罩空白处关闭
   });
