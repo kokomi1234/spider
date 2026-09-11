@@ -29,12 +29,8 @@
   // 常量
   // ═══════════════════════════════════════════════════
 
-  /** 快速筛选：调用方系统编号（抓包里 useNum / callerComponent 取值就是这两个） */
-  const QUICK_CALLERS = [
-    { value: 'E00406', label: 'BOCNETC-O-MAPSN' },   // 海外个人手机银行客户端
-    { value: 'E00404', label: 'BOCNETC-O-WPSN' },    // 海外个人网银
-  ];
-  const DEFAULT_CALLER = 'E00406';
+  /** 默认不预填调用方：下拉为空 = 不限定调用方（全部调用方），用户用快捷按钮或下拉自行选择 */
+  const DEFAULT_CALLER = '';
 
   /** 表格列：[字段 key, 中文列名, 是否等宽字体]，顺序与 HTML 表头一致。
       前两列是固定左列：优先级（算出来的，一眼看该先处理哪条）+ 订阅关系基线状态。
@@ -157,7 +153,7 @@
     rows: [],
     cond: null,
     queried: false,
-    caller: DEFAULT_CALLER,   // 生效的调用方系统编号
+    caller: '',              // 生效的调用方系统编号（'' = 不限定 / 全部调用方）
     reqSeq: 0,                // 请求序号，旧响应直接丢弃
     // 默认就按优先级排（逾期 / 临期的顶上来），用户点列头可切宽松在前或恢复后端原序
     sort: 'asc',              // 'asc' 紧急在前 / 'desc' 宽松在前 / null 后端原序
@@ -224,8 +220,14 @@
   }
 
   /** 生效的调用方系统：表单里的「调用方系统/分行」优先于快速筛选按钮 */
+  /**
+   * 生效的调用方系统：直接读「调用方系统/分行」下拉的当前值。
+   * 关键：下拉为空（用户没选 / 点了 ✕）就返回 ''，表示「不限定调用方」，
+   * 不能回退到 DEFAULT_CALLER —— 否则「只搜提供方系统」会被偷偷限定成某个固定调用方，
+   * 结果从几千条掉到几条（2026-09-11 的 bug）。
+   */
   function effectiveCaller() {
-    return selValue('f_callerCompNum') || state.caller || DEFAULT_CALLER;
+    return selValue('f_callerCompNum');
   }
 
   function collectCond() {
@@ -996,13 +998,17 @@
   // ═══════════════════════════════════════════════════
 
   function setQuickCaller(value, autoQuery) {
-    state.caller = value || DEFAULT_CALLER;
+    // value='' 表示「不限定调用方」（全部调用方），不要再回退到默认系统
+    state.caller = value || '';
     document.querySelectorAll('#callerQuick .filter-quick-btn').forEach((b) => {
       b.classList.toggle('active', b.dataset.caller === state.caller);
     });
-    // 表单里的「调用方系统/分行」跟着同步，避免两个入口显示矛盾
+    // 表单里的「调用方系统/分行」跟着同步，避免两个入口显示矛盾；
+    // 空值 → setValue('') 清空下拉（不限定调用方）
     if (selects.f_callerCompNum) selects.f_callerCompNum.setValue(state.caller);
-    loadCallerServeNos(state.caller);
+    // 选了具体调用方才去拉它的服务编号下拉；不限定就清空，避免发一次注定空的结果
+    if (state.caller) loadCallerServeNos(state.caller);
+    else if (multiSelects.prodSysServeNo) multiSelects.prodSysServeNo.setOptions([]);
     // 点了就查（首次也查），否则用户点完看不到任何动静会以为按钮坏了
     if (autoQuery) query(1);
   }
@@ -1163,7 +1169,7 @@
       window.DialogUtils.makeDraggable($('#detailDialog'), $('#detailDialog .sub-head'));
     }
 
-    setQuickCaller(DEFAULT_CALLER, false);
+    setQuickCaller('', false);   // 默认不限定调用方（全部），用户可点快捷按钮或下拉选具体系统
     loadDicts();
   }
 
