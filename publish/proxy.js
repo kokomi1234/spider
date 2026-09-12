@@ -125,7 +125,10 @@ const MIME = {
 function isStaticRequest(url) {
   // GET 请求且路径对应 __dirname 下的文件 → 静态
   if (url === '/') return true;           // / 首页 → index.html
-  const ext = path.extname(url).toLowerCase();
+  // 必须先剥掉查询串/锚点：否则 /index.html?debug=1 的 extname 会算成
+  // ".html?debug=1"，被判成非静态 → 走代理 → 404，地址栏加 ?debug=1 就打不开页面
+  const clean = String(url).split('?')[0].split('#')[0];
+  const ext = path.extname(clean).toLowerCase();
   return ext in MIME;
 }
 
