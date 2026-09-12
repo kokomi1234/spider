@@ -476,6 +476,12 @@
       <div class="cache-replay-bar" id="cacheReplayBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="cacheReplayBar">
         <span id="cacheReplayText"></span>
       </div>
+      <!-- 失败分页重试条：仅部分后端分页拉取失败时出现。
+           放在**表格上方**（原来在分页条下面，几乎没人注意到，失败了也不知道可以重试） -->
+      <div class="retry-bar" id="retryBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="retryBar">
+        <span class="retry-text" id="retryText"></span>
+        <button class="outlined btn-xs retry-btn" id="btnRetryFailed" type="button">重试失败分页</button>
+      </div>
       <div class="tbl-scroll" data-page-node-id="mZ4UTzMgVjEc2rN4OyyYOx">
         <table class="result-table" data-page-node-id="0gd3Noy1wWBN9tmHD6RpIR">
           <colgroup data-page-node-id="lnn4GUrdjBWsmE5mwJeEc2">
@@ -515,12 +521,6 @@
         <button class="outlined btn-xs" id="btnPrev" data-page-node-id="4VrosZipJvq5czA43p1NyU">‹ 上一页</button>
         <span class="page-info" id="pageInfo" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
         <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
-      </div>
-
-      <!-- 失败分页重试条：仅部分后端分页拉取失败时出现 -->
-      <div class="retry-bar" id="retryBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="retryBar">
-        <span class="retry-text" id="retryText"></span>
-        <button class="outlined btn-xs retry-btn" id="btnRetryFailed" type="button">重试失败分页</button>
       </div>
     </div>
   </div>
