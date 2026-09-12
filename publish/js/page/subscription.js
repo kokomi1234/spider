@@ -116,37 +116,20 @@
   const selected = new Set();   // 勾选的行 key（当前页）
   let selects = {};             // id -> searchable-select 实例
   let multiSelects = {};        // key -> multi-select 实例
-  let toastTimer = null;
 
   // ═══════════════════════════════════════════════════
   // 小工具
   // ═══════════════════════════════════════════════════
 
-  function toast(msg, duration = 2500) {
-    const el = $('#toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), duration);
-  }
+  // 公共实现见 js/ui/toast.js / js/core/format.js（三页共用）。
+  // 本地只留同名别名，调用点不用改。
+  const toast = window.toast || (() => {});
+  const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
+  const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
 
   function setLoading(on) {
     const el = $('#loadingMask');
     if (el) el.classList.toggle('show', !!on);
-  }
-
-  function esc(v) {
-    return String(v ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function num(n) {
-    return typeof n === 'number' ? n.toLocaleString('zh-CN') : String(n ?? '—');
   }
 
   /** 复制到剪贴板：点击时把文本写入剪贴板，toast 提示成功 */
@@ -834,11 +817,6 @@
   // 导出
   // ═══════════════════════════════════════════════════
 
-  function csvCell(value) {
-    const text = value == null ? '' : String(value);
-    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-  }
-
   /** CSV 末尾追加的两列优先级信息（表格里已展示优先级本身，这里补上截止日） */
   const CSV_EXTRA = [
     ['_prioNext', '下一步里程碑'],
@@ -846,22 +824,10 @@
   ];
 
   function downloadCsv(rows, filename) {
-    const header = COLUMNS.map(([, label]) => label).concat(CSV_EXTRA.map(([, label]) => label));
-    const lines = [header.map(csvCell).join(',')];
-    rows.forEach((r) => {
-      const cells = COLUMNS.map(([k]) => csvCell(r[k] ?? ''))
-        .concat(CSV_EXTRA.map(([k]) => csvCell(r[k] ?? '')));
-      lines.push(cells.join(','));
-    });
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const exporter = window.CsvExporter;
+    if (!exporter) { toast('⚠️ 导出模块未加载', 2500); return; }
+    // 列 = 表格列 + 优先级补充列，一起交给公共导出（写文件/转义只有一份实现）
+    exporter.download(rows, COLUMNS.concat(CSV_EXTRA), filename);
   }
 
   /**

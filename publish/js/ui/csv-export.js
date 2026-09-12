@@ -1,4 +1,7 @@
-/* CSV 导出 feature：不依赖页面查询状态，输入 rows 和订阅状态函数即可复用。 */
+/* CSV 导出：
+   · exportRows —— 发布页专用（列固定，需要订阅状态函数）
+   · download   —— 通用版：传入列定义 [[key, label], ...]，任务单页 / 订阅页共用，
+                   以前这两页各抄了一份 csvCell + downloadCsv。 */
 (() => {
   'use strict';
 
@@ -51,5 +54,27 @@
     return true;
   }
 
-  window.CsvExporter = Object.freeze({ exportRows });
+  /**
+   * 通用导出：按给定的列定义把 rows 写成 CSV 并触发下载。
+   * @param {Array<object>} rows
+   * @param {Array<[string, string]>} columns [[字段名, 表头], ...]
+   * @param {string} filename
+   */
+  function download(rows, columns, filename) {
+    const lines = [columns.map(([, label]) => csvCell(label)).join(',')];
+    rows.forEach((r) => {
+      lines.push(columns.map(([key]) => csvCell(r[key] ?? '')).join(','));
+    });
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  window.CsvExporter = Object.freeze({ exportRows, download, csvCell });
 })();

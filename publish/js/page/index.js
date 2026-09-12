@@ -35,7 +35,6 @@
   const filterToggle   = $('#filterToggle');
   const filterCard     = $('#filterCard');
   const loadingMask    = $('#loadingMask');
-  const toastEl        = $('#toast');
   const resultBody     = $('#resultBody');
   const pagination     = $('#pagination');
   const btnPrev        = $('#btnPrev');
@@ -225,34 +224,11 @@
     loadingMask.setAttribute('aria-busy', 'false');
   }
 
-  /** HTML 转义，供模板里的属性/文本使用 */
-  function esc(v) {
-    return String(v ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
+  const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
 
-  /** Toast 提示（支持多种类型） */
-  const TOAST_STYLE = {
-    info:    { bg: 'var(--on-surface)', fg: 'var(--surface)' },
-    success: { bg: 'var(--green-c)',    fg: 'var(--on-green-c)' },
-    error:   { bg: 'var(--red-c)',      fg: 'var(--on-red-c)' },
-    warn:    { bg: 'var(--amber-c)',    fg: 'var(--on-amber-c)' },
-  };
-
-  let toastTimer = null;
-  function showToast(msg, duration = 2500, type = 'info') {
-    const style = TOAST_STYLE[type] || TOAST_STYLE.info;
-    toastEl.textContent = msg;
-    toastEl.className = 'toast show';
-    toastEl.style.background = style.bg;
-    toastEl.style.color = style.fg;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), duration);
-  }
+  // Toast 公共实现见 js/ui/toast.js（三页共用；本地保留 showToast 这个名字）
+  const showToast = window.toast || (() => {});
 
   // 暴露给其他模块使用
   window._showToast = showToast;
@@ -607,82 +583,7 @@
     renderCurrentPage();
   }
 
-  /**
-   * 增量刷新当前页表格行 —— 仅更新订阅标记列和操作列。
-   * 用于 quickSubscribe 场景：用户点了一次订阅，只需把那一行的
-   * "✗ 未订阅" → "✓ 已订阅"、删掉「订阅」按钮即可，不用重建整张表。
-   *
-   * 在非「全部」筛选态下的处理：
-   *   · 「未订阅」筛选 → 刚订阅的行应从 DOM 移除（不再符合筛选条件）
-   *   · 「已订阅」筛选 → 不可能点到订阅按钮，此函数不会被调用
-   *   · 移除后若当前页为空，需自动跳转到前一页（如果存在）
-   */
-  function refreshCurrentPageRows() {
-    const tbody = resultBody;
-    const rows = tbody.querySelectorAll('tr[data-code]');
-    if (!rows.length) return;
-
-    let changed = false;
-    let rowRemoved = false;
-
-    rows.forEach(tr => {
-      const code = tr.dataset.code;
-      const isSub = window.SubscribeManager.isSubscribed(code);
-
-      // ── 场景 1：当前在「全部」筛选态 ─────────────────────
-      if (currentFilter === 'all') {
-        // 更新订阅标记列
-        const subCell = tr.querySelector('.cell-sub');
-        if (subCell && isSub) {
-          subCell.innerHTML = '<span class="badge b-run">✓ 已订阅</span>';
-          tr.classList.remove('unsubscribed-row');
-          changed = true;
-        }
-
-        // 更新操作列：已订阅的行不应该有「订阅」按钮
-        const opCell = tr.querySelector('.col-op .action-row');
-        if (opCell) {
-          const subBtn = opCell.querySelector('button.btn-subscribe');
-          if (isSub && subBtn) {
-            subBtn.remove();
-            changed = true;
-          }
-        }
-        return;
-      }
-
-      // ── 场景 2：当前在「未订阅」筛选态，刚订阅了一行 ────
-      // 该行已从「未订阅」变为「已订阅」，不符合当前筛选条件，应从 DOM 移除
-      if (currentFilter === 'unsubscribed' && isSub) {
-        tr.remove();
-        rowRemoved = true;
-        changed = true;
-        return;
-      }
-
-      // 「已订阅」筛选态下不会有点订阅按钮的场景，跳过
-    });
-
-    if (!changed) return;  // 没有行被修改，说明订阅的不是当前页的行
-
-    // 如果在「未订阅」筛选下移除了行，需要检查当前页是否为空
-    if (rowRemoved) {
-      const remainingRows = tbody.querySelectorAll('tr[data-code]');
-      if (!remainingRows.length) {
-        // 当前页已无数据，尝试跳转到前一页
-        if (pageNum > 1) {
-          pageNum--;
-          renderCurrentPage();
-          updatePagination();
-        } else {
-          // 第一页就没数据了，显示空提示
-          resultBody.innerHTML = '<tr><td colspan="10" class="empty-hint">当前筛选条件下无数据</td></tr>';
-          pagination.style.display = 'none';
-          resultCount.textContent = `筛选后 ${filteredRows.length} 条（共 ${rawRows.length} 条）`;
-        }
-      }
-    }
-  }
+  
 
   // ── 渲染当前页（对筛选后全量做客户端分页切分） ─────
   function renderCurrentPage() {
@@ -1472,9 +1373,9 @@
         throw new Error('batch-data.js 未加载或执行失败');
       }
 
-      console.log('🔄 开始加载批次列表...');
+      debugLog('🔄 开始加载批次列表...');
       const batches = await window.loadBatchList();
-      console.log(`✅ 批次列表加载完成: 共 ${batches.length} 个批次`);
+      debugLog(`✅ 批次列表加载完成: 共 ${batches.length} 个批次`);
 
       // 缓存原始选项，供 collectApiBody 取 label 用
       window._batchOptions = batches;
@@ -1482,7 +1383,7 @@
       // 创建可搜索下拉组件
       if (typeof window.createSearchableSelect === 'function') {
         batchSelectInstance = makeSelect(batchSelect, batches);
-        console.log('✅ 批次下拉搜索组件初始化完成');
+        debugLog('✅ 批次下拉搜索组件初始化完成');
       } else {
         // 降级方案：普通 select
         batchSelect.innerHTML = '';
@@ -1497,7 +1398,7 @@
           option.textContent = batch.label;
           batchSelect.appendChild(option);
         });
-        console.log('⚠️ 使用降级方案：普通下拉列表');
+        debugLog('⚠️ 使用降级方案：普通下拉列表');
       }
     } catch (err) {
       console.error('批次列表加载失败:', err);
@@ -1548,9 +1449,9 @@
         throw new Error('department-data.js 未加载或执行失败');
       }
 
-      console.log('🔄 开始加载部门列表...');
+      debugLog('🔄 开始加载部门列表...');
       const depts = await window.loadDepartmentList();
-      console.log(`✅ 部门列表加载完成: 共 ${depts.length} 个部门`);
+      debugLog(`✅ 部门列表加载完成: 共 ${depts.length} 个部门`);
 
       // 转为 searchable-select 格式
       deptOptions = deptsToOptions(depts);
@@ -1558,10 +1459,10 @@
       // 创建 searchable-select
       if (typeof window.createSearchableSelect === 'function') {
         deptSelectInstance = makeSelect(deptInput, deptOptions);
-        console.log('✅ 部门下拉搜索组件初始化完成');
+        debugLog('✅ 部门下拉搜索组件初始化完成');
       } else {
         // 降级方案：普通 input 文本输入
-        console.log('⚠️ 使用降级方案：部门仅支持手动输入');
+        debugLog('⚠️ 使用降级方案：部门仅支持手动输入');
       }
     } catch (err) {
       console.error('部门列表加载失败:', err);
@@ -1583,18 +1484,18 @@
         throw new Error('provider-data.js 未加载或执行失败');
       }
 
-      console.log('🔄 开始加载提供方系统列表...');
+      debugLog('🔄 开始加载提供方系统列表...');
       const providers = await window.loadProviderList();
-      console.log(`✅ 提供方系统列表加载完成: 共 ${providers.length} 个系统`);
+      debugLog(`✅ 提供方系统列表加载完成: 共 ${providers.length} 个系统`);
 
       // 创建 searchable-select
       if (typeof window.createSearchableSelect === 'function') {
         providerSelectInstance = makeSelect(providerSelect, providers);
-        console.log('✅ 提供方系统下拉搜索组件初始化完成');
+        debugLog('✅ 提供方系统下拉搜索组件初始化完成');
         // 默认选中 E00301（互联网金融服务平台-BOCNET-G-IFS）
         try {
           providerSelectInstance.setValue('E00301');
-          console.log('✅ 已默认选中 E00301（互联网金融服务平台）');
+          debugLog('✅ 已默认选中 E00301（互联网金融服务平台）');
         } catch (_) {
           console.warn('默认选中 E00301 失败，列表可能不包含该系统');
         }
@@ -1637,7 +1538,7 @@
       { disabled: true }
     );
     checkoutSelectInstance.setValue('');   // 禁用态也展示「全部」
-    console.log('✅ CHECKOUT/IN 状态下拉已统一为 input 风格（禁用）');
+    debugLog('✅ CHECKOUT/IN 状态下拉已统一为 input 风格（禁用）');
   }
 
   /** 是否发送行外系统：固定选项，包成可搜索下拉，与全局 input 风格统一 */
@@ -1645,7 +1546,7 @@
     const el = $('#f_sendOutSide');
     if (!el || typeof window.createSearchableSelect !== 'function') return;
     makeSelect(el, [], { disabled: false });
-    console.log('✅ 是否发送行外系统下拉已统一为 input 风格');
+    debugLog('✅ 是否发送行外系统下拉已统一为 input 风格');
   }
 
   /** 服务状态：固定选项，包成可搜索下拉，与全局 input 风格统一
@@ -1654,7 +1555,7 @@
     const el = $('#f_serviceStatus');
     if (!el || typeof window.createSearchableSelect !== 'function') return;
     makeSelect(el, [], { disabled: false });
-    console.log('✅ 服务状态下拉已统一为 input 风格');
+    debugLog('✅ 服务状态下拉已统一为 input 风格');
   }
 
   /** 变更时间：使用与普通表单控件同规格的日期面板；原始 input 保持唯一值来源 */
@@ -1662,7 +1563,7 @@
     const el = $('#f_changeTime');
     if (!el || typeof window.createDatePicker !== 'function') return;
     changeTimeInstance = window.createDatePicker(el);
-    console.log('✅ 变更时间日期选择器已初始化（日历弹层）');
+    debugLog('✅ 变更时间日期选择器已初始化（日历弹层）');
   }
 
   // 页面 DOM 就绪后异步加载部门列表和批次列表

@@ -46,8 +46,6 @@
     ['subTaskApplicationId',         '子任务申请 ID'],
   ];
 
-  /** CSV 导出表头（与 DETAIL_FIELDS 顺序一致，去掉两个内部 ID 放最后） */
-  const CSV_HEADERS = DETAIL_FIELDS.map(([, label]) => label);
 
   const PAGE_SIZE = 10;   // 与抓包里的 pageSize 默认值一致
   const EXPORT_PAGE_SIZE = 500;
@@ -79,33 +77,18 @@
   // 小工具
   // ═══════════════════════════════════════════════════
 
-  function toast(msg, duration = 2500) {
-    const el = $('#toast');
-    if (!el) return;
-    el.textContent = msg;
-    el.classList.add('show');
-    clearTimeout(loadingTimer);
-    loadingTimer = setTimeout(() => el.classList.remove('show'), duration);
-  }
-
-  function esc(v) {
-    return String(v ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  // 公共实现见 js/ui/toast.js（三页共用）。
+  // 注意：以前这里复用 loadingTimer 做 toast 定时器，会把「加载中」的定时器顶掉，已随统一实现修掉。
+  const toast = window.toast || (() => {});
+  // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
+  const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
+  const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
 
   /** 去掉时间戳尾部的 00:00:00，只留日期 */
   function shortDate(v) {
     const s = String(v ?? '').trim();
     if (!s) return '—';
     return s.length > 10 ? s.slice(0, 10) : s;
-  }
-
-  function num(n) {
-    return typeof n === 'number' ? n.toLocaleString('zh-CN') : String(n ?? '—');
   }
 
   // ═══════════════════════════════════════════════════
@@ -304,29 +287,13 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // CSV 导出
+  // CSV 导出（写文件的部分走 js/ui/csv-export.js 的 CsvExporter.download）
   // ═══════════════════════════════════════════════════
 
-  function csvCell(value) {
-    const text = value == null ? '' : String(value);
-    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-  }
-
   function downloadCsv(rows, filename) {
-    const keys = DETAIL_FIELDS.map(([k]) => k);
-    const lines = [CSV_HEADERS.map(csvCell).join(',')];
-    rows.forEach((r) => {
-      lines.push(keys.map((k) => csvCell(r[k] ?? '')).join(','));
-    });
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const exporter = window.CsvExporter;
+    if (!exporter) { toast('⚠️ 导出模块未加载', 2500); return; }
+    exporter.download(rows, DETAIL_FIELDS, filename);
   }
 
   /**
