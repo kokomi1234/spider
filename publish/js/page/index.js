@@ -10,21 +10,9 @@
   // 运行时服务统一由 bootstrap.js 做完整性检查；这里继续兼容现有全局服务 API。
   const SUBSCRIBE_STORAGE_KEY = 'subscribed_services';
 
-  // ── 调试日志开关 ────────────────────────────────────
-  // 查询路径原本无条件打印完整请求体 / 过滤条件，生产环境既吵，
-  // 又会把接口字段细节摊在控制台里。需要排障时二选一：
-  //   ① 地址栏加 ?debug=1
-  //   ② 控制台执行 window.__APP_DEBUG__ = true
-  const DEBUG = (() => {
-    try {
-      const flag = window.__APP_DEBUG__;
-      if (flag != null) return !!flag;
-      return new URLSearchParams(location.search).has('debug');
-    } catch (_) {
-      return false;
-    }
-  })();
-  function debugLog(...args) { if (DEBUG) console.log(...args); }
+  // 调试日志：公共实现见 js/core/debug.js（默认不输出，?debug=1 或
+  // window.__APP_DEBUG__ = true 才打印）
+  const debugLog = window.debugLog || (() => {});
 
   // ── DOM 引用 ────────────────────────────────────────
   const $ = (sel) => document.querySelector(sel);
@@ -1360,231 +1348,38 @@
     console.error('订阅管理 UI 初始化失败:', err);
   }
 
-  // ── 初始化批次下拉列表（从 API 动态加载） ────────────────────────
-  async function initBatchList() {
-    const batchSelect = $('#f_prodBatch');
-    if (!batchSelect) {
-      console.warn('找不到批次选择器 #f_prodBatch');
-      return;
+  // ── 字典下拉（批次 / 部门 / 提供方 / 固定选项）──────────────
+  // 这一段原本 250 多行内联在这里，已拆到 js/ui/dict-selects.js。
+  // 模块只负责「取数据 + 建下拉」，实例交回来由本文件赋值（setter 照常生效）。
+  async function initDictSelects() {
+    const D = window.DictSelects;
+    if (!D) { console.warn('[index] dict-selects.js 未加载，筛选项下拉不可用'); return; }
+
+    const b = await D.initBatchList(makeSelect);
+    if (b) {
+      if (b.instance) batchSelectInstance = b.instance;
+      window._batchOptions = b.options || [];   // collectApiBody 取 label 用
     }
 
-    try {
-      if (typeof window.loadBatchList !== 'function') {
-        throw new Error('batch-data.js 未加载或执行失败');
-      }
-
-      debugLog('🔄 开始加载批次列表...');
-      const batches = await window.loadBatchList();
-      debugLog(`✅ 批次列表加载完成: 共 ${batches.length} 个批次`);
-
-      // 缓存原始选项，供 collectApiBody 取 label 用
-      window._batchOptions = batches;
-
-      // 创建可搜索下拉组件
-      if (typeof window.createSearchableSelect === 'function') {
-        batchSelectInstance = makeSelect(batchSelect, batches);
-        debugLog('✅ 批次下拉搜索组件初始化完成');
-      } else {
-        // 降级方案：普通 select
-        batchSelect.innerHTML = '';
-        const allOpt = document.createElement('option');
-        allOpt.value = '';
-        allOpt.textContent = '（全部）';
-        batchSelect.appendChild(allOpt);
-
-        batches.forEach(batch => {
-          const option = document.createElement('option');
-          option.value = batch.value;
-          option.textContent = batch.label;
-          batchSelect.appendChild(option);
-        });
-        debugLog('⚠️ 使用降级方案：普通下拉列表');
-      }
-    } catch (err) {
-      console.error('批次列表加载失败:', err);
-      
-      // 降级方案：填充一些常用批次
-      const commonBatches = [
-        { label: '2606批次', value: '2606' },
-        { label: '26年8月独立', value: '268dl' },
-        { label: '2404批次', value: '2404' },
-        { label: '2401批次', value: '332' },
-        { label: '2608批次', value: '2608' },
-        { label: '2607批次', value: '2607' },
-        { label: '2402批次', value: '350' },
-        { label: '2511批次', value: '2511' },
-        { label: '2412批次', value: '2412' },
-        { label: '2605批次', value: '2605' },
-        { label: '24年3月独立', value: '340' },
-      ];
-
-      batchSelect.innerHTML = '';
-      const allOpt = document.createElement('option');
-      allOpt.value = '';
-      allOpt.textContent = '加载失败，请选择';
-      allOpt.disabled = true;
-      batchSelect.appendChild(allOpt);
-
-      commonBatches.forEach(batch => {
-        const option = document.createElement('option');
-        option.value = batch.value;
-        option.textContent = batch.label;
-        batchSelect.appendChild(option);
-      });
-
-      showToast('⚠️ 批次列表加载失败，已填充常用批次', 4500, 'warn');
-    }
-  }
-
-  /** 初始化部门 searchable-select */
-  async function initDepartmentList() {
-    const deptInput = $('#f_deptName');
-    if (!deptInput) {
-      console.warn('找不到部门输入框 #f_deptName');
-      return;
+    const d = await D.initDepartmentList(makeSelect, deptsToOptions);
+    if (d) {
+      if (d.instance) deptSelectInstance = d.instance;
+      deptOptions = d.options || [];
     }
 
-    try {
-      if (typeof window.loadDepartmentList !== 'function') {
-        throw new Error('department-data.js 未加载或执行失败');
-      }
+    const p = await D.initProviderList(makeSelect);
+    if (p && p.instance) providerSelectInstance = p.instance;
 
-      debugLog('🔄 开始加载部门列表...');
-      const depts = await window.loadDepartmentList();
-      debugLog(`✅ 部门列表加载完成: 共 ${depts.length} 个部门`);
-
-      // 转为 searchable-select 格式
-      deptOptions = deptsToOptions(depts);
-
-      // 创建 searchable-select
-      if (typeof window.createSearchableSelect === 'function') {
-        deptSelectInstance = makeSelect(deptInput, deptOptions);
-        debugLog('✅ 部门下拉搜索组件初始化完成');
-      } else {
-        // 降级方案：普通 input 文本输入
-        debugLog('⚠️ 使用降级方案：部门仅支持手动输入');
-      }
-    } catch (err) {
-      console.error('部门列表加载失败:', err);
-      // 降级：用查询结果兜底填充
-      showToast('⚠️ 部门列表加载失败，可手动输入部门名称筛选', 4500, 'warn');
-    }
+    const s = D.initStaticSelects(makeSelect) || {};
+    if (s.checkout) checkoutSelectInstance = s.checkout;
+    if (s.changeTime) changeTimeInstance = s.changeTime;
   }
 
-  /** 初始化提供方系统 searchable-select */
-  async function initProviderList() {
-    const providerSelect = $('#f_provideSystemNumber');
-    if (!providerSelect) {
-      console.warn('找不到提供方系统选择器 #f_provideSystemNumber');
-      return;
-    }
-
-    try {
-      if (typeof window.loadProviderList !== 'function') {
-        throw new Error('provider-data.js 未加载或执行失败');
-      }
-
-      debugLog('🔄 开始加载提供方系统列表...');
-      const providers = await window.loadProviderList();
-      debugLog(`✅ 提供方系统列表加载完成: 共 ${providers.length} 个系统`);
-
-      // 创建 searchable-select
-      if (typeof window.createSearchableSelect === 'function') {
-        providerSelectInstance = makeSelect(providerSelect, providers);
-        debugLog('✅ 提供方系统下拉搜索组件初始化完成');
-        // 默认选中 E00301（互联网金融服务平台-BOCNET-G-IFS）
-        try {
-          providerSelectInstance.setValue('E00301');
-          debugLog('✅ 已默认选中 E00301（互联网金融服务平台）');
-        } catch (_) {
-          console.warn('默认选中 E00301 失败，列表可能不包含该系统');
-        }
-      } else {
-        providerSelect.innerHTML = '';
-        const allOpt = document.createElement('option');
-        allOpt.value = '';
-        allOpt.textContent = '（全部）';
-        providerSelect.appendChild(allOpt);
-        providers.forEach(p => {
-          const option = document.createElement('option');
-          option.value = p.value;
-          option.textContent = p.label;
-          providerSelect.appendChild(option);
-        });
-        // 默认选中 E00301
-        providerSelect.value = 'E00301';
-      }
-    } catch (err) {
-      console.error('提供方系统列表加载失败:', err);
-      providerSelect.innerHTML = '';
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '加载失败，请手动输入';
-      opt.disabled = true;
-      providerSelect.appendChild(opt);
-      showToast('⚠️ 提供方系统列表加载失败，可手动输入编号筛选', 4500, 'warn');
-    }
-  }
-
-  /** 把 CHECKOUT/IN 状态（原生 <select>，且 disabled）也包成可搜索下拉，
-   *  与提供方系统/批次/部门保持同一套 input 风格。该字段后端无对应筛选字段，故禁用。 */
-  function initCheckoutInStatus() {
-    const checkoutSelect = $('#f_checkoutInStatus');
-    if (!checkoutSelect) return;
-    if (typeof window.createSearchableSelect !== 'function') return;  // 组件未加载则保留原生 select
-    checkoutSelectInstance = makeSelect(
-      checkoutSelect,
-      [{ value: '', label: '全部' }],
-      { disabled: true }
-    );
-    checkoutSelectInstance.setValue('');   // 禁用态也展示「全部」
-    debugLog('✅ CHECKOUT/IN 状态下拉已统一为 input 风格（禁用）');
-  }
-
-  /** 是否发送行外系统：固定选项，包成可搜索下拉，与全局 input 风格统一 */
-  function initSendOutSide() {
-    const el = $('#f_sendOutSide');
-    if (!el || typeof window.createSearchableSelect !== 'function') return;
-    makeSelect(el, [], { disabled: false });
-    debugLog('✅ 是否发送行外系统下拉已统一为 input 风格');
-  }
-
-  /** 服务状态：固定选项，包成可搜索下拉，与全局 input 风格统一
-   *  后端 serviceStatus 恒为 null，实际用 offerServerState 做前端兜底过滤 */
-  function initServiceStatus() {
-    const el = $('#f_serviceStatus');
-    if (!el || typeof window.createSearchableSelect !== 'function') return;
-    makeSelect(el, [], { disabled: false });
-    debugLog('✅ 服务状态下拉已统一为 input 风格');
-  }
-
-  /** 变更时间：使用与普通表单控件同规格的日期面板；原始 input 保持唯一值来源 */
-  function initChangeTime() {
-    const el = $('#f_changeTime');
-    if (!el || typeof window.createDatePicker !== 'function') return;
-    changeTimeInstance = window.createDatePicker(el);
-    debugLog('✅ 变更时间日期选择器已初始化（日历弹层）');
-  }
-
-  // 页面 DOM 就绪后异步加载部门列表和批次列表
+  // 页面 DOM 就绪后异步加载各字典下拉
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      initDepartmentList();
-      initBatchList();
-      initProviderList();
-      initCheckoutInStatus();
-      initSendOutSide();
-      initServiceStatus();
-      initChangeTime();
-    });
+    document.addEventListener('DOMContentLoaded', initDictSelects, { once: true });
   } else {
-    initDepartmentList();
-    initBatchList();
-    initProviderList();
-    initCheckoutInStatus();
-    initSendOutSide();
-    initServiceStatus();
-    initChangeTime();
+    initDictSelects();
   }
 
   // ── 初始化页面状态（网络检测等） ────────────────
