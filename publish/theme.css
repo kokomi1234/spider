@@ -205,12 +205,6 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 .filled:hover:not(:disabled) { filter: brightness(1.08); }
 
-.tonal-btn {
-  background: var(--primary-c);
-  color: var(--on-primary-c);
-  padding: 9px 24px;
-}
-.tonal-btn:hover:not(:disabled) { filter: brightness(.96); }
 
 .outlined {
   background: transparent;
@@ -863,19 +857,7 @@ tbody tr.unsubscribed-row:hover td {
 .stat.warn     { background: var(--amber-c); color: var(--on-amber-c); }
 
 /* ── 进度条 ───────────────────────────────────────── */
-.prog-bar {
-  height: 6px;
-  background: var(--surface-2);
-  border-radius: var(--r-pill);
-  overflow: hidden;
-}
 
-.prog-fill {
-  height: 100%;
-  background: var(--primary);
-  border-radius: var(--r-pill);
-  transition: width .3s ease;
-}
 
 /* ── 模态弹窗 ────────────────��────────────────────── */
 .overlay {
@@ -1700,15 +1682,6 @@ label.req::after {
 .kv-grid dd { background: var(--surface); padding: 7px 12px; word-break: break-all; }
 .kv-grid dt { color: var(--muted); font-size: var(--fs-sm); }
 .kv-grid dd { font-family: monospace; font-size: var(--fs-xs); }
-.kv-grid .kv-group {
-  grid-column: 1 / -1;
-  background: var(--surface-1);
-  color: var(--on-surface);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  padding: 6px 12px;
-}
-.kv-grid .kv-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px 0; }
 
 /* ── 基线状态色块 ────────────────────────────────────── */
 .st-tag {

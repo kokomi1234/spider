@@ -992,14 +992,7 @@
     return docAllRows;
   }
 
-  /**
-   * 获取文档列表（统一入口）
-   * 如果数据未加载则先请求，否则返回缓存数据
-   */
-  async function getDocRows(forceReload = false) {
-    if (!forceReload && docAllRows.length > 0) return docAllRows;
-    return await loadDocRows(1, 9999, '', '');
-  }
+  
 
   /**
    * 文档批次显示名映射（模式匹配）
