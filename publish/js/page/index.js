@@ -1173,84 +1173,14 @@
     }
   });
 
-  // ═══════════════════════════════════════════════════
-  // ── 查看详情 ────────────────────────────────────────
-  // 原来用 alert 把整行 JSON 拍在脸上：字段一多就顶出屏幕，还没法复制。
-  // 换成弹窗 + 键值表，滚动和复制都正常。
-  const detailOverlay = $('#detailOverlay');
-  const detailBody    = $('#detailBody');
-  const detailTitle   = $('#detailTitle');
-  const detailStatus  = $('#detailStatus');
-
-  let detailReturnFocus = null;
-  let detailSeq = 0;   // 防止「上一次详情的接口比下一次慢返回」覆盖新内容
-
-  function closeDetail() {
-    detailOverlay.classList.remove('show');
-    // 详情弹窗里不会再开子层，这里直接一次性解锁（js/ui/dialog-utils.js）
-    if (window.DialogUtils) window.DialogUtils.forceUnlockAll();
-    if (detailReturnFocus && typeof detailReturnFocus.focus === 'function') detailReturnFocus.focus();
-    detailReturnFocus = null;
-  }
-
-  function setDetailStatus(state, msg) {
-    if (!detailStatus) return;
-    detailStatus.className = 'detail-status' + (state ? ' is-' + state : '');
-    detailStatus.textContent = msg || '';
-    detailStatus.hidden = !state;
-  }
-
-  function renderDetailFields(data) {
-    const entries = Object.entries(data).filter(
-      ([, v]) => v != null && v !== '' && v !== '-'
-    );
-    detailBody.innerHTML = entries.length
-      ? entries.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')
-      : '<div class="empty">该服务没有可展示的字段</div>';
-  }
-
-  async function viewDetail(row) {
-    if (!row) return;
-    const seq = ++detailSeq;
-
-    detailReturnFocus = document.activeElement;
-    detailTitle.textContent = row.serviceName || row.serverCoding || '服务详情';
-    setDetailStatus('loading', '正在加载详情…');
-    renderDetailFields(row);   // 先展示本地数据，接口回来后再补/覆盖
-    detailOverlay.classList.add('show');
-    if (window.DialogUtils) window.DialogUtils.lockScroll();
-    $('#btnDetailClose').focus();
-
-    // 详情后端接口（service-api.js）未配置时，fetchServiceDetail 原样返回本地数据，不发请求。
-    const remote = window.ServiceApi ? await window.ServiceApi.fetchServiceDetail(row) : { ok: true, local: true, data: null };
-    if (seq !== detailSeq) return;   // 期间用户已点开别的服务，丢弃这次结果
-
-    if (remote && remote.ok && remote.data) {
-      renderDetailFields(Object.assign({}, row, remote.data));
-      setDetailStatus(remote.local ? '' : '');   // 后端成功：不额外提示
-    } else if (remote && !remote.ok) {
-      // 接口失败：保留本地行数据，并提示用户
-      setDetailStatus('error', '详情接口暂不可用，已显示列表中已有的字段');
-    } else {
-      setDetailStatus('');
-    }
-  }
-
-  $('#btnDetailClose').addEventListener('click', closeDetail);
-  // 右上角 ✕（与订阅页详情弹窗同款），关的是同一个弹窗
-  const detailCloseX = $('#btnDetailCloseX');
-  if (detailCloseX) detailCloseX.addEventListener('click', closeDetail);
-  detailOverlay.addEventListener('click', (e) => {
-    if (e.target === detailOverlay) closeDetail();   // 点遮罩空白处关闭
-  });
-
   // 表格内按钮走事件委托，不再内联 onclick
   // （原来把整行 JSON 塞进 onclick，服务名里带引号就会把 HTML 打断）
   resultBody.addEventListener('click', (e) => {
     const detailBtn = e.target.closest('button[data-detail]');
     if (detailBtn) {
       const idx = Number(detailBtn.dataset.detail);
-      viewDetail(filteredRows[idx] || rawRows[idx]);
+      const D = window.DetailDialog;
+      if (D) D.open(filteredRows[idx] || rawRows[idx]);
       return;
     }
     const subBtn = e.target.closest('button[data-sub]');
@@ -1280,7 +1210,7 @@
   window.AppServices.afterSubscribeChanged = afterSubscribeChanged;
   // 旧入口保留，兼容此前在控制台或外部页面调用的集成代码。
   window._afterSubscribeChanged = afterSubscribeChanged;
-  window._viewDetail          = viewDetail;
+  window._viewDetail          = (row) => window.DetailDialog && window.DetailDialog.open(row);
 
   // 输入法状态：中文输入法的 compositionend 与确认键之间可能存在极短时序窗口。
   // 在这个窗口内，Enter 只能提交候选词，不能触发查询或把焦点跳到必填的提供方系统。
@@ -1300,8 +1230,8 @@
   document.addEventListener('keydown', (e) => {
     const el = document.activeElement;
 
-    if (e.key === 'Escape' && detailOverlay.classList.contains('show')) {
-      closeDetail();
+    if (e.key === 'Escape' && $('#detailOverlay').classList.contains('show')) {
+      if (window.DetailDialog) window.DetailDialog.close();
       return;
     }
 
