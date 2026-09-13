@@ -67,6 +67,72 @@
     return missing;
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // 全局异常兜底
+  // ══════════════════════════════════════════════════════════════
+  // 为什么必须有：此前全项目 0 处 window.onerror / unhandledrejection，
+  // 未捕获的 Promise rejection 会**静默失败**——用户看到的就是"点了没反应"，
+  // 和"缓存没命中"的表现一模一样，极难自查（这是本项目踩过的坑）。
+  //
+  // 三条设计约束：
+  //   1) 同步安装：不能等 DOMContentLoaded，否则兜不住脚本加载期的错误。
+  //   2) 控制台必记：排障靠它，任何情况都写。
+  //   3) toast 只给"真异常"且限流：避免把无害噪音弹成骚扰、避免异常风暴刷屏。
+
+  /** 已知无害噪音：只记控制台，不弹 toast */
+  const ERROR_NOISE = /ResizeObserver|Script error\.?|Loading chunk \d+ failed|Non-Error promise rejection/i;
+
+  const TOAST_COOLDOWN_MS = 3000;
+  let lastErrorToastAt = 0;
+  let uncaughtCount = 0;
+
+  /** 把任意 reason 变成可打印文本（Error 取 stack，对象尝试 JSON） */
+  function describeReason(reason) {
+    if (reason instanceof Error) return reason.stack || `${reason.name}: ${reason.message}`;
+    if (typeof reason === 'string') return reason;
+    try {
+      return JSON.stringify(reason);
+    } catch (_) {
+      return String(reason);
+    }
+  }
+
+  function onUncaught(kind, reason) {
+    uncaughtCount += 1;
+    const detail = describeReason(reason);
+    const brief = (reason && reason.message) ? reason.message : String(reason);
+    // 控制台必记（排障唯一线索）
+    console.error(`[bootstrap] 未捕获${kind}：${brief}`, reason);
+
+    if (ERROR_NOISE.test(brief) || ERROR_NOISE.test(detail)) return; // 噪音：只记不弹
+
+    const now = Date.now();
+    if (now - lastErrorToastAt < TOAST_COOLDOWN_MS) return; // 限流：风暴时只弹一次
+    lastErrorToastAt = now;
+
+    if (typeof window.toast === 'function') {
+      window.toast('⚠️ 页面发生错误，详情见控制台（F12）', 4000, 'error');
+    }
+  }
+
+  function installErrorGuard() {
+    if (window.__APP_ERROR_GUARD__) return; // 防重复安装
+    window.__APP_ERROR_GUARD__ = true;
+
+    // 捕获阶段：资源加载失败（img/script 404）也会冒泡 error，但它没有 e.error、
+    // 且 target 是元素而非 window —— 那不是 JS 异常，跳过，避免误报。
+    window.addEventListener('error', (e) => {
+      if (e.target && e.target !== window && e.target.nodeName) return;
+      onUncaught('异常', e.error || e.message);
+    }, true);
+
+    window.addEventListener('unhandledrejection', (e) => {
+      onUncaught('Promise 拒绝', e.reason);
+    });
+  }
+
+  installErrorGuard();
+
   function start() {
     const page = currentPage();
     report(page);
@@ -74,9 +140,11 @@
     window.AppServices = window.AppServices || {};
     // 各页保持自启动兼容；bootstrap 只负责统一检查，不重复调用业务初始化。
     window.AppRuntime = Object.freeze({
-      version: '1.1.0',
+      version: '1.2.0',
       page,
       missingServices: () => missingFor(page),
+      /** 本次会话已兜住的未捕获异常数（排障/冒烟可断言） */
+      uncaughtCount: () => uncaughtCount,
     });
   }
 
