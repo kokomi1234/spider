@@ -286,15 +286,7 @@
     $('#taskDetailOverlay').classList.remove('show');
   }
 
-  // ═══════════════════════════════════════════════════
-  // CSV 导出（写文件的部分走 js/ui/csv-export.js 的 CsvExporter.download）
-  // ═══════════════════════════════════════════════════
-
-  function downloadCsv(rows, filename) {
-    const exporter = window.CsvExporter;
-    if (!exporter) { toast('⚠️ 导出模块未加载', 2500); return; }
-    exporter.download(rows, DETAIL_FIELDS, filename);
-  }
+  // CSV 导出走 js/ui/csv-export.js 的 CsvExporter.downloadRows（含模块缺失保护）
 
   /**
    * 导出当前筛选条件的结果。
@@ -316,7 +308,7 @@
       }
       const rows = out.slice(0, want);
       const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      downloadCsv(rows, `任务单查询_${stamp}.csv`);
+      window.CsvExporter.downloadRows(rows, DETAIL_FIELDS, `任务单查询_${stamp}.csv`);
       toast(
         rows.length >= state.total
           ? `✅ 已导出 ${rows.length} 条`

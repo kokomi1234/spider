@@ -76,5 +76,17 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  window.CsvExporter = Object.freeze({ exportRows, download, csvCell });
+  /**
+   * 通用导出（带模块缺失保护）：任务单页 / 订阅页共用，替代两页各自抄的 downloadCsv 包装。
+   * @param {Array<object>} rows
+   * @param {Array<[string, string]>} columns [[字段名, 表头], ...]
+   * @param {string} filename
+   */
+  function downloadRows(rows, columns, filename) {
+    const exporter = window.CsvExporter;
+    if (!exporter) { (window.toast || console.warn)('⚠️ 导出模块未加载', 2500); return; }
+    exporter.download(rows, columns, filename);
+  }
+
+  window.CsvExporter = Object.freeze({ exportRows, download, downloadRows, csvCell });
 })();

@@ -823,12 +823,7 @@
     ['_prioDeadline', '里程碑截止日'],
   ];
 
-  function downloadCsv(rows, filename) {
-    const exporter = window.CsvExporter;
-    if (!exporter) { toast('⚠️ 导出模块未加载', 2500); return; }
-    // 列 = 表格列 + 优先级补充列，一起交给公共导出（写文件/转义只有一份实现）
-    exporter.download(rows, COLUMNS.concat(CSV_EXTRA), filename);
-  }
+  // CSV 导出走 js/ui/csv-export.js 的 CsvExporter.downloadRows（含模块缺失保护）
 
   /**
    * 按页把当前查询结果全部拉回来（服务端分页），顺手算好优先级。
@@ -925,7 +920,7 @@
           return d !== 0 ? d : String(a.serverCoding || '').localeCompare(String(b.serverCoding || ''), 'zh-CN');
         });
       }
-      downloadCsv(rows, `服务订阅关系${byBatch ? '_按变更批次' : ''}_${stamp}.csv`);
+      window.CsvExporter.downloadRows(rows, COLUMNS.concat(CSV_EXTRA), `服务订阅关系${byBatch ? '_按变更批次' : ''}_${stamp}.csv`);
       toast(
         (selected.size ? `✅ 已按勾选导出 ${rows.length} 条` : `✅ 已导出 ${rows.length} 条`) +
         (truncated ? `（共 ${state.total} 条，超出上限 ${EXPORT_MAX}）` : ''),

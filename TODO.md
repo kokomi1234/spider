@@ -19,15 +19,6 @@
 > 以下是我（agent）对当前代码库的技术债评估，按"性价比"从高到低排。每条写清目标 / 卡点 / 需要什么。
 > 已验证的事实：原生 `<select>` 在 HTML 里全部是 `createSearchableSelect` 的挂载点（订阅弹窗也在 275-283/603-634 行转成了可搜索下拉），**不是**债务，故不列入。
 
-- [ ] **收敛重复的 CSV 导出包装**：`js/page/task.js` 与 `js/page/subscription.js` 各有一份 `downloadCsv(rows, filename)`，
-     主体完全相同（都调 `CsvExporter.download`，仅列定义不同）。建议把"包装 + toast 提示"抽到
-     `js/ui/csv-export.js` 做成 `exportRows(rows, columns, filename)`，两页直接调用、删掉各自的 `downloadCsv`。
-     **目标**：去重、单一转义实现。**卡点**：无，纯收口。**需要**：动手改 + 三页导出各点一次。
-
-- [ ] **`.aixcoding/` 未加入 .gitignore**：`git status` 持续冒出 6 个未跟踪文件（`rules/`、`toolsets/` 下），
-     全是工具自动生成。`.gitignore` 已忽略 `toolset-installs.json`，但整个目录没忽略。
-     **目标**：消除提交噪音。**卡点**：无。**需要**：在 `.gitignore` 加一行 `.aixcoding/`。
-
 - [ ] **补核心逻辑自动化测试**：目前零单测（`find` 无任何 `*.test.js`）。易回归且难手测的逻辑：
      优先级里程碑计算（`priority.js` 的 `MILESTONES` / `parseYmd` / `evaluate`）、分页并发"按页码 Map 拼接"、
      CSV 转义、批次 label 4 种写法解析。**目标**：给回归上保险。**卡点**：无框架，需定轻量方案（纯 node 脚本即可）。
