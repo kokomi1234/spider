@@ -77,7 +77,7 @@ publish/
 ├── js/
 │   ├── core/            # runtime-config / api-client / bootstrap / debug / format /
 │   │                    #   publish-response（响应解析与校验）/ app-navigator
-│   ├── api/             # task-api / service-api / user-api / tool-api / sys-api
+│   ├── api/             # task-api / service-api / user-api / tool-api
 │   ├── data/            # batch / provider / department（字典与兜底数据）
 │   ├── ui/              # searchable-select / multi-select / priority / table-resize /
 │   │                    #   date-picker / dialog-utils / csv-export / table-utils /

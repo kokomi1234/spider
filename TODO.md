@@ -25,13 +25,6 @@
      **目标**：继续降到每页 800 行以内。**卡点**：剩下的查询/渲染高度依赖页面私有状态，
      要继续拆得先设计"状态层"（中风险，需配合单测）。**需要**：先定状态层边界，再逐块搬。
 
-- [ ] **`js/api/sys-api.js`（245 行）是"写了但没接线"的预留适配层**：公告 / 提醒 / 角色 / AS 组织，
-     endpoint 是真实抓包路径（`getAsOrgList` / `getRoleListByRoleGroupId` / `queryAdviceInfo` /
-     `batch/getNoticeReadFlag` / `list/selectPage`），但 `fetchAsOrgList` / `fetchRoleList` /
-     `fetchAdviceInfo` / `fetchNoticeReadFlag` / `fetchNoticePage` **5 个方法零调用**，三页却都加载它。
-     **目标**：要么接进 UI，要么删掉（别让它长期空转）。**卡点**：需判断这几个功能是否还在计划内。
-     **需要**：用户拍板——① 功能要做 → 给 UI 位置，我接线；② 不做 → 删文件 + 摘掉三页的 script 标签。
-
 - [ ] **评估是否引入模块注册表 / ESM**：目前仍是 18+ 处 `window.X =` 隐式全局，模块在 IIFE
      加载时即取 `window.*`。**短期已做**：三页脚本顺序注释 + `bootstrap.js` 按页校验依赖，
      顺序错会在控制台点名报缺失（不会再静默降级）。**目标**：彻底摆脱顺序敏感。
