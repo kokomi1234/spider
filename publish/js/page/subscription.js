@@ -1095,201 +1095,24 @@
   // 批量修改批次时间
   // ═══════════════════════════════════════════════════
 
-  let batchTimeData = [];   // 弹窗内的可编辑行 { batch, testDate, releaseDate }
-  let batchTimes = {};      // 已落盘的配置 { '2609批次': { testDate, releaseDate } }
-
-  /** 把批次时间配置注入优先级计算（设了日期 → 该批次截止日以所设日期为准） */
-  function applyBatchTimesToPriority() {
-    if (window.Priority && typeof window.Priority.setBatchTimes === 'function') {
-      window.Priority.setBatchTimes(batchTimes);
-    }
-  }
-
-  /** 批次时间变化后：重算已加载行的优先级并重绘（不重新请求后端） */
+  // 批次时间的读写 / 弹窗全部在 js/page/subscription-batch-times.js（见该文件头说明）。
+  // 这里只留「把配置喂给优先级 + 重算重绘」，因为要碰本页的 state / decorateRow / render。
   function refreshPriority() {
-    applyBatchTimesToPriority();
+    window.SubscriptionBatchTimes.applyToPriority();
     if (Array.isArray(state.allRows)) state.allRows.forEach(decorateRow);
     else if (Array.isArray(state.rows)) state.rows.forEach(decorateRow);
     if (state.queried) render();
   }
 
-  /**
-   * 读取批次时间配置（不走 ITAMP 后端）。三级降级：
-   *   1) 代理的本地端点 GET /local/batch-times（可写回文件，开发态首选）
-   *   2) 静态文件 config/batch-times.json（手改即可生效；静态部署时走这条）
-   *   3) localStorage（无代理、无文件时的兜底）
-   */
-  async function loadBatchTimes() {
-    const pick = (obj) => (obj && typeof obj.batchTimes === 'object' && obj.batchTimes) || {};
-    let loaded = false;
-    try {
-      const r = await fetch('local/batch-times', { headers: { Accept: 'application/json' } });
-      if (r.ok) { batchTimes = pick((await r.json()).data); loaded = true; }
-    } catch (_) { /* 代理端点不可用，继续降级 */ }
-    if (!loaded) {
-      try {
-        const r2 = await fetch('config/batch-times.json', { cache: 'no-store' });
-        if (r2.ok) { batchTimes = pick(await r2.json()); loaded = true; }
-      } catch (_) { /* 文件不存在，继续降级 */ }
-    }
-    if (!loaded) {
-      try { batchTimes = JSON.parse(localStorage.getItem('itamp.batchTimes') || '{}') || {}; } catch (_) { batchTimes = {}; }
-    }
-    refreshPriority();   // 注入优先级计算（设了日期就覆盖默认里程碑截止日）
+  if (window.SubscriptionBatchTimes) {
+    window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
   }
 
-  /** 保存批次时间：优先写回配置文件（代理端点）；失败落 localStorage。返回 { ok, where|error } */
-  async function persistBatchTimes(map) {
-    try {
-      const r = await fetch('local/batch-times', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batchTimes: map }),
-      });
-      if (r.ok) return { ok: true, where: 'config/batch-times.json' };
-      const j = await r.json().catch(() => ({}));
-      return { ok: false, error: (j && j.msg) || ('HTTP ' + r.status) };
-    } catch (_) { /* 无代理端点 → localStorage 兜底 */ }
-    try {
-      localStorage.setItem('itamp.batchTimes', JSON.stringify(map));
-      return { ok: true, where: 'localStorage' };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  }
-
-  /** 打开批次时间修改弹窗（并入已保存、但不在当前窗口里的批次，避免看不到） */
-  function openBatchTimeDialog() {
-    const batches = Array.from(new Set([...batchWindow(), ...Object.keys(batchTimes)]));
-    batchTimeData = batches.map((b) => {
-      const saved = batchTimes[b] || {};
-      return { batch: b, testDate: saved.testDate || '', releaseDate: saved.releaseDate || '' };
-    });
-    renderBatchTimeList();
-    const ov = $('#batchTimeOverlay');
-    ov.classList.add('show');
-    if (window.DialogUtils && window.DialogUtils.lockScroll) window.DialogUtils.lockScroll();
-    $('#batchTimeDialog').focus();
-  }
-
-  /** 渲染批次时间列表 */
-  function renderBatchTimeList() {
-    const tbody = $('#batchTimeList');
-    tbody.innerHTML = batchTimeData.map((item, idx) => {
-      return `<tr>
-        <td class="batch-label">${esc(item.batch)}</td>
-        <td><input type="date" data-idx="${idx}" data-field="testDate" value="${esc(item.testDate)}"></td>
-        <td><input type="date" data-idx="${idx}" data-field="releaseDate" value="${esc(item.releaseDate)}"></td>
-      </tr>`;
-    }).join('');
-
-    // 绑定日期选择器变化事件（仅用于 UI 反馈，不触发 API）
-    tbody.querySelectorAll('input[type="date"]').forEach((input) => {
-      input.addEventListener('change', () => {
-        const idx = Number(input.dataset.idx);
-        const field = input.dataset.field;
-        batchTimeData[idx][field] = input.value;
-      });
-    });
-  }
-
-  /** 关闭批次时间修改弹窗 */
-  function closeBatchTimeDialog() {
-    $('#batchTimeOverlay').classList.remove('show');
-    if (window.DialogUtils && window.DialogUtils.unlockScroll) window.DialogUtils.unlockScroll();
-    batchTimeData = [];
-  }
-
-  /**
-   * 基线状态转换规则：设置日期后，该批次下所有订阅关系按以下规则自动升级 status。
-   * 规则与 priority.js 的里程碑一致：
-   *   · 设了功能测试时间（testDate） → 「开发基线」→「功能测试基线」
-   *   · 设了上线时间（releaseDate）  → 「功能测试基线」→「正式版基线」
-   * 本页只负责把日期存进本地配置（config/batch-times.json），**不调后端**；
-   * 这里预演「会触发哪些转换」给用户确认，也是优先级里程碑规则的书面说明。
-   */
-  const BASELINE_TRANSITIONS = [
-    { from: '开发基线',     to: '功能测试基线', dateField: 'testDate' },
-    { from: '功能测试基线', to: '正式版基线',   dateField: 'releaseDate' },
-  ];
-
-  /**
-   * 保存批次时间：把弹窗里填的日期写入本地配置（不走 ITAMP 后端）。
-   *
-   * 流程：
-   *   1. 校验有修改的批次
-   *   2. 预演基线状态转换（提示用户「真实系统里会触发什么」）
-   *   3. 合并进 batchTimes 并落盘（config/batch-times.json；无代理时降级 localStorage）
-   */
-  async function saveBatchTimes() {
-    const btn = $('#btnBatchTimeSave');
-    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
-    setLoading(true);
-
-    try {
-      // 找出相对「已保存配置」有变化的批次（预填但没动过的行不算变更）
-      const changed = batchTimeData.filter((item) => {
-        const saved = batchTimes[item.batch] || {};
-        return (item.testDate || '') !== (saved.testDate || '')
-            || (item.releaseDate || '') !== (saved.releaseDate || '');
-      });
-      if (!changed.length) {
-        toast('⚠️ 没有需要修改的批次时间', 2000);
-        closeBatchTimeDialog();
-        return;
-      }
-
-      // ── 预演基线状态转换（仅用于展示给用户看）──
-      // 按批次预演：对每个有改动的批次，按 BASELINE_TRANSITIONS 检查它设了哪些日期。
-      const transitions = [];
-      for (const item of changed) {
-        for (const rule of BASELINE_TRANSITIONS) {
-          if (!item[rule.dateField]) continue;
-          const dateLabel = rule.dateField === 'testDate' ? '功能测试时间' : '上线时间';
-          transitions.push({
-            batch: item.batch,
-            from: rule.from,
-            to: rule.to,
-            hint: `设了${dateLabel}后，该批次「${rule.from}」的记录将转为「${rule.to}」`,
-          });
-        }
-      }
-
-      // ── 确认对话框（如果有转换发生）──
-      if (transitions.length > 0) {
-        const transText = transitions.map((t) => `${t.batch}：${t.from} → ${t.to}`).join('；\n');
-        const confirmMsg =
-          `以下批次设置了日期，真实系统里会触发对应基线状态转换：\n${transText}\n\n` +
-          `（本页只把日期保存到本地配置，不调后端）是否继续保存？`;
-        if (!window.confirm(confirmMsg)) {
-          btn.disabled = false;
-          btn.textContent = '保 存';
-          setLoading(false);
-          return;
-        }
-      }
-
-      // ── 合并进配置并落盘（不走后端）──
-      const next = Object.assign({}, batchTimes);
-      changed.forEach((it) => {
-        next[it.batch] = { testDate: it.testDate || '', releaseDate: it.releaseDate || '' };
-      });
-      const savedRes = await persistBatchTimes(next);
-      if (!savedRes.ok) {
-        toast(`⚠️ 保存失败：${savedRes.error}`, 3500);
-        return;
-      }
-      batchTimes = next;
-      toast(`✅ 已保存 ${changed.length} 个批次的日期（${savedRes.where}）`, 2600);
-      closeBatchTimeDialog();
-      refreshPriority();   // 优先级截止日随之更新（设了日期 → 覆盖默认里程碑）
-    } catch (e) {
-      toast(`⚠️ 保存失败：${e.message || String(e)}`, 3000);
-    } finally {
-      setLoading(false);
-      if (btn) { btn.disabled = false; btn.textContent = '保 存'; }
-    }
-  }
+  // 薄封装：bindEvents / boot 里的调用点保持不变
+  const openBatchTimeDialog = () => window.SubscriptionBatchTimes.open();
+  const closeBatchTimeDialog = () => window.SubscriptionBatchTimes.close();
+  const saveBatchTimes = () => window.SubscriptionBatchTimes.save();
+  const loadBatchTimes = () => window.SubscriptionBatchTimes.load();
 
   // ═══════════════════════════════════════════════════
   // 初始化

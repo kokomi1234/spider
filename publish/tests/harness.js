@@ -39,14 +39,14 @@ function test(name, fn) {
   registry.push({ name, fn });
 }
 
-/** 跑全部已注册用例；有失败则设置 exitCode = 1 */
-function runAll() {
+/** 跑全部已注册用例（支持 async）；有失败则设置 exitCode = 1 */
+async function runAll() {
   let pass = 0;
   const failures = [];
 
   for (const t of registry) {
     try {
-      t.fn();
+      await t.fn(); // 支持 async 用例
       pass += 1;
       console.log('  ✓ ' + t.name);
     } catch (e) {
