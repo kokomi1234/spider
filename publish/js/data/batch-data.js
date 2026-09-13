@@ -23,6 +23,8 @@
 (function () {
   'use strict';
 
+  const debugLog = window.debugLog || (() => {});
+
   // 请求已收敛到 api-client.js 的 window.API.fetchSubscribePayload()：
   // 该接口与提供方系统列表是同一个，整个页面只发一次 HTTP，这里只做解析。
 
@@ -102,7 +104,7 @@
 
   /** 请求批次列表（与提供方系统共用同一次订阅条件接口响应，只发一次 HTTP） */
   async function fetchBatchList() {
-    console.log('🔄 加载批次列表（复用订阅条件接口，单次请求）...');
+    debugLog('🔄 加载批次列表（复用订阅条件接口，单次请求）...');
     const payload = await window.API.fetchSubscribePayload();
     return parseBatchList(payload);
   }

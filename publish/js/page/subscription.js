@@ -21,6 +21,8 @@
 (function () {
   'use strict';
 
+  const debugLog = window.debugLog || (() => {});
+
   const $ = (sel) => document.querySelector(sel);
 
   // ═══════════════════════════════════════════════════
@@ -809,7 +811,7 @@
       prodBatch:                row.prodBatch || '',                          // 调用方投产/变更批次
     };
     const url = window.AppNavigator.openServiceSearch(params);
-    console.log('[subscription] 跳转 ITAMP 服务搜索:', url);
+    debugLog('[subscription] 跳转 ITAMP 服务搜索:', url);
     toast('🔗 已在新窗口打开 ITAMP 服务搜索（预填该行条件）', 2600);
   }
 

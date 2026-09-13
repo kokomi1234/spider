@@ -10,6 +10,8 @@
 (() => {
   'use strict';
 
+  const debugLog = window.debugLog || (() => {});
+
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -46,7 +48,7 @@
     // 绑定事件
     btnSubscribePanel.addEventListener('click', openDialog);
     
-    console.log('✅ 订阅管理 UI 初始化完成');
+    debugLog('✅ 订阅管理 UI 初始化完成');
   }
 
   /** 创建弹窗结构 */

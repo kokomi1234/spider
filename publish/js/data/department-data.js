@@ -25,6 +25,8 @@
 (function () {
   'use strict';
 
+  const debugLog = window.debugLog || (() => {});
+
   const API_PATH = '/itamp-tool/publish/getOrgTreeList';
 
   // 抓包里实际出现的两个组织根节点
@@ -93,7 +95,7 @@
 
   /** 合并所有 orgID 的部门列表，按 key 去重后按名称排序 */
   async function loadAllDepartments() {
-    console.log('🔄 开始加载部门列表...');
+    debugLog('🔄 开始加载部门列表...');
 
     const results = await Promise.allSettled(ORG_IDS.map(fetchOrgDepartments));
 
@@ -116,7 +118,7 @@
     const result = [...deptMap.values()]
       .sort((a, b) => a.value.localeCompare(b.value, 'zh-CN'));
 
-    console.log(`✅ 部门列表加载完成: 共 ${result.length} 个部门`);
+    debugLog(`✅ 部门列表加载完成: 共 ${result.length} 个部门`);
     if (failures.length) console.warn('部分 orgID 加载失败:', failures);
     return result;
   }

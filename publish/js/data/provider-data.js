@@ -19,6 +19,8 @@
 (function () {
   'use strict';
 
+  const debugLog = window.debugLog || (() => {});
+
   // 请求已收敛到 api-client.js 的 window.API.fetchSubscribePayload()：
   // 该接口与批次列表是同一个，整个页面只发一次 HTTP，这里只做解析。
 
@@ -78,10 +80,10 @@
 
   /** 请求提供方系统列表（与批次共用同一次订阅条件接口响应，只发一次 HTTP） */
   async function loadProviderList() {
-    console.log('🔄 加载提供方系统列表（复用订阅条件接口，单次请求）...');
+    debugLog('🔄 加载提供方系统列表（复用订阅条件接口，单次请求）...');
     const payload = await window.API.fetchSubscribePayload();
     const result = parseProviders(payload);
-    console.log(`✅ 提供方系统列表加载完成: 共 ${result.length} 个系统`);
+    debugLog(`✅ 提供方系统列表加载完成: 共 ${result.length} 个系统`);
     return result;
   }
 
