@@ -225,96 +225,13 @@
 
   // ── 统一解析后端响应：非 2xx / 业务错误码 抛错 ──────
   // 查询与「失败分页重试」共用，避免两份解析逻辑漂移。
-  async function parsePublish(resp) {
-    if (!resp.ok) throw { response: resp, message: `HTTP ${resp.status}` };
-    let json;
-    try {
-      json = await resp.json();
-    } catch (e) {
-      throw { message: '接口返回数据格式异常，请联系管理员' };
-    }
-    const bizCode = Number(json.code);
-    if (json.code != null && bizCode !== 0 && bizCode !== 200) {
-      throw { message: json.msg || json.message || `业务错误: 代码 ${json.code}` };
-    }
-    const data = json.data || json.body || json;
-    const rows = data.records || data.list || data.rows || [];
-    const total = data.total ?? rows.length;
-    // 本地代理宽松匹配时会带 X-Cache-Match: loose，意思是「精确没命中，
-    // 回放的是同接口旧录制的数据」——这批数据未必属于本次的查询条件，
-    // 上层必须如实告诉用户，否则会把回放数据当成真实结果。
-    const loose = !!(resp.headers && resp.headers.get && resp.headers.get('x-cache-match') === 'loose');
-    return { data, rows, total, loose };
-  }
-
-  /** 解析 API 错误信息 */
-  function parseApiError(response, error) {
-    if (response.status === 401) {
-      return '认证失败，请检查 Token 是否有效';
-    }
-    if (response.status === 403) {
-      return '权限不足，无法访问该接口';
-    }
-    if (response.status === 404) {
-      // 本地代理在离线模式下「缓存未命中」也返回 404，跟接口地址没关系。
-      // 以前这里写死「接口地址不存在，请检查配置」，把人往错误的方向带。
-      return '请求 404：本地代理缓存中没有这条记录（请求参数与录制时不一致），' +
-             '或接口路径确实有误。打开控制台 Network → 该请求的响应体可看到代理给出的原因';
-    }
-    if (response.status === 500) {
-      return '服务器内部错误，请稍后重试';
-    }
-    if (error?.message?.includes('Failed to fetch') || error?.name === 'TypeError') {
-      return '网络连接失败，请检查：\n1. 代理服务器是否运行\n2. 网络是否正常\n3. CORS 配置是否正确';
-    }
-    return error?.message || `未知错误 (${response.status})`;
-  }
-
-  /** 验证筛选条件有效性 */
-  function validateFilters(filters) {
-    const errors = [];
-    
-    // 提供方系统编号由下拉数据源决定，可能是 E/T/C 等不同前缀；这里只校验非空和长度。
-    if (filters.compNum && !/^[A-Za-z][A-Za-z0-9_-]{1,31}$/.test(filters.compNum)) {
-      errors.push('提供方系统编号格式不正确，请选择有效的系统编号');
-    }
-    
-    // 分页参数校验
-    if (filters.pageSize && (filters.pageSize < 1 || filters.pageSize > 100)) {
-      errors.push('每页数量应在 1-100 之间');
-    }
-    
-    if (filters.pageNum && filters.pageNum < 1) {
-      errors.push('页码应从 1 开始');
-    }
-    
-    return errors;
-  }
-
-  /** 检查浏览器兼容性 */
-  function checkBrowserCompatibility() {
-    const issues = [];
-    
-    // localStorage 检查
-    try {
-      localStorage.setItem('__test__', '1');
-      localStorage.removeItem('__test__');
-    } catch (e) {
-      issues.push('localStorage 不可用，订阅功能将无法正常工作');
-    }
-    
-    // Fetch API 检查
-    if (!window.fetch) {
-      issues.push('您的浏览器不支持 Fetch API，请使用现代浏览器（Chrome/Firefox/Edge/Safari）');
-    }
-    
-    // JSON 解析检查
-    if (!window.JSON) {
-      issues.push('您的浏览器不支持 JSON 解析，请使用现代浏览器');
-    }
-    
-    return issues;
-  }
+  // 响应解析 / 错误解析 / 参数校验 / 兼容性检查都在 js/core/publish-response.js；
+  // 查询与「失败分页重试」共用同一份，避免两份解析逻辑漂移。
+  const PublishResponse = window.PublishResponse || {};
+  const parsePublish = PublishResponse.parse;
+  const parseApiError = PublishResponse.parseApiError;
+  const validateFilters = PublishResponse.validateFilters;
+  const checkBrowserCompatibility = PublishResponse.checkBrowserCompatibility;
 
   /** 检查服务是否已订阅 */
   function checkSubscribeStatus(serverCoding) {

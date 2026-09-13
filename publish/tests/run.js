@@ -10,5 +10,6 @@ require('./priority.test');
 require('./csv-export.test');
 require('./table-utils.test');
 require('./subscription-batch-times.test');
+require('./publish-response.test');
 
 runAll();
