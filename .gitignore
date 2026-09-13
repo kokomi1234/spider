@@ -25,6 +25,10 @@ output/*.png
 # AI 工具自动生成的目录（rules/toolsets 等，每次装 toolset 都会变，无版本价值）
 .aixcoding/
 
+# publish 前端：npm install 产生的目录不入库
+# 注意：playwright-core 已 vendoring 在 publish/vendor/（零依赖，需随项目走），不要忽略它
+publish/node_modules/
+
 # Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
 .workbuddy-ai
 .opencode

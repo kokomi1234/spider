@@ -1,0 +1,13 @@
+{
+  "name": "spider-publish",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ITAMP 服务发布数据查询前端 + 零依赖单测 + 无头浏览器冒烟测试",
+  "scripts": {
+    "test": "node tests/run.js",
+    "test:browser": "node tests/smoke-browser.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
