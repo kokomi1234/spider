@@ -8,5 +8,6 @@ const { runAll } = require('./harness');
 
 require('./priority.test');
 require('./csv-export.test');
+require('./table-utils.test');
 
 runAll();

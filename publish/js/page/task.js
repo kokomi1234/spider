@@ -187,9 +187,9 @@
     }
   }
 
-  function totalPages() {
-    return Math.max(1, Math.ceil(state.total / state.pageSize));
-  }
+    function totalPages() {
+      return window.TableUtils.totalPages(state.total, state.pageSize);
+    }
 
   function render() {
     renderTable();
@@ -197,11 +197,10 @@
     renderStats();
   }
 
-  function renderEmpty(text) {
-    $('#resultBody').innerHTML =
-      `<tr><td colspan="13" class="empty-hint">${esc(text)}</td></tr>`;
-    $('#pagination').style.display = 'none';
-  }
+    // colspan 13 = 任务单表格列数；空状态与分页条显隐统一走 TableUtils
+    function renderEmpty(text) {
+      window.TableUtils.renderEmpty(text, 13);
+    }
 
   function renderTable() {
     const body = $('#resultBody');

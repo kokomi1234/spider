@@ -677,7 +677,7 @@
 
   // ── 分页控制（基于筛选后的全量，纯客户端切分） ────
   function updatePagination() {
-    const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const totalPages = window.TableUtils.totalPages(filteredRows.length, pageSize);
     pageInfo.textContent = `第 ${pageNum} / ${totalPages} 页`;
     btnPrev.disabled = pageNum <= 1;
     btnNext.disabled = pageNum >= totalPages;
@@ -788,7 +788,7 @@
     const savedPage = pageNum;
     applySubscribeFilter();   // 重建 filteredRows 并渲染（内部会把 pageNum 归 1）
     // 恢复到重试前的页码（夹到合法范围），避免用户被弹回第一页
-    const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const totalPages = window.TableUtils.totalPages(filteredRows.length, pageSize);
     pageNum = Math.min(Math.max(1, savedPage), totalPages);
     renderCurrentPage();
     updatePagination();
@@ -1165,7 +1165,7 @@
   });
 
   btnNext.addEventListener('click', () => {
-    const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const totalPages = window.TableUtils.totalPages(filteredRows.length, pageSize);
     if (pageNum < totalPages) {
       pageNum++;
       renderCurrentPage();   // 纯客户端切页，保留当前订阅筛选
@@ -1200,7 +1200,7 @@
     // 导出会把它带上、计数与分页总数也都是旧的。
     rebuildFilteredRows();
     // 当前页可能因订阅而空了（如「未订阅」筛选下订阅了一行），回退到存在的最后一页。
-    const tp = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const tp = window.TableUtils.totalPages(filteredRows.length, pageSize);
     if (pageNum > tp) pageNum = tp;
     renderCurrentPage();
     updateSubscribeStats(rawRows);

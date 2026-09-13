@@ -528,9 +528,9 @@
     });
   }
 
-  function totalPages() {
-    return Math.max(1, Math.ceil(state.total / state.pageSize));
-  }
+    function totalPages() {
+      return window.TableUtils.totalPages(state.total, state.pageSize);
+    }
 
   /**
    * 给一行算出投产优先级（批次 + 基线状态 + 今天）。
@@ -599,10 +599,10 @@
     renderCount();
   }
 
-  function renderEmpty(text) {
-    $('#resultBody').innerHTML = `<tr><td colspan="24" class="empty-hint">${esc(text)}</td></tr>`;
-    $('#pagination').style.display = 'none';
-  }
+    // colspan 24 = 订阅页表格列数；空状态与分页条显隐统一走 TableUtils
+    function renderEmpty(text) {
+      window.TableUtils.renderEmpty(text, 24);
+    }
 
   function renderCount() {
     const base = state.queried ? `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条` : '';

@@ -18,11 +18,12 @@ const ROOT = path.resolve(__dirname, '..');
  * 执行一个浏览器脚本，返回它挂到 window 上的对象。
  * @param {string} relPath 相对 publish/ 的路径
  * @param {object} [globals] 需要 stub 的浏览器全局（document / Blob / URL / setTimeout）
+ * @param {object} [win] 复用同一个 window，让多个脚本能互相看到对方挂上去的东西
+ *                       （如先加载 format.js，再让 table-utils.js 用到真正的 Fmt.esc）
  */
-function loadScript(relPath, globals = {}) {
+function loadScript(relPath, globals = {}, win = {}) {
   const file = path.join(ROOT, relPath);
   const code = fs.readFileSync(file, 'utf8');
-  const win = {};
   const fn = new Function(
     'window', 'document', 'Blob', 'URL', 'setTimeout',
     '"use strict";' + code,
