@@ -73,14 +73,20 @@ publish/
 ├── README.md            # 本文
 ├── API接入与上线指南.md   # 请求链路、生产部署、新接口接入流程
 ├── cache/               # 录制的真实响应（自动生成，含内网数据勿外传）
+├── package.json         # npm test（单测）/ test:browser（浏览器冒烟）
 ├── js/
-│   ├── core/            # runtime-config / api-client / bootstrap
+│   ├── core/            # runtime-config / api-client / bootstrap / debug / format /
+│   │                    #   publish-response（响应解析与校验）/ app-navigator
 │   ├── api/             # task-api / service-api / user-api / tool-api / sys-api
 │   ├── data/            # batch / provider / department（字典与兜底数据）
 │   ├── ui/              # searchable-select / multi-select / priority / table-resize /
-│   │                    #   date-picker / dialog-utils / csv-export / subscribe-* / people-search
-│   └── page/            # index.js / task.js / subscription.js（页面编排）
+│   │                    #   date-picker / dialog-utils / csv-export / table-utils /
+│   │                    #   detail-dialog / dict-selects / toast / subscribe-* / people-search
+│   └── page/            # index.js / task.js / subscription.js /
+│                        #   subscription-batch-times.js（批量改批次时间）
 ├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）
+├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）
+├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
 └── tools/               # 开发工具，不参与页面加载
     ├── har-import.js        # HAR → cache/（离线回放的数据来源）
     ├── mock-data.js         # 手写 Mock 数据（调试用）
