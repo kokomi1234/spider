@@ -525,6 +525,14 @@
     </div>
   </div>
 
+  <!--
+    脚本顺序不能随意调整：各模块是 IIFE，加载时就把 window.X 取进闭包，
+    顺序错了不会报错，只会静默降级成空实现。硬约束：
+      · debug.js 早于其它模块（否则 debugLog 取不到，日志全丢）
+      · toast.js 早于 dict-selects.js（后者加载时即取 window.toast）
+      · table-utils.js / subscription-batch-times.js 早于 subscription.js
+    启动时由 js/core/bootstrap.js 统一校验依赖并在控制台报缺失。
+  -->
   <script src="js/core/runtime-config.js"></script>
   <script src="js/core/debug.js"></script>
   <script src="js/core/format.js"></script>
@@ -543,6 +551,7 @@
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/page/subscription-batch-times.js"></script>
+  <script src="js/core/bootstrap.js"></script>
   <script src="js/page/subscription.js"></script>
 </body>
 </html>
