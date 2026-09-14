@@ -622,6 +622,15 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   bottom: calc(100% + 4px);
 }
 
+/* ── DialogUtils 的通用输入 / 确认弹窗（替代 window.prompt / confirm）──
+   z-index 取在「子弹窗 1050」之上：这类提示可能由弹窗内部触发。 */
+.dlg-util-overlay { z-index: 1060; }
+.dlg-util-dialog { max-width: 460px; min-width: 320px; }
+.dlg-util-body { font-size: var(--fs-sm); color: var(--on-surface); }
+.dlg-util-body p { margin: 0 0 var(--sp1); line-height: 1.6; }
+.dlg-util-body .form-group { margin: 0; }
+.dlg-util-dialog .filled.dlg-danger { background: var(--red-c); color: var(--on-red-c); }
+
 /* 输入框处在滚动容器里时（弹窗主体），面板会被 date-picker.js 升到 body 上并改成 fixed，
    彻底避开容器的 overflow 裁剪；坐标按视口算，left/width/top/bottom 由行内样式给。
    z-index 落在「子弹窗 1050」与「加载遮罩 2000」之间。 */
@@ -1778,6 +1787,17 @@ body.is-resizing * { cursor: col-resize !important; user-select: none !important
   --ledger: #D9DCD6;   /* 账簿线：全部分隔 */
   --seal:   #A8402F;   /* 印章赭红：唯一强调色，只用于警示与标题锚点 */
   --paper:  #F2F3F0;   /* 纸灰底（中性，刻意不用暖 cream） */
+
+  /* 台账表（三页数据表格）专用：表头 / 行线 / hover —— 原先直接写死在覆盖层里 */
+  --ledger-head-bg:   #FBFBF9;   /* 表头极浅底 */
+  --ledger-head-ink:  #55636F;   /* 表头字 */
+  --ledger-head-rule: #33414F;   /* 表头下边框（台账主线） */
+  --ledger-row-line:  #E7E9E4;   /* 行分隔线 */
+  --ledger-row-hover: #F4F6F2;   /* 行 hover 底 */
+
+  /* 统计面板的语义色 */
+  --ok-ink:   #2E7D46;   /* 已发布 / 已订阅 */
+  --warn-ink: #96660F;   /* 待发布 / 未订阅 */
 }
 body {
   background: var(--paper);
@@ -1854,27 +1874,27 @@ body {
   font-variant-numeric: tabular-nums;
   letter-spacing: -.01em;
 }
-.stat.ok   .val { color: #2E7D46; }   /* 已发布 / 已订阅 */
-.stat.warn .val { color: #96660F; }   /* 待发布 / 未订阅 */
+.stat.ok   .val { color: var(--ok-ink); }   /* 已发布 / 已订阅 */
+.stat.warn .val { color: var(--warn-ink); }   /* 待发布 / 未订阅 */
 .stat.info .val { color: var(--ink); }
 
 /* 数据表格：三页统一线型与表头（父级限定，权重高于页面单类规则） */
 .tbl-scroll .result-table thead th,
 .tbl-scroll .task-table   thead th,
 .tbl-scroll .subq-table   thead th {
-  background: #FBFBF9;
-  color: #55636F;
-  border-bottom: 2px solid #33414F;
+  background: var(--ledger-head-bg);
+  color: var(--ledger-head-ink);
+  border-bottom: 2px solid var(--ledger-head-rule);
 }
 .tbl-scroll .result-table tbody td,
 .tbl-scroll .task-table   tbody td,
 .tbl-scroll .subq-table   tbody td {
-  border-bottom: 1px solid #E7E9E4;
+  border-bottom: 1px solid var(--ledger-row-line);
 }
 .tbl-scroll .result-table tbody tr:hover td,
 .tbl-scroll .task-table   tbody tr:hover td,
 .tbl-scroll .subq-table   tbody tr:hover td {
-  background: #F4F6F2;
+  background: var(--ledger-row-hover);
 }
 /* 固定列：用 1px 分隔线替代阴影（台账线比投影更安静） */
 .tbl-scroll .result-table thead th:last-child,
@@ -1896,7 +1916,7 @@ body {
 .tbl-scroll .subq-table thead th.col-review,
 .tbl-scroll .subq-table thead th.col-name,
 .tbl-scroll .subq-table thead th.col-coding {
-  background: #FBFBF9;
+  background: var(--ledger-head-bg);
 }
 
 /* ── 筛选区操作行（三页统一）─────────────────────────

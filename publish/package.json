@@ -5,9 +5,11 @@
   "description": "ITAMP 服务发布数据查询前端 + 零依赖单测 + 无头浏览器冒烟测试",
   "scripts": {
     "test": "node tests/run.js",
-    "test:browser": "node tests/smoke-browser.js"
+    "test:browser": "node tests/smoke-browser.js",
+    "test:all": "node tests/run.js && node tests/smoke-browser.js"
   },
   "engines": {
-    "node": ">=18"
-  }
+    "node": ">=20"
+  },
+  "//engines 说明": "冒烟测试用的 vendored playwright-core 1.63 要求 node>=20；只跑 npm test（零依赖单测）node>=18 也能跑"
 }

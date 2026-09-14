@@ -32,3 +32,6 @@ publish/node_modules/
 # Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
 .workbuddy-ai
 .opencode
+
+# 个人订阅清单（含真实 serverCoding / 组件编号，属内部数据，不入库）
+publish/tools/my-subscribed-services.txt

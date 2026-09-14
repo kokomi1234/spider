@@ -13,46 +13,57 @@ const fs = require('fs');
 const path = require('path');
 const { ROOT, test } = require('./harness');
 
-const html = fs.readFileSync(path.join(ROOT, 'subscription.html'), 'utf8');
-const js = fs.readFileSync(path.join(ROOT, 'js/page/subscription.js'), 'utf8');
+// ⚠️ 解析与断言都放在用例里执行（不在 require 期）：
+// 否则 HTML 一改格式，整个 node tests/run.js 会在加载阶段就崩掉，
+// 报告里看到的是「进程挂了」而不是「这一条用例失败」，其余用例也白跑。
+function parsePage() {
+  const html = fs.readFileSync(path.join(ROOT, 'subscription.html'), 'utf8');
+  const js = fs.readFileSync(path.join(ROOT, 'js/page/subscription.js'), 'utf8');
 
-const pick = (re) => {
-  const m = re.exec(html);
-  assert.ok(m, '没匹配到：' + re);
-  return m[1];
-};
+  const pick = (re) => {
+    const m = re.exec(html);
+    assert.ok(m, '页面结构里没匹配到：' + re);
+    return m[1];
+  };
 
-const style = pick(/<style>([\s\S]*?)<\/style>/);
-const colgroup = pick(/<colgroup>([\s\S]*?)<\/colgroup>/);
-const thead = pick(/<thead>([\s\S]*?)<\/thead>/);
+  const style = pick(/<style>([\s\S]*?)<\/style>/);
+  const colgroup = pick(/<colgroup>([\s\S]*?)<\/colgroup>/);
+  const thead = pick(/<thead>([\s\S]*?)<\/thead>/);
 
-const cols = [...colgroup.matchAll(/<col\b([^>]*)>/g)].map((m) => m[1]);
-const ths = [...thead.matchAll(/<th\b[^>]*>/g)];
-const widths = cols.map((attr) => {
-  const m = /width:\s*(\d+)px/.exec(attr);
-  assert.ok(m, '每个 <col> 都要写死宽度（table-resize 靠它取默认值）：' + attr);
-  return Number(m[1]);
-});
+  const cols = [...colgroup.matchAll(/<col\b([^>]*)>/g)].map((m) => m[1]);
+  const ths = [...thead.matchAll(/<th\b[^>]*>/g)];
+  const widths = cols.map((attr) => {
+    const m = /width:\s*(\d+)px/.exec(attr);
+    assert.ok(m, '每个 <col> 都要写死宽度（table-resize 靠它取默认值）：' + attr);
+    return Number(m[1]);
+  });
+  return { html, js, style, cols, ths, widths };
+}
+
 const fixedClasses = ['col-prio', 'col-st', 'col-review', 'col-name', 'col-coding'];
 
 test('colgroup 的 <col> 个数与 thead 的 <th> 个数必须相等', () => {
+  const { cols, ths } = parsePage();
   assert.strictEqual(cols.length, ths.length,
     `col=${cols.length} vs th=${ths.length}；不等会让 table-resize.js 静默不绑定`);
 });
 
 test('.subq-table 的 min-width 等于所有列宽之和', () => {
-  const rule = pick(/\.subq-table\s*\{([\s\S]*?)\}/);
-  const minWidth = Number(/min-width:\s*(\d+)px/.exec(rule)[1]);
+  const { html, widths } = parsePage();
+  const rule = /\.subq-table\s*\{([\s\S]*?)\}/;
+  const minWidth = Number(/min-width:\s*(\d+)px/.exec(rule.exec(html)[1])[1]);
   const sum = widths.reduce((a, b) => a + b, 0);
   assert.strictEqual(minWidth, sum, `min-width=${minWidth}，列宽之和=${sum}`);
 });
 
 test('空态的 colspan 覆盖全部列', () => {
+  const { html, cols } = parsePage();
   const colspan = Number(/<td colspan="(\d+)" class="empty-hint">/.exec(html)[1]);
   assert.strictEqual(colspan, cols.length, `colspan=${colspan}，实际列数=${cols.length}`);
 });
 
 test('每个左固定列的 sticky left 等于它前面所有列宽之和', () => {
+  const { style, cols, widths } = parsePage();
   let acc = 0;
   fixedClasses.forEach((cls, i) => {
     const idx = cols.findIndex((attr) => attr.includes(cls));
@@ -69,6 +80,7 @@ test('每个左固定列的 sticky left 等于它前面所有列宽之和', () =
 });
 
 test('左固定列在 <th> 上也带同一套类名，且 JS 侧登记齐全', () => {
+  const { js, ths } = parsePage();
   const headClasses = ths.map((m) => m[0]);
   fixedClasses.forEach((cls) => {
     assert.ok(headClasses.some((h) => h.includes(cls)), `<th> 上缺少 ${cls}`);

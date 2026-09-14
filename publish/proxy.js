@@ -642,6 +642,21 @@ server.on('clientError', (err, socket) => {
   socket.destroy();
 });
 
+// 监听失败必须显式报出来并退出。
+// 原先没有这个分支：端口被占用时 EADDRINUSE 会被上面的 uncaughtException 兜成
+// 「已忽略，服务继续运行」，日志看起来一切正常 —— 于是你会对着一个根本没起来的代理
+// 去排查前端 bug。这里直接点名端口并给换端口的命令。
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n❌ 端口 ${PORT} 已被占用，代理没有启动。`);
+    console.error(`   换个端口：PROXY_PORT=3001 node proxy.js`);
+    console.error(`   或先查占用：lsof -nP -iTCP:${PORT} -sTCP:LISTEN\n`);
+  } else {
+    console.error('\n❌ 代理启动失败:', (err && err.message) || err, '\n');
+  }
+  process.exit(1);
+});
+
 server.listen(PORT, () => {
   console.log(`\n✅ 服务器运行在 http://localhost:${PORT}`);
   console.log(`   📄 静态文件：从 ${__dirname} 提供（HTML/JS/CSS 等）`);

@@ -57,8 +57,9 @@ function startServer() {
 }
 
 const PAGES = [
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter'] },
-  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils'] },
+  // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
+  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi'] },
   { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter'] },
 ];
 
@@ -86,14 +87,34 @@ const PAGES = [
       await page.waitForTimeout(1200);
       const missing = await page.evaluate((names) =>
         names.filter((n) => typeof window[n] === 'undefined'), pg.globals);
+      const uncaught = await page.evaluate(() =>
+        (window.AppRuntime && typeof window.AppRuntime.uncaughtCount === 'function')
+          ? window.AppRuntime.uncaughtCount() : 0);
       const bootstrapErrs = errors.filter((e) => /依赖|缺失|未定义|not defined|missing/i.test(e));
-      const realErrs = errors.filter((e) => !/Failed to load resource|404|加载失败|nf$/i.test(e));
+      // console 噪音（接口 404 等）只统计不判失败；判失败看 pageerror + bootstrap 兜底计数。
+      // 原先这里用 /404|加载失败|nf$/ 过滤「真报错」，会把文案里带这些字样的真异常一起吞掉。
+      const noise = errors.filter((e) => /Failed to load resource|\b404\b|net::ERR|加载失败/i.test(e));
+      const realErrs = errors.filter((e) => !noise.includes(e));
       process.stdout.write(`  全局缺失: ${missing.length ? missing.join(', ') : '无'}\n`);
       process.stdout.write(`  pageerror(未捕获异常): ${pageErrors.length ? pageErrors.join(' | ') : '无'}\n`);
-      process.stdout.write(`  console.error: 共 ${errors.length} 条（后端 404 等环境噪音 ${errors.length - realErrs.length} 条，真报错 ${realErrs.length} 条）\n`);
+      process.stdout.write(`  console.error: 共 ${errors.length} 条（环境噪音 ${noise.length} 条，疑似真报错 ${realErrs.length} 条）\n`);
+      process.stdout.write(`  bootstrap 兜住的未捕获异常: ${uncaught}\n`);
       realErrs.forEach((e) => process.stdout.write(`    [真报错] ${e}\n`));
 
       if (pg.file === 'index.html') {
+        // 空态 colspan 必须等于表头列数，且模板占位符真的被求值过
+        // （曾把 `${常量}` 写进单引号字符串里，页面会原样显示 "${RESULT_COL_COUNT}"）
+        const emptyCell = await page.evaluate(() => {
+          const td = document.querySelector('#resultBody td[colspan]');
+          const ths = document.querySelectorAll('.result-table thead th').length;
+          return td ? { colspan: Number(td.getAttribute('colspan')), ths } : { colspan: 0, ths };
+        });
+        process.stdout.write(`  结果表空态: colspan=${emptyCell.colspan} 表头列数=${emptyCell.ths}\n`);
+        if (emptyCell.colspan !== emptyCell.ths) {
+          process.stdout.write('    [FAIL] 空态 colspan 与表头列数不一致（或被写成了未求值的模板占位符）\n');
+          anyFail = true;
+        }
+
         // 日期面板「浮动」回归：面板落在滚动容器里时必须升到 body + fixed，
         // 否则会被容器的 overflow 裁掉（订阅页的批次时间弹窗已改成年月下拉，
         // 这里临时造一个滚动容器直接验组件行为）。
@@ -213,7 +234,7 @@ const PAGES = [
         }
       }
 
-      if (missing.length || pageErrors.length || bootstrapErrs.length || realErrs.length) anyFail = true;
+      if (missing.length || pageErrors.length || bootstrapErrs.length || realErrs.length || uncaught) anyFail = true;
     } catch (e) {
       process.stdout.write(`  !! 加载失败: ${e.message}\n`);
       anyFail = true;

@@ -28,6 +28,9 @@
   const btnPrev        = $('#btnPrev');
   const btnNext        = $('#btnNext');
   const pageInfo       = $('#pageInfo');
+  /** 结果表列数：thead 列数与空态 colspan 共用这一处口径 */
+  const RESULT_COL_COUNT = 10;
+
   const resultCount    = $('#resultCount');
   const statsRow       = $('#statsRow');
   const subscribeStats   = $('#subscribeStats');
@@ -503,7 +506,7 @@
   function renderTable(rows, isFiltered = false) {
     if (!rows.length) {
       const hint = isFiltered ? '当前筛选条件下无数据' : '暂无数据';
-      resultBody.innerHTML = `<tr><td colspan="10" class="empty-hint">${hint}</td></tr>`;
+      resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">${hint}</td></tr>`;
       // 早退前必须把计数 / 分页 / 统计一起复位。
       // 否则从「全部 129 条」切到「已订阅（0 条）」时，计数仍显示旧值、
       // 分页器仍停在「第 1 / 3 页」，用户会以为筛选没生效。
@@ -584,7 +587,7 @@
           <div class="action-row">
             <button class="text-btn btn-xs" data-detail="${absIdx}">详情</button>
             ${checkSubscribeStatus(serverCoding) === 'unsubscribed'
-              ? `<button class="text-btn btn-xs btn-subscribe" data-sub="${esc(serverCoding)}">订阅</button>`
+              ? `<button class="text-btn btn-xs btn-subscribe" data-sub="${absIdx}">订阅</button>`
               : ''}
           </div>
         </td>
@@ -930,7 +933,7 @@
           ? `（第 ${failedPages.join('、')} 页获取失败，结果不完整）`
           : '';
         showToast('📭 ' + hint + incompleteHint, 3000, failedPages.length ? 'warn' : 'info');
-        resultBody.innerHTML = `<tr><td colspan="10" class="empty-hint">${hint}</td></tr>`;
+        resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">${hint}</td></tr>`;
         statsRow.style.display = 'none';
         subscribeStats.style.display = 'none';
         pagination.style.display = 'none';
@@ -983,9 +986,15 @@
         err
       );
       showToast(`❌ ${errorMsg}`, 5000, 'error');
-      resultBody.innerHTML = '<tr><td colspan="10" class="empty-hint">请求失败，请检查网络或接口地址<br><small style="color:var(--muted);font-family:monospace;">' +
-        esc(err?.message || '未知错误') + '</small></td></tr>';
+      // 失败时表格、分页条、统计面板、结果计数要一起复位：
+      // 只清表格的话，屏幕上会是「错误提示 + 上一次的统计数字」，看起来像数据没变。
+      resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">`
+        + '请求失败，请检查网络或接口地址<br><small style="color:var(--muted);font-family:monospace;">'
+        + esc(err?.message || '未知错误') + '</small></td></tr>';
       pagination.style.display = 'none';
+      statsRow.style.display = 'none';
+      subscribeStats.style.display = 'none';
+      resultCount.textContent = '';
     } finally {
       if (currentQuery === querySeq) {
         activeQueryController = null;
@@ -1012,7 +1021,7 @@
     if (changeTimeInstance) changeTimeInstance.clear();
 
     // 清空结果
-    resultBody.innerHTML = '<tr><td colspan="10" class="empty-hint">请输入条件后点击「查询」</td></tr>';
+    resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">请输入条件后点击「查询」</td></tr>`;
     pagination.style.display = 'none';
     resultCount.textContent = '';
     statsRow.style.display = 'none';
@@ -1102,9 +1111,11 @@
     }
     const subBtn = e.target.closest('button[data-sub]');
     if (subBtn) {
-      // 找到对应的行数据（通过 data-code 匹配 filteredRows）
-      const code = subBtn.dataset.sub;
-      const row = filteredRows.find(r => (r.serverCoding || r.sysServeNo) === code);
+      // 与「详情」同口径：用 filteredRows 的绝对下标定位。
+      // 原来按 serverCoding 反查 find()：该编码允许重复（rowKey 注释里就写了），
+      // 会订阅到同编码的第一行；而且每点一次都 O(n) 扫一遍。
+      const idx = Number(subBtn.dataset.sub);
+      const row = filteredRows[idx] || rawRows[idx];
       if (row) window.SubscribeDialog.open(row);
       return;
     }

@@ -200,6 +200,172 @@
   }
 
   // ═══════════════════════════════════════════════════
+  // 通用输入 / 确认弹窗（替代 window.prompt / window.confirm）
+  // ═══════════════════════════════════════════════════
+  // 为什么不用原生：① 样式与全站弹窗不一致，且没法加标题/多行说明；
+  // ② 自动化测试里原生弹窗需要单独注册 dialog 处理器，否则会被静默 dismiss
+  //    （prompt 返回 null、confirm 返回 false），表现成「点了没反应」。
+  // 这里只复用 theme.css 既有的 .overlay / .sub-dialog / .form-group 等类，不新增视觉规范。
+
+  /**
+   * 通用弹窗骨架。
+   * @param {{title:string, buildBody:Function, footButtons:Array, onReady?:Function}} cfg
+   *   footButtons 每项：{ text, cls?, value|getValue, validate? }
+   * @returns {{overlay:HTMLElement, body:HTMLElement, promise:Promise<any>}}
+   *   取消（✕ / Esc / 点遮罩）一律 resolve(null)
+   */
+  function openUtilDialog(cfg) {
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay sub-overlay dlg-util-overlay';
+    overlay.setAttribute('role', 'presentation');
+
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog sub-dialog dlg-util-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.tabIndex = -1;
+
+    const head = document.createElement('div');
+    head.className = 'sub-head';
+    const h2 = document.createElement('h2');
+    h2.textContent = cfg.title || '';
+    head.appendChild(h2);
+
+    const body = document.createElement('div');
+    body.className = 'sub-body dlg-util-body';
+    cfg.buildBody(body);
+
+    const foot = document.createElement('div');
+    foot.className = 'sub-foot';
+
+    let resolveFn = () => {};
+    const promise = new Promise((res) => { resolveFn = res; });
+    let settled = false;
+
+    function done(value) {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      unlockScroll();
+      resolveFn(value);
+    }
+
+    (cfg.footButtons || []).forEach((btnCfg) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = btnCfg.cls || 'outlined btn-sm';
+      btn.textContent = btnCfg.text;
+      btn.addEventListener('click', () => {
+        if (typeof btnCfg.validate === 'function') {
+          const err = btnCfg.validate();
+          if (err) {                          // validate 返回非空字符串 = 校验失败，就地提示
+            if (typeof window.toast === 'function') window.toast('⚠️ ' + err, 2200, 'warn');
+            return;
+          }
+        }
+        done(typeof btnCfg.getValue === 'function' ? btnCfg.getValue() : btnCfg.value);
+      });
+      foot.appendChild(btn);
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'sub-close';
+    closeBtn.setAttribute('aria-label', '关闭');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', () => done(null));
+    head.appendChild(closeBtn);
+
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      // 输入框里按回车 = 点主按钮（与页面筛选区的手感一致）
+      if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT') {
+        e.preventDefault();
+        const primary = foot.querySelector('.filled');
+        if (primary) primary.click();
+      }
+    }
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+    document.addEventListener('keydown', onKey, true);
+
+    dialog.append(head, body, foot);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('show'));
+    lockScroll();
+    dialog.focus();
+    if (typeof cfg.onReady === 'function') cfg.onReady({ overlay, body, dialog });
+
+    return { overlay, body, promise };
+  }
+
+  /**
+   * 自定义输入弹窗（替代 window.prompt）。
+   * @param {{title?:string, label?:string, placeholder?:string, value?:string,
+   *          message?:string, okText?:string}} opts
+   * @returns {Promise<string|null>} 确认返回 trim 后的输入串；取消返回 null
+   */
+  function promptText(opts) {
+    const o = opts || {};
+    let inputEl = null;
+    const dlg = openUtilDialog({
+      title: o.title || '请输入',
+      buildBody(body) {
+        if (o.message) {
+          const p = document.createElement('p');
+          p.textContent = o.message;
+          body.appendChild(p);
+        }
+        const group = document.createElement('div');
+        group.className = 'form-group';
+        const label = document.createElement('label');
+        label.textContent = o.label || '';
+        inputEl = document.createElement('input');
+        inputEl.type = 'text';
+        inputEl.placeholder = o.placeholder || '';
+        inputEl.value = o.value || '';
+        group.append(label, inputEl);
+        body.appendChild(group);
+      },
+      onReady() { setTimeout(() => inputEl.focus(), 30); },
+      footButtons: [
+        { text: '取 消', cls: 'outlined btn-sm', value: null },
+        {
+          text: o.okText || '确 认',
+          cls: 'filled btn-sm',
+          getValue: () => String(inputEl.value || '').trim(),
+          validate: () => (String(inputEl.value || '').trim() ? '' : '请输入内容'),
+        },
+      ],
+    });
+    return dlg.promise;
+  }
+
+  /**
+   * 自定义确认弹窗（替代 window.confirm）。
+   * @param {{title?:string, message?:string, okText?:string, danger?:boolean}} opts
+   * @returns {Promise<boolean>} 确认 true；取消 / 关闭 false
+   */
+  function confirmBox(opts) {
+    const o = opts || {};
+    const dlg = openUtilDialog({
+      title: o.title || '请确认',
+      buildBody(body) {
+        const p = document.createElement('p');
+        p.textContent = o.message || '';
+        body.appendChild(p);
+      },
+      footButtons: [
+        { text: '取 消', cls: 'outlined btn-sm', value: false },
+        { text: o.okText || '确 认', cls: o.danger ? 'filled btn-sm dlg-danger' : 'filled btn-sm', value: true },
+      ],
+    });
+    return dlg.promise.then((v) => v === true);
+  }
+
+  // ═══════════════════════════════════════════════════
 
   if (typeof window !== 'undefined') {
     window.DialogUtils = {
@@ -207,6 +373,8 @@
       unlockScroll,
       forceUnlockAll,
       makeDraggable,
+      promptText,
+      confirmBox,
     };
   }
 })();

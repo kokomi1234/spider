@@ -186,9 +186,18 @@
 
   /** 显示添加表单 */
   async function showAddForm() {
-    const code = prompt('请输入要订阅的服务编码：');
-    if (!code || !code.trim()) return;
-    const trimmed = code.trim();
+    // 走全站统一的自定义弹窗（原生 prompt 样式不一致，且自动化测试里会被静默 dismiss）
+    const input = (window.DialogUtils && typeof window.DialogUtils.promptText === 'function')
+      ? await window.DialogUtils.promptText({
+        title: '添加订阅',
+        label: '服务编码',
+        placeholder: '请输入要订阅的服务编码',
+        message: '输入服务编码后确认，将加入本地订阅列表。',
+      })
+      : null;
+    if (!input) return;                      // 用户取消
+    const trimmed = String(input).trim();
+    if (!trimmed) return;
 
     if (window.SubscribeManager.isSubscribed(trimmed)) {
       showToast(`⚠️ 该服务已在订阅列表中`);
@@ -268,7 +277,7 @@
     document.getElementById('btnConfirmImport').addEventListener('click', () => {
       const text = document.getElementById('importText').value;
       if (!text.trim()) {
-        alert('请输入或选择要导入的服务编码');
+        showToast('⚠️ 请输入或选择要导入的服务编码', 2200, 'warn');
         return;
       }
       
@@ -320,8 +329,16 @@
   }
 
   /** 确认清空 */
-  function confirmClear() {
-    if (!confirm('确定要清空所有已订阅服务吗？此操作不可恢复。')) return;
+  async function confirmClear() {
+    const ok = (window.DialogUtils && typeof window.DialogUtils.confirmBox === 'function')
+      ? await window.DialogUtils.confirmBox({
+        title: '清空已订阅服务',
+        message: '确定要清空所有已订阅服务吗？此操作不可恢复。',
+        okText: '清 空',
+        danger: true,
+      })
+      : window.confirm('确定要清空所有已订阅服务吗？此操作不可恢复。');
+    if (!ok) return;
     try {
       window.SubscribeManager.clear();
       updateCount();

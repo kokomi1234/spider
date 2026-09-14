@@ -51,8 +51,13 @@
     yesNo:         opts(['是', '否', '无需幂等']),
   };
 
-  /** 字典没配时给个明示的占位项，避免下拉看起来像坏了 */
-  const PLACEHOLDER = [{ label: '（待抓包补全）', value: '' }];
+  /**
+   * 字典没配时的占位文案。
+   * ⚠️ 不要做成 `{ label, value: '' }` 的选项：那样它会被当成一个**可选项**，
+   * 用户选中后字段静默为空，看起来像「选过了但没提交上去」。
+   * 统一走 createSearchableSelect 的 setBusy(text)：面板里显示不可点的占位说明。
+   */
+  const PLACEHOLDER_TEXT = '（待抓包补全：此字典接口尚未抓包）';
 
   /**
    * 需要包成「可搜索下拉」的字段。
@@ -179,10 +184,10 @@
     return box ? String(box.value || '').trim() : '';
   }
 
-  /** 给原生 <select> 灌选项；空字典时补一个占位项 */
+  /** 给原生 <select> 灌选项（空字典只留「请选择」，不再塞一个空值占位项） */
   function fillSelect(sel, list) {
     if (!sel) return;
-    const arr = (list && list.length) ? list : PLACEHOLDER;
+    const arr = (list && list.length) ? list : [];
     sel.innerHTML = '';
     const blank = document.createElement('option');
     blank.value = '';
@@ -283,7 +288,12 @@
     SEARCHABLE_FIELDS.forEach((f) => {
       const el = $('#' + f.id);
       if (!el || selectInstances[f.id]) return;
-      selectInstances[f.id] = window.createSearchableSelect(el, resolveOptions(f), {});
+      const list = resolveOptions(f);
+      selectInstances[f.id] = window.createSearchableSelect(el, list, {});
+      if (!list || !list.length) {
+        // 空字典给一个不可选的说明，避免下拉看起来「坏了」或被误选成空值
+        selectInstances[f.id].setBusy(PLACEHOLDER_TEXT);
+      }
       bindTypedCapture(f.id, el);
     });
   }
@@ -630,7 +640,9 @@
     if (typeof window.createSearchableSelect === 'function') {
       const roleKey = 'judge-role-' + judgeSeq;
       tr._roleKey = roleKey;
-      tr._roleInstance = window.createSearchableSelect(roleSel, DICT.judgeRole || PLACEHOLDER, { placeholder: '请选择' });
+      const roleList = DICT.judgeRole || [];
+      tr._roleInstance = window.createSearchableSelect(roleSel, roleList, { placeholder: '请选择' });
+      if (!roleList.length) tr._roleInstance.setBusy(PLACEHOLDER_TEXT);
       bindTypedCapture(roleKey, roleSel);
       // 预填角色
       if (role && tr._roleInstance) {
@@ -662,7 +674,7 @@
       bindTypedCapture(noKey, noSel);
       bindJudgeUserSearch(tr, noSel);
     } else {
-      fillSelect(noSel, PLACEHOLDER);
+      fillSelect(noSel, []);
     }
     tr.querySelector('.judge-check').addEventListener('change', syncJudgeAllState);
     return tr;
