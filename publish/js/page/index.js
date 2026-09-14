@@ -628,6 +628,63 @@
     cacheReplayBar.style.display = '';
   }
 
+  /** 后端单次最多返回 200 条（已确认） */
+  const FETCH_SIZE = 200;
+  /**
+   * 全量拉取的页数上限（2000 条/页 × 20 = 4000 条）。
+   * 原先按后端 total 无上限扇出：一条宽条件查询可能拉几十页、几十 MB，
+   * 页面会长时间无响应。超限时只取前 N 页并明确告知用户。
+   */
+  const MAX_FETCH_PAGES = 20;
+
+  /**
+   * 并发分页拉取（worker 池 + 按页码有序合并）。
+   * 原先 doQuery 与 retryFailedPages 各写一份同样的池/合并/失败收集，改一处漏一处。
+   * @param {{baseBody:object, pages:number[], concurrency?:number, signal?:AbortSignal,
+   *          isCurrent:Function, onPage?:Function}} args
+   * @returns {Promise<{byPage:Map<number,Array>, failed:number[], aborted:boolean}>}
+   */
+  async function fetchPages({ baseBody, pages, concurrency = 3, signal, isCurrent, onPage }) {
+    const byPage = new Map();
+    const failed = [];
+    const pending = pages.slice();
+    let aborted = false;
+
+    const worker = async () => {
+      while (pending.length) {
+        if (aborted || !isCurrent()) { aborted = true; return; }
+        const p = pending.shift();
+        try {
+          const resp = await window.ToolApi.fetchPublishDataList(
+            { ...baseBody, pageNum: p, pageSize: FETCH_SIZE },
+            { signal },
+          );
+          const parsed = await parsePublish(resp);
+          if (!isCurrent()) { aborted = true; return; }
+          byPage.set(p, parsed.rows || []);
+          if (typeof onPage === 'function') onPage(p, parsed);
+        } catch (err) {
+          if (err?.name === 'AbortError' || (signal && signal.aborted) || !isCurrent()) { aborted = true; return; }
+          failed.push(p);
+          console.warn(`⚠️ 第 ${p} 页获取失败:`, err);
+        }
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+    return { byPage, failed, aborted };
+  }
+
+  /** 按页码顺序把各页行拼成一条数组（并发完成顺序不确定，不能边拉边 concat —— 既乱序又 O(n²)） */
+  function flattenPages(pages, byPage) {
+    const out = [];
+    for (const p of pages) {
+      const rows = byPage.get(p);
+      if (rows) out.push(...rows);
+    }
+    return out;
+  }
+
   // ── 失败分页重试：只重拉失败页，合并回全量 ──────────
   async function retryFailedPages() {
     if (!queryState || !queryState.failedPages.length) return;
@@ -640,38 +697,28 @@
     activeQueryController = controller;
     const isCurrent = () => currentQuery === querySeq && !controller.signal.aborted;
 
-    const pending = [...queryState.failedPages];
+    const retryPages = [...queryState.failedPages];
     const prevLabel = btnRetryFailed.textContent;
     btnRetryFailed.disabled = true;
     btnRetryFailed.textContent = '重试中…';
     showToast('正在重试失败的分页…', 1800, 'info');
 
-    const CONCURRENCY = 3;
-    const worker = async () => {
-      while (pending.length) {
-        if (!isCurrent()) return;
-        const p = pending.shift();
-        try {
-          const extra = await parsePublish(await window.API.call('/itamp-tool/publish/getPublishDataList', {
-            method: 'POST',
-            body: { ...baseBody, pageNum: p, pageSize: FETCH_SIZE },
-            signal: controller.signal,
-          }));
-          if (!isCurrent()) return;
-          fetchedRaw.set(p, extra.rows);
-          const idx = queryState.failedPages.indexOf(p);
-          if (idx >= 0) queryState.failedPages.splice(idx, 1);
-        } catch (err) {
-          if (err?.name === 'AbortError' || controller.signal.aborted || !isCurrent()) return;
-          console.warn(`⚠️ 第 ${p} 页重试仍失败:`, err);
-        }
-      }
-    };
+    // 与首屏共用同一套取数骨架（worker 池 + 有序合并 + 失败收集）
+    let result = { byPage: new Map(), failed: retryPages };
     try {
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, queryState.failedPages.length) }, worker)
-      );
-    } catch (_) { /* 失败已在 worker 内逐页吞掉，不向上抛 */ }
+      result = await fetchPages({
+        baseBody,
+        pages: retryPages,
+        signal: controller.signal,
+        isCurrent,
+      });
+    } catch (_) { /* 失败已在 fetchPages 内逐页吞掉，不向上抛 */ }
+
+    result.byPage.forEach((rows, p) => {
+      fetchedRaw.set(p, rows);
+      const idx = queryState.failedPages.indexOf(p);
+      if (idx >= 0) queryState.failedPages.splice(idx, 1);
+    });
 
     if (!isCurrent()) {
       // 被新查询取消时，避免旧重试把按钮永久留在「重试中」状态。
@@ -681,11 +728,9 @@
     }
 
     // 用 fetchedRaw（成功页 + 刚重试成功的页）按页码顺序重建全量
-    let all = [];
-    for (let p = 1; p <= pageCount; p++) {
-      const rows = fetchedRaw.get(p);
-      if (rows) all = all.concat(rows);
-    }
+    const pageList = [];
+    for (let p = 1; p <= pageCount; p++) pageList.push(p);
+    const all = flattenPages(pageList, fetchedRaw);
 
     // 去重 + 前端兜底过滤（与 doQuery 保持一致）
     const seen = new Set();
@@ -815,8 +860,7 @@
     const isCurrentQuery = () => currentQuery === querySeq && !controller.signal.aborted;
 
     try {
-      const FETCH_SIZE = 200; // 后端单次最多返回 200 条（已确认）
-      const baseBody = { ...apiBody };
+      const baseBody = { ...apiBody };   // FETCH_SIZE / 页数上限见文件上方的常量
       delete baseBody.pageNum;
       delete baseBody.pageSize;
 
@@ -825,9 +869,7 @@
 
       // 第一页（同时拿到后端 total，决定还要拉几页）
       const t0 = performance.now();
-      const first = await parsePublish(await window.API.call('/itamp-tool/publish/getPublishDataList', {
-        method: 'POST',
-        body: requestPayload,
+      const first = await parsePublish(await window.ToolApi.fetchPublishDataList(requestPayload, {
         signal: controller.signal,
       }));
       if (!isCurrentQuery()) return;
@@ -839,56 +881,38 @@
       const backendTotal = first.total;
       const failedPages = [];
 
-      // 拉取剩余页：固定大小的 worker 池，同时在飞的请求不超过 CONCURRENCY 个。
-      // 结果先按页码存 Map，最后按页码顺序拼接 —— 并发完成顺序不确定，
-      // 若边拉边 concat，同一条件的两次查询会得到不同的行顺序。
+      // 拉取剩余页：共用 fetchPages（worker 池 + 按页码有序合并，不会再边拉边 concat）。
+      // 页数封顶 MAX_FETCH_PAGES：宽条件下一味按 total 扇出会把页面拖死。
       if (all.length > 0 && backendTotal > all.length) {
-        const pageCount = Math.ceil(backendTotal / FETCH_SIZE);
-        const CONCURRENCY = 3;
-        const pending = [];
-        for (let p = 2; p <= pageCount; p++) pending.push(p);
-
-        const pageRows = new Map();   // pageNo -> rows
-
-        const worker = async () => {
-          while (pending.length) {
-            if (!isCurrentQuery()) return;
-            const p = pending.shift();
-            try {
-              const extra = await parsePublish(await window.API.call('/itamp-tool/publish/getPublishDataList', {
-                method: 'POST',
-                body: { ...baseBody, pageNum: p, pageSize: FETCH_SIZE },
-                signal: controller.signal,
-              }));
-              if (!isCurrentQuery()) return;
-              pageRows.set(p, extra.rows);
-            } catch (err) {
-              if (err?.name === 'AbortError' || controller.signal.aborted || !isCurrentQuery()) return;
-              failedPages.push(p);
-              console.warn(`⚠️ 第 ${p} 页获取失败:`, err);
-            }
-          }
-        };
-
-        await Promise.all(
-          Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker)
-        );
-        if (!isCurrentQuery()) return;
-
-        for (let p = 2; p <= pageCount; p++) {
-          const rows = pageRows.get(p);
-          if (rows) all = all.concat(rows);
+        const pageCountTotal = Math.ceil(backendTotal / FETCH_SIZE);
+        const pageCount = Math.min(pageCountTotal, MAX_FETCH_PAGES);
+        if (pageCountTotal > pageCount) {
+          showToast(`⚠️ 结果较多，只取了前 ${pageCount} 页（约 ${pageCount * FETCH_SIZE} 条）用于排序与筛选；`
+            + `需要完整数据请把条件再收窄一些`, 6000, 'warn');
         }
+
+        const pages = [];
+        for (let p = 2; p <= pageCount; p++) pages.push(p);
+
+        const { byPage, failed } = await fetchPages({
+          baseBody,
+          pages,
+          signal: controller.signal,
+          isCurrent: isCurrentQuery,
+        });
+        if (!isCurrentQuery()) return;
+        failedPages.push(...failed);
         failedPages.sort((a, b) => a - b);   // 失败页码按升序，提示语顺序稳定
 
-        // 记录可重试上下文：把已成功拉到的每一页原始行按页码存好，
-        // 失败时只需重拉 failedPages 这几页，再按页码顺序拼回全量。
+        // 按页码顺序拼接（第 1 页在前面），去重前的完整原始行
         const fetchedRaw = new Map();
         fetchedRaw.set(1, first.rows);
-        for (let p = 2; p <= pageCount; p++) {
-          const rows = pageRows.get(p);
-          if (rows) fetchedRaw.set(p, rows);
-        }
+        byPage.forEach((rows, p) => fetchedRaw.set(p, rows));
+        const orderedPages = [];
+        for (let p = 1; p <= pageCount; p++) orderedPages.push(p);
+        all = flattenPages(orderedPages, fetchedRaw);
+
+        // 记录可重试上下文：失败时只需重拉 failedPages 这几页，再按页码顺序拼回全量。
         queryState = {
           baseBody,
           FETCH_SIZE,

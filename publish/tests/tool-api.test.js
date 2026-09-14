@@ -9,7 +9,11 @@ const { loadScript, test } = require('./harness');
 
 /** 用给定的 API.call 实现加载 tool-api.js，返回 window.ToolApi */
 function fresh(callImpl, config) {
-  const win = { __APP_CONFIG__: config, API: { call: callImpl } };
+  // 先加载真正的 api-client.js：协议层（createRequester）收在那边，
+  // 加载后把 call 换成测试桩 —— 等价于「真客户端 + 假传输」。
+  const win = { __APP_CONFIG__: config };
+  loadScript('js/core/api-client.js', {}, win);
+  win.API.call = callImpl;
   loadScript('js/api/tool-api.js', {}, win);
   return win.ToolApi;
 }

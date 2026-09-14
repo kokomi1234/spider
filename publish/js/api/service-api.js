@@ -61,37 +61,16 @@
     CONFIG.endpointMethods || {}
   );
 
-  /** 该能力是否已接入后端（配置了路径才算接入） */
-  function isEnabled(name) {
-    return Boolean(ENDPOINTS[name]);
-  }
-
-  /** 统一解析响应：非 2xx / 非 JSON / 业务码非 0|200 都算失败 */
-  async function request(name, body) {
-    const resp = await window.API.call(ENDPOINTS[name], {
-      method: METHODS[name] || 'POST',
-      body,
-    });
-
-    if (!resp.ok) {
-      let detail = '';
-      try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
-      throw new Error(`HTTP ${resp.status} ${detail}`.trim());
-    }
-
-    let json;
-    try {
-      json = await resp.json();
-    } catch (e) {
-      throw new Error(`接口返回的不是 JSON：${e.message}`);
-    }
-
-    const bizCode = Number(json.code);
-    if (json.code != null && bizCode !== 0 && bizCode !== 200) {
-      throw new Error(json.msg || json.message || `业务错误：代码 ${json.code}`);
-    }
-    return json;
-  }
+  // 协议层（endpoint → 请求 → 业务码校验 → 统一错误文案）收在 js/core/api-client.js，
+  // tool / service / task / user 四个接口模块共用一份实现，不再各写一遍。
+  const REQ = (window.API && typeof window.API.createRequester === 'function')
+    ? window.API.createRequester({ endpoints: ENDPOINTS, methods: METHODS })
+    : null;
+  /** 端点是否已配置（未配置 = 该能力关闭，调用方走本地兜底，不发请求） */
+  const isEnabled = REQ ? REQ.isEnabled : (name) => Boolean(ENDPOINTS[name]);
+  const request = REQ ? REQ.request : (name) => {
+    throw new Error(`请求层未就绪：请确认 core/api-client.js 在本模块之前加载（缺少 createRequester，请求 ${name}）`);
+  };
 
   // ── 服务详情 ────────────────────────────────────────────────
 

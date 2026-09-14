@@ -151,6 +151,39 @@ const PAGES = [
         }
       }
 
+      if (pg.file === 'index.html') {
+        // DialogUtils 的通用输入 / 确认弹窗（替代 window.prompt / confirm）：
+        // 打开 → 有输入框 → 确认拿到 trim 后的值；确认框走取消返回 false。
+        const dlgCheck = await page.evaluate(async () => {
+          const out = {};
+          if (!window.DialogUtils || typeof window.DialogUtils.promptText !== 'function') {
+            return { err: 'DialogUtils 缺少 promptText / confirmBox' };
+          }
+          const p1 = window.DialogUtils.promptText({ title: '冒烟探针', label: '编码', value: '  E00301  ' });
+          await new Promise((r) => setTimeout(r, 60));
+          const overlay = document.querySelector('.dlg-util-overlay');
+          out.opened = !!overlay;
+          out.hasInput = !!(overlay && overlay.querySelector('input'));
+          if (overlay) overlay.querySelector('.sub-foot .filled').click();
+          out.promptValue = await p1;
+
+          const p2 = window.DialogUtils.confirmBox({ title: '冒烟探针', message: '点取消' });
+          await new Promise((r) => setTimeout(r, 60));
+          const ov2 = document.querySelector('.dlg-util-overlay');
+          out.confirmOpened = !!ov2;
+          if (ov2) ov2.querySelector('.sub-foot .outlined').click();
+          out.confirmValue = await p2;
+          out.cleaned = document.querySelectorAll('.dlg-util-overlay').length === 0;
+          return out;
+        });
+        process.stdout.write(`  DialogUtils 弹窗: ${JSON.stringify(dlgCheck)}\n`);
+        if (dlgCheck.err || !dlgCheck.opened || !dlgCheck.hasInput
+          || dlgCheck.promptValue !== 'E00301' || dlgCheck.confirmValue !== false || !dlgCheck.cleaned) {
+          process.stdout.write(`    [FAIL] 自定义弹窗接线异常：${JSON.stringify(dlgCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
       if (pg.file === 'subscription.html') {
         const clickErr = [];
         page.on('pageerror', (e) => clickErr.push(e.message));

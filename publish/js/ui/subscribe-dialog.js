@@ -123,7 +123,10 @@
   const judgeUserCache = new Map();
 
   // 文档选择子弹窗状态
-  let docAllRows = [];
+  let docAllRows = [];          // 当前调用方系统下的全部文档行（前端内存分页的数据源）
+  let docBackendTotal = 0;      // 后端声明的总数（可能大于实际拿到的，用于提示截断）
+  let docTruncated = false;     // 是否因上限没拉全
+  let docLoadedFor = '';        // 已成功拉过文档的调用方系统编号（空结果也算拉过，避免每次打开重复请求）
   let docFiltered = [];
   let docSelected = new Set();
   let docPage = 1;
@@ -1007,7 +1010,7 @@
         : '';
       if (!callerCompNum) {
         console.warn('[SubscribeDialog] 调用方系统编号为空，无法查询文档');
-        return { total: 0, records: [] };
+        return { ok: false, total: 0, records: [] };
       }
       const resp = await window.API.call('/itamp-tool/intfcMgmt/docList', {
         method: 'POST',
@@ -1029,12 +1032,13 @@
       const records = json?.data?.rows || json?.data?.records || json?.data?.list
         || json?.records || json?.list || [];
       return {
+        ok: true,
         total: json?.data?.total || json?.total || records.length,
         records,
       };
     } catch (e) {
       console.warn('[SubscribeDialog] 获取文档列表失败:', e);
-      return { total: 0, records: [] };
+      return { ok: false, total: 0, records: [], error: (e && e.message) || String(e) };
     }
   }
 
@@ -1042,10 +1046,38 @@
    * 加载文档列表（分页 + 筛选）
    * 首次打开时加载第一页，后续翻页直接过滤内存数据
    */
-  async function loadDocRows(pageNum, pageSize, docNo, batchNum) {
-    const result = await fetchDocList(pageNum, pageSize, docNo, batchNum);
-    docAllRows = result.records || [];
-    return docAllRows;
+  /**
+   * 拉全量文档行（后端分页 → 前端内存分页）。
+   *
+   * 原先写死 pageSize: 9999 一次要全量：后端若按自己的上限截断（常见 200/500），
+   * 本地 docAllRows 就偏小，总页数与「共 N 条」跟着偏小，而且没有任何提示。
+   * 现在按后端返回的 total 逐页拉，并给出上限，拉不全时明确记录 docTruncated。
+   */
+  const DOC_FETCH_SIZE = 500;    // 单页请求条数（后端真实上限未抓包确认，宁可多几轮）
+  const DOC_MAX_ROWS = 5000;     // 文档列表上限，防止一次点开拉爆内存
+
+  async function loadDocRows() {
+    docTruncated = false;
+    const first = await fetchDocList(1, DOC_FETCH_SIZE, '', '');
+    if (!first.ok) {                       // 真失败：保留现场，下次打开重试
+      docAllRows = [];
+      docBackendTotal = 0;
+      return { rows: [], ok: false, error: first.error };
+    }
+    const total = Number(first.total) || first.records.length;
+    const rows = first.records.slice();
+    const pageCount = Math.ceil(Math.min(total, DOC_MAX_ROWS) / DOC_FETCH_SIZE);
+
+    for (let p = 2; p <= pageCount; p += 1) {
+      const res = await fetchDocList(p, DOC_FETCH_SIZE, '', '');
+      if (!res.records.length) break;          // 后端提前到底，别再无意义翻页
+      rows.push(...res.records);
+    }
+
+    if (total > rows.length) docTruncated = true;   // 后端 total 大于实际拿到的
+    docBackendTotal = total;
+    docAllRows = rows;
+    return { rows: docAllRows, ok: true };
   }
 
   
@@ -1089,9 +1121,12 @@
       return;
     }
 
-    // 首次打开时加载文档数据（后续使用缓存）
-    if (docAllRows.length === 0) {
-      await loadDocRows(1, 9999, '', '');
+    // 文档列表是按「调用方系统」拉取的：换了调用方系统必须重新拉，
+    // 否则会把上一个系统能看的文档列表当成当前系统的（原实现不失效缓存）。
+    if (docLoadedFor !== callerVal) {
+      const res = await loadDocRows();
+      // 只有真的拉成功（含「确实没有文档」）才记缓存；失败/空值下次打开再试
+      if (res.ok) docLoadedFor = callerVal;
     }
     // 再次打开时沿用上次已选的文档（可继续勾选/取消），而不是每次从头再来
     docSelected = new Set(
@@ -1248,7 +1283,9 @@
       });
     });
 
-    dom.docTotal.textContent = `共 ${docFiltered.length} 条`;
+    dom.docTotal.textContent = docTruncated
+      ? `共 ${docFiltered.length} 条（后端共 ${docBackendTotal} 条，超过上限 ${DOC_MAX_ROWS} 未全部载入）`
+      : `共 ${docFiltered.length} 条`;
     dom.docPageInfo.textContent = `${docPage} / ${totalPages}`;
     dom.docPageJump.max = String(totalPages);
     dom.docPageJump.value = String(docPage);

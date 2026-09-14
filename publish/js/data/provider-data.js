@@ -89,5 +89,6 @@
 
   if (typeof window !== 'undefined') {
     window.loadProviderList = loadProviderList;
+    window.parseProviderPayload = parseProviders;   // 便于在控制台拿真实响应试解析 / 单测直接断言
   }
 })();

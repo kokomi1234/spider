@@ -54,6 +54,7 @@
       docSysServeNoList: '/itamp-tool/publish/getDocSysServeNoList',
       textData:         '/itamp-tool/publish/getTextData',
       infoProdBatch:    '/itamp-tool/publish/getInformationProdBatch',
+      publishDataList:  '/itamp-tool/publish/getPublishDataList',
       infoServerCoding: '/itamp-tool/publish/getInformationServerCoding',
       history:          '/itamp-tool/publish/getHistory',
       historyDetail:    '/itamp-tool/publish/getHistoryDetail',
@@ -79,6 +80,7 @@
       docSysServeNoList: 'POST',
       textData:         'POST',
       infoProdBatch:    'POST',
+      publishDataList:  'POST',
       infoServerCoding: 'POST',
       history:          'POST',
       historyDetail:    'POST',
@@ -94,43 +96,50 @@
     CONFIG.toolEndpointMethods || {}
   );
 
-  function isEnabled(name) {
-    return Boolean(ENDPOINTS[name]);
-  }
+  // 协议层（endpoint → 请求 → 业务码校验 → 统一错误文案）收在 js/core/api-client.js，
+  // tool / service / task / user 四个接口模块共用一份实现，不再各写一遍。
+  const REQ = (window.API && typeof window.API.createRequester === 'function')
+    ? window.API.createRequester({ endpoints: ENDPOINTS, methods: METHODS })
+    : null;
+  /** 端点是否已配置（未配置 = 该能力关闭，调用方走本地兜底，不发请求） */
+  const isEnabled = REQ ? REQ.isEnabled : (name) => Boolean(ENDPOINTS[name]);
+  const request = REQ ? REQ.request : (name) => {
+    throw new Error(`请求层未就绪：请确认 core/api-client.js 在本模块之前加载（缺少 createRequester，请求 ${name}）`);
+  };
 
   /** 防缓存随机数：抓包里部分请求带 ?n=0.xxx */
   function cacheBuster() {
     return Math.random().toString().slice(2);
   }
 
-  /** 统一解析响应：非 2xx / 非 JSON / 业务码非 0|200 都算失败 */
-  async function request(name, body, query) {
-    const resp = await window.API.call(ENDPOINTS[name], {
-      method: METHODS[name] || 'POST',
-      ...(body !== undefined ? { body } : {}),
-      ...(query ? { query } : {}),
+  /**
+   * 服务发布数据查询（首页主接口）。
+   *
+   * body 的 17 个字段口径见 js/page/index.js 的 FIELDS（抓包确认过，别加减字段）。
+   *
+   * 为什么返回原始 Response、不在这里解析：响应形态识别与「宽松回放」标记都在
+   * js/core/publish-response.js 的 parse()（它要读 X-Cache-Match 响应头），
+   * 这一层只负责「端点从哪来 + 是否已配置 + 带不带 signal」。
+   * 页面原先自己拼 '/itamp-tool/publish/getPublishDataList' 调 window.API.call，
+   * 端点既不能集中配置、也不能整块关闭。
+   *
+   * @param {object} body 请求体（含 pageNum / pageSize）
+   * @param {{signal?:AbortSignal}} [opts]
+   * @returns {Promise<Response>}
+   */
+  async function fetchPublishDataList(body, opts) {
+    if (!isEnabled('publishDataList')) {
+      // 未配置 = 该能力关闭：按项目铁律，一个请求都不发
+      throw new Error('接口未配置：publishDataList（缺抓包时不发请求）');
+    }
+    if (!window.API || typeof window.API.call !== 'function') {
+      throw new Error('API 客户端未就绪');
+    }
+    return window.API.call(ENDPOINTS.publishDataList, {
+      method: METHODS.publishDataList || 'POST',
+      body: body || {},
+      ...(opts && opts.signal ? { signal: opts.signal } : {}),
     });
-
-    if (!resp.ok) {
-      let detail = '';
-      try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
-      throw new Error(`HTTP ${resp.status} ${detail}`.trim());
-    }
-
-    let json;
-    try {
-      json = await resp.json();
-    } catch (e) {
-      throw new Error(`接口返回的不是 JSON：${e.message}`);
-    }
-
-    if (json.code != null) {
-      const bizCode = Number(json.code);
-      if (bizCode !== 0 && bizCode !== 200) {
-        throw new Error(json.msg || json.message || `业务错误：代码 ${json.code}`);
-      }
-    }
-    return json;
   }
 
   /** 防御式取数组：兼容 data 直接是数组 / data.rows / 顶层 rows */
@@ -571,6 +580,7 @@
       fetchCodeValueList,
       fetchDocSysServeNoList,
       fetchTextData,
+      fetchPublishDataList,
       fetchInformationProdBatch,
       fetchInformationServerCoding,
       fetchHistory,

@@ -17,7 +17,7 @@
   /** 各页需要的最小依赖（按页面分组；页面由路径推断） */
   const PRESETS = {
     index: [
-      ['API', () => has(window.API, 'call')],
+      ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['SubscribeManager', () => has(window.SubscribeManager, 'isSubscribed')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
       ['CsvExporter', () => has(window.CsvExporter, 'exportRows')],
@@ -27,7 +27,7 @@
       ['toast', () => typeof window.toast === 'function'],
     ],
     subscription: [
-      ['API', () => has(window.API, 'call')],
+      ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['Priority', () => has(window.Priority, 'evaluate')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
       ['SubscriptionBatchTimes', () => has(window.SubscriptionBatchTimes, 'load')],

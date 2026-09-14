@@ -119,8 +119,76 @@
     return _subscribePayloadPromise;
   }
 
+  /**
+   * 端点请求器工厂：各 api 模块（tool/service/task/user）共用同一套
+   * 「按名字取 endpoint → 发请求 → 校验 HTTP 与业务码 → 统一错误文案」。
+   *
+   * 为什么收在这里：原先四个模块各写一份 request()，实现几乎逐字相同
+   * （差别只在要不要带 query、body 是否 undefined），改一处会漏三处，
+   * 错误文案也各说各话。这里只做「协议层」，端点清单仍留在各自模块。
+   *
+   * 约定（沿用项目既有铁律）：
+   *   · 名字未配置（endpoint 为空）时 **直接抛错，不发任何请求** —— 抓包缺失的能力要显式关闭
+   *   · 业务码只认 0 / 200（后端有整型 200 也有字符串 "200"）；无 code 的响应放行
+   *   · 失败一律抛出 Error，由调用方收敛成 { ok:false, error }
+   *
+   * @param {{endpoints?:object, methods?:object}} cfg
+   * @returns {{endpoints:object, methods:object, isEnabled:Function, request:Function}}
+   */
+  function createRequester(cfg) {
+    const endpoints = (cfg && cfg.endpoints) || {};
+    const methods = (cfg && cfg.methods) || {};
+
+    function isEnabled(name) {
+      return Boolean(endpoints[name]);
+    }
+
+    async function request(name, body, query) {
+      if (!endpoints[name]) throw new Error(`接口未配置：${name}（缺抓包时不发请求）`);
+      // 传输层**延迟取** window.API.call：便于测试替换，也符合项目「window.* 延迟到调用时取」
+      // 的约定（在工厂里捕获 call 会让外面替换 API.call 失效）。
+      const send = (typeof window !== 'undefined' && window.API && typeof window.API.call === 'function')
+        ? window.API.call
+        : call;
+      const resp = await send(endpoints[name], {
+        method: methods[name] || 'POST',
+        ...(body !== undefined ? { body } : {}),
+        ...(query ? { query } : {}),
+      });
+
+      if (!resp.ok) {
+        let detail = '';
+        try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
+        throw new Error(`HTTP ${resp.status} ${detail}`.trim());
+      }
+
+      let json;
+      try {
+        json = await resp.json();
+      } catch (e) {
+        throw new Error(`接口返回的不是 JSON：${e.message}`);
+      }
+
+      // 列表类接口有的不带 code（只有 total/rows），所以只在有 code 时才校验
+      if (json && json.code != null) {
+        const bizCode = Number(json.code);
+        if (bizCode !== 0 && bizCode !== 200) {
+          throw new Error(json.msg || json.message || `业务错误：代码 ${json.code}`);
+        }
+      }
+      return json;
+    }
+
+    return { endpoints, methods, isEnabled, request };
+  }
+
   if (typeof window !== 'undefined') {
-    window.API = { base: BASE_URL, call, fetchSubscribePayload };
+    window.API = {
+      base: BASE_URL,
+      call,
+      fetchSubscribePayload,
+      createRequester,
+    };
   }
 
   if (typeof module !== 'undefined' && module.exports) {
