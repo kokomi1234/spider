@@ -59,7 +59,7 @@ function startServer() {
 const PAGES = [
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter'] },
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker'] },
 ];
 
 (async () => {
@@ -96,18 +96,51 @@ const PAGES = [
       if (pg.file === 'subscription.html') {
         const clickErr = [];
         page.on('pageerror', (e) => clickErr.push(e.message));
+
+        // 表格结构：colgroup 的 <col> 与 thead 的 <th> 个数必须一致，
+        // 否则 js/ui/table-resize.js 会直接 return null（列宽拖拽静默失效）。
+        const table = await page.evaluate(() => {
+          const t = document.querySelector('.subq-table');
+          const coding = t.querySelector('thead th.col-coding');
+          return {
+            cols: t.querySelectorAll('colgroup > col').length,
+            ths: t.querySelectorAll('thead > tr > th').length,
+            handles: t.querySelectorAll('thead .col-resizer').length,
+            codingLeft: coding ? getComputedStyle(coding).left : 'n/a',
+          };
+        });
+        process.stdout.write(`  表格结构: col=${table.cols} th=${table.ths} 拖拽把手=${table.handles} 接口编码列 left=${table.codingLeft}\n`);
+        if (table.cols !== table.ths) {
+          process.stdout.write('    [FAIL] colgroup 与 thead 列数不一致，列宽拖拽会失效\n');
+          anyFail = true;
+        }
+        if (!table.handles) {
+          process.stdout.write('    [FAIL] 表头没有挂上列宽拖拽把手\n');
+          anyFail = true;
+        }
+
         await page.click('#btnBatchTimeEdit', { timeout: 5000 }).catch((e) => clickErr.push('click failed: ' + e.message));
         await page.waitForTimeout(600);
         const dialogState = await page.evaluate(() => {
           const ov = document.getElementById('batchTimeOverlay');
-          if (!ov) return 'overlay 不存在';
-          const style = getComputedStyle(ov);
+          if (!ov) return { text: 'overlay 不存在' };
           const list = document.getElementById('batchTimeList');
-          return `display=${style.display}, listRows=${list ? list.children.length : 'n/a'}`;
+          const rows = list ? list.children.length : 0;
+          return {
+            text: `display=${getComputedStyle(ov).display}, listRows=${rows},`
+              + ` 日期控件=${ov.querySelectorAll('.dp-wrapper').length}`,
+            rows,
+            pickers: ov.querySelectorAll('.dp-wrapper').length,
+          };
         });
-        process.stdout.write(`  弹窗点击后: ${dialogState}\n`);
+        process.stdout.write(`  弹窗点击后: ${dialogState.text}\n`);
         process.stdout.write(`  弹窗点击后 pageerror: ${clickErr.length ? clickErr.join(' | ') : '无'}\n`);
         if (clickErr.length) anyFail = true;
+        // 每行两个日期（功能测试时间 / 上线时间），都必须是统一日期控件
+        if (dialogState.rows && dialogState.pickers !== dialogState.rows * 2) {
+          process.stdout.write(`    [FAIL] 日期控件数 ${dialogState.pickers} ≠ 行数 × 2 = ${dialogState.rows * 2}\n`);
+          anyFail = true;
+        }
       }
 
       if (missing.length || pageErrors.length || bootstrapErrs.length || realErrs.length) anyFail = true;

@@ -1871,10 +1871,13 @@ body {
 .tbl-scroll { border-color: var(--ledger); }
 .result-count { font-variant-numeric: tabular-nums; }
 
-/* 订阅关系页的左侧固定表头列（复选框 / 优先级）有自己的背景规则，
-   这里同步成与其余表头一致的极浅底色，避免三页表头出现两种灰。 */
-.tbl-scroll .subq-table thead th.col-chk,
-.tbl-scroll .subq-table thead th.col-prio {
+/* 订阅关系页的左侧固定表头列（优先级 / 基线状态 / 审核流程状态 / 服务中文名 / 接口编码）
+   有自己的背景规则，这里同步成与其余表头一致的极浅底色，避免三页表头出现两种灰。 */
+.tbl-scroll .subq-table thead th.col-prio,
+.tbl-scroll .subq-table thead th.col-st,
+.tbl-scroll .subq-table thead th.col-review,
+.tbl-scroll .subq-table thead th.col-name,
+.tbl-scroll .subq-table thead th.col-coding {
   background: #FBFBF9;
 }
 

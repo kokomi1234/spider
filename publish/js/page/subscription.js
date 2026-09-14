@@ -7,16 +7,16 @@
  *   下拉   POST /itamp-tool/publish/getProdSysServeNoList?callerComponent=xx&n=xx
  * 下拉里的提供方系统 / 批次 / 部门沿用首页那套 data/*.js（同源接口，抓包已确认）。
  *
- * 两个仍未抓包、按铁律只做预留的点：
- *   1. 导出接口 → ToolApi.exportSubscriptionPublishHistory，endpoint 为空，
- *      未配置时不发请求，直接走本地 CSV（见 exportRows()）。
- *
  * ── 一个需要复核的字段映射 ──────────────────────────────────
  * 行内有 prodBatch 和 prodBatchList 两个批次字段，本页按下面推断取值：
  *   调用方投产/变更批次 = prodBatch        （与请求体同名，抓包里过滤的就是它）
  *   提供方最新变更批次 = prodBatchList     （无过滤抓包里 2405 ≥ 调用方 2305，
  *                                          提供方「最新」不早于订阅批次才说得通）
  * 若后续抓包出现反例，改 COLUMNS 里这两行即可，其余代码不用动。
+ *
+ * ── 审核流程状态字段 ────────────────────────────────────────
+ * 行内 prodReviewStatus 与 reviewStatus 都是 "00"~"04" 裸值；本页用
+ * prodReviewStatus（取值 00/01/02/03/04 五种齐全，与 REVIEW_STATUS_MAP 完全对上）。
  */
 (function () {
   'use strict';
@@ -32,26 +32,29 @@
   /** 默认不预填调用方：下拉为空 = 不限定调用方（全部调用方），用户用快捷按钮或下拉自行选择 */
   const DEFAULT_CALLER = '';
 
-  /** 表格列：[字段 key, 中文列名, 是否等宽字体]，顺序与 HTML 表头一致。
-      前两列是固定左列：优先级（算出来的，一眼看该先处理哪条）+ 订阅关系基线状态。
-      剩下的是可横向滚动的数据列。 */
+  /** 表格列：[字段 key, 中文列名, 是否等宽字体]，顺序必须与 HTML 的 colgroup / thead 完全一致。
+      前 5 列是左固定列（sticky，横向滚动时不丢）：
+        优先级（算出来的，一眼看该先处理哪条）+ 订阅关系基线状态 +
+        订阅关系审核流程状态 + 提供方应用系统服务中文名称 + 接口编码。
+      其余为可横向滚动的数据列，按「提供方身份 → 调用方身份 → 实施 / 人员 / 附加」分组。
+      ⚠️ 列增删都要同步改 subscription.html 的 colgroup / thead 与 renderEmpty() 的 colspan。 */
   const COLUMNS = [
-    ['_prioText',              '优先级',                       false],
-    ['status',                 '订阅关系基线状态',             false],   // 与优先级一起固定左列
+    ['_prioText',              '优先级',                       false],   // 左固定 1
+    ['status',                 '订阅关系基线状态',             false],   // 左固定 2
+    ['prodReviewStatus',       '订阅关系审核流程状态',         false],   // 左固定 3
+    ['sysServeName',           '提供方应用系统服务中文名称',   false],   // 左固定 4
+    ['serverCoding',           '接口编码',                     true],    // 左固定 5
     ['sysNo',                  '提供方应用系统编号',           true],
     ['assemblyEnName',         '提供方应用系统英文简称',       true],
     ['sysServeNo',             '提供方应用系统服务编号',       true],
     ['sysServeEnName',         '提供方应用系统服务英文名称',   true],
-    ['sysServeName',           '提供方应用系统服务中文名称',   false],
     ['prodBatchList',          '提供方最新变更批次',           false],
     ['deptName',               '提供方部门名称',               false],
-    ['serverCoding',           '接口编码',                     true],
     ['callerComponent',        '调用方系统/分行编号',          true],
     ['callerComponentEnName',  '调用方系统英文简称/分行名称',  true],
     ['prodSysServeNo',         '调用方应用系统服务编号',       true],
     ['prodBatch',              '调用方投产/变更批次',          false],
     ['prodTaskNo',             '调用方任务编号',               true],
-    ['prodReviewStatus',       '订阅关系审核流程状态',         false],
     ['prodImplementationUnit', '订阅方产品实施单元',           false],
     ['subscriberUserName',     '订阅人',                       false],
     ['prodDeptName',           '调用方部门名称',               false],
@@ -59,6 +62,17 @@
     ['backupInfo',             '副本使用场景说明',             false],
     ['implementationUnit',     '产品实施单元',                 false],
   ];
+
+  /** 左固定列：字段 key → 固定列 CSS 类（left 偏移写在 subscription.html，与 colgroup 宽度一一对应）。
+      渲染时按这张表给 <td> 加类，别在 renderTable 里散落 if。 */
+  const FIXED_COL_CLASS = {
+    _prioText:        'col-prio',
+    status:           'col-st',
+    prodReviewStatus: 'col-review',
+    sysServeName:     'col-name',
+    serverCoding:     'col-coding',
+  };
+
 
   // 结果行的「查 看」不再弹本地详情，而是跳转 ITAMP 真实系统的「服务搜索查看」页
   // 并带上该行条件（见 jumpToServiceSearch）。原详情弹窗的字段分组已移除，
@@ -83,8 +97,12 @@
 
   const PAGE_SIZE = 10;          // 抓包里的默认 pageSize（=10）
   const MIN_PAGE_SIZE = 10;      // 小于等于这个条数就不显示分页条
-  const EXPORT_PAGE_SIZE = 50;
-  const EXPORT_MAX = 5000;
+  /** 整批拉取时的每页条数（窗口扇出 / 单批次全局排序共用）。
+      用户定的 50：后端若允许 500 可降到 1/10 请求数 —— 别靠调小 pageSize「治慢」，
+      总字节不变，只会把请求数和后端 COUNT 次数放大。 */
+  const BULK_PAGE_SIZE = 50;
+  /** 整批拉取的条数上限，避免一条查询把几万行拉进内存 */
+  const BULK_MAX = 5000;
   /** 结果不超过这个条数时，排序走「整批拉回来 + 前端分页」，逾期/临期才是全局排在最前 */
   const CLIENT_SORT_MAX = 1000;
   /** 窗口扇出的并发上限：12 个批次分 2 波（6×2），墙钟时间≈最慢单个批次，避免一次性打爆 */
@@ -115,7 +133,6 @@
     progress: null,           // 取数中：{ done, total } —— 用于「先展示部分结果」的进度提示
   };
 
-  const selected = new Set();   // 勾选的行 key（当前页）
   let selects = {};             // id -> searchable-select 实例
   let multiSelects = {};        // key -> multi-select 实例
 
@@ -244,16 +261,8 @@
       return;
     }
 
-    // 只有「查询条件真的变了」才清空勾选：翻页 / 刷新 / 切换排序只是重新取数，
-    // 不该把用户已经勾好的行丢掉（勾选是按行 key 跨页累计的）。
     const nextCond = collectCond();
-    const condChanged = !state.cond || JSON.stringify(nextCond) !== JSON.stringify(state.cond);
     state.cond = nextCond;
-    if (condChanged) selected.clear();
-
-    // 条件一变，上一次的全量统计就不对应当前条件了 —— 无论这次查询成功与否都要撤掉，
-    // 否则查询失败时旧统计会配着新条件一起显示，容易误判。
-    hideSummary();
 
     const seq = ++state.reqSeq;
     setLoading(true);
@@ -306,7 +315,7 @@
         state.rows = first.rows.map((r) => decorateRow(r));
         state.progress = {
           done: 1,
-          total: Math.ceil(Math.min(first.total, EXPORT_MAX) / EXPORT_PAGE_SIZE),
+          total: Math.ceil(Math.min(first.total, BULK_MAX) / BULK_PAGE_SIZE),
           unit: '页',
         };
         render();
@@ -479,7 +488,7 @@
       ...cond,
       prodBatch: batch,
       pageNum: page,
-      pageSize: EXPORT_PAGE_SIZE,
+      pageSize: BULK_PAGE_SIZE,
     });
 
     const first = await fetchP(1);
@@ -489,13 +498,13 @@
     let got = (first.rows || []).length;
 
     // 一页就装完（或接口未接入）→ 直接收尾
-    if (!got || got >= total || got >= EXPORT_MAX) {
-      return { ok: true, local: !!first.local, rows: (first.rows || []).slice(0, EXPORT_MAX) };
+    if (!got || got >= total || got >= BULK_MAX) {
+      return { ok: true, local: !!first.local, rows: (first.rows || []).slice(0, BULK_MAX) };
     }
 
     const pageCount = Math.min(
-      Math.ceil(total / EXPORT_PAGE_SIZE),
-      Math.ceil(EXPORT_MAX / EXPORT_PAGE_SIZE)
+      Math.ceil(total / BULK_PAGE_SIZE),
+      Math.ceil(BULK_MAX / BULK_PAGE_SIZE)
     );
     const pending = [];
     for (let p = 2; p <= pageCount; p++) pending.push(p);
@@ -508,7 +517,7 @@
         if (!res.ok) { failed = res.error || '未知错误'; return; }
         pageRows.set(p, res.rows || []);
         got += (res.rows || []).length;
-        if (!(res.rows || []).length || got >= total || got >= EXPORT_MAX) return;
+        if (!(res.rows || []).length || got >= total || got >= BULK_MAX) return;
       }
     };
     await Promise.all(Array.from({ length: Math.min(PAGE_CONCURRENCY, pending.length) }, worker));
@@ -516,7 +525,7 @@
 
     const out = [];
     for (let p = 1; p <= pageCount; p++) out.push(...(pageRows.get(p) || []));
-    return { ok: true, local: !!first.local, rows: out.slice(0, EXPORT_MAX) };
+    return { ok: true, local: !!first.local, rows: out.slice(0, BULK_MAX) };
   }
 
   /** 取某一页（默认按当前每页条数） */
@@ -599,10 +608,10 @@
     renderCount();
   }
 
-    // colspan 24 = 订阅页表格列数；空状态与分页条显隐统一走 TableUtils
-    function renderEmpty(text) {
-      window.TableUtils.renderEmpty(text, 24);
-    }
+  // colspan 23 = 订阅页表格列数（22 个数据列 + 操作列）；空状态与分页条显隐统一走 TableUtils
+  function renderEmpty(text) {
+    window.TableUtils.renderEmpty(text, 23);
+  }
 
   function renderCount() {
     const base = state.queried ? `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条` : '';
@@ -610,12 +619,10 @@
     $('#resultCount').textContent = state.progress
       ? `${base} · 加载中 ${state.progress.done}/${state.progress.total}${state.progress.unit || '批次'}`
       : base;
+    // 逾期提示只统计当前页（原先的「统计全部逾期」要按页拉完整个结果集，代价太大，已移除）
     const overdue = state.rows.filter((r) => r._prio && r._prio.overdue).length;
     const el = $('#overdueCount');
     if (el) el.textContent = overdue ? `⚠️ 本页逾期 ${overdue} 条` : '';
-    // 勾选跨页累计，所以要随时告诉用户一共勾了多少（否则翻页后就看不见自己勾了什么）
-    const picked = $('#pickedCount');
-    if (picked) picked.textContent = selected.size ? `☑ 已勾选 ${selected.size} 条` : '';
   }
 
   /**
@@ -647,12 +654,6 @@
   function hideQueryFail() {
     const bar = $('#failBar');
     if (bar) bar.style.display = 'none';
-  }
-
-  /** 全量统计条：查询条件一变就失效（数据不再是同一批） */
-  function hideSummary() {
-    const box = $('#prioSummary');
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
   }
 
   function statusTag(v) {
@@ -693,23 +694,25 @@
       return;
     }
     body.innerHTML = rows.map((r) => {
-      const index = state.rows.indexOf(r);        // 详情 / 勾选仍按原数组下标
-      const key = esc(rowKey(r));
-      const picked = selected.has(rowKey(r)) ? ' is-picked' : '';
+      const index = state.rows.indexOf(r);        // 「查 看」按原数组下标取行
       const overdue = r._prio && r._prio.overdue ? ' is-overdue' : '';
       const cells = COLUMNS.map(([k, , mono]) => {
         const raw = r[k];
         const text = (raw === null || raw === undefined || raw === '') ? '—' : String(raw);
-        if (k === 'status') return `<td class="col-st copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制">${statusTag(raw)}</td>`;
-        if (k === 'prodReviewStatus') return `<td class="col-st copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制">${reviewStatusTag(raw)}</td>`;
-        if (k === '_prioText') return prioCell(r);
-        return `<td class="${mono ? 'cell-code' : ''} copy-cell" data-copy="${esc(String(raw ?? ''))}" title="点击复制: ${esc(text)}">${esc(text)}</td>`;
+        const copyAttr = `data-copy="${esc(String(raw ?? ''))}"`;
+        const fixed = FIXED_COL_CLASS[k] ? FIXED_COL_CLASS[k] + ' ' : '';
+        if (k === '_prioText') return prioCell(r);          // 自己带 col-prio
+        if (k === 'status' || k === 'prodReviewStatus') {
+          const tag = k === 'status' ? statusTag(raw) : reviewStatusTag(raw);
+          return `<td class="${fixed}copy-cell" ${copyAttr} title="点击复制">${tag}</td>`;
+        }
+        return `<td class="${fixed}${mono ? 'cell-code ' : ''}copy-cell" ${copyAttr}`
+          + ` title="点击复制: ${esc(text)}">${esc(text)}</td>`;
       }).join('');
-      return `<tr class="${(picked + overdue).trim()}" data-key="${key}" data-index="${index}">
-        <td class="col-chk"><input type="checkbox" data-pick="${key}" ${picked ? 'checked' : ''}></td>
+      return `<tr class="${overdue.trim()}" data-index="${index}">
         ${cells}
         <td class="col-op"><button class="text-btn" type="button" data-jump="${index}"
-                title="在 ITAMP 服务搜索中查看该订阅关系（新窗口，预填该行条件）">查 看</button></td>
+                title="在 ITAMP 服务搜索中查看该订阅关系（新窗口）">查 看</button></td>
       </tr>`;
     }).join('');
 
@@ -724,22 +727,6 @@
         if (text) copyToClipboard(text);
       });
     });
-    body.querySelectorAll('input[data-pick]').forEach((cb) => {
-      cb.addEventListener('change', () => {
-        if (cb.checked) selected.add(cb.dataset.pick);
-        else selected.delete(cb.dataset.pick);
-        cb.closest('tr').classList.toggle('is-picked', cb.checked);
-        syncCheckAll();
-        renderCount();
-      });
-    });
-    syncCheckAll();
-  }
-
-  function syncCheckAll() {
-    const all = $('#checkAll');
-    if (!all) return;
-    all.checked = state.rows.length > 0 && state.rows.every((r) => selected.has(rowKey(r)));
   }
 
   function renderPagination() {
@@ -786,14 +773,13 @@
 
   /**
    * 结果行「查 看」：新窗口打开 ITAMP 真实系统的「服务搜索查看」页
-   * （/asserInstruments/serviceSearchView），并带上该行的条件，尽量让目标页预填并查询。
+   * （/asserInstruments/serviceSearchView）。
    *
-   * 参数名用目标页的表单字段名（来源：2026-09-11 serviceSearchView 抓包），
-   * 只带「能定位这条订阅关系」的条件，不带 status —— 否则在真实系统里会把
-   * 「本该核对的基线状态」也当成过滤条件，反而查不到待处理的记录。
-   *
-   * ⚠️ 目标页是否认这些 query 参数、预填后是否自动查询，尚未在真实环境确认；
-   *    不认就退化成「跳过去手动填」。
+   * **不传任何 query 参数**：目标页不认这些按表单字段名拼出来的条件
+   * （compNum / sysServeNoList / prodBatch… 过去既没预填也没触发查询），
+   * 只做干净跳转，筛选由用户在目标页自行完成。
+   * 参数拼接能力仍留在 js/core/app-navigator.js（buildUrl / openServiceSearch(params)），
+   * 将来确认目标页认哪些参数，在这里传进去即可。
    */
   function jumpToServiceSearch(row) {
     if (!row) return;
@@ -801,42 +787,26 @@
       toast('⚠️ 跳转模块未加载，无法打开 ITAMP 服务搜索', 2600);
       return;
     }
-    const params = {
-      compNum:                  row.sysNo || '',                              // 提供方系统编号
-      sysServeNoList:           row.sysServeNo ? [row.sysServeNo] : [],       // 提供方服务编号
-      serverCodingList:         row.serverCoding ? [row.serverCoding] : [],   // 接口编码
-      providerServiceNameAndId: row.sysServeName || '',                       // 提供方应用系统服务中文名称
-      useNum:                   row.callerComponent || '',                    // 调用方系统/分行
-      callerComponent:          row.callerComponent || '',
-      prodBatch:                row.prodBatch || '',                          // 调用方投产/变更批次
-    };
-    const url = window.AppNavigator.openServiceSearch(params);
+    // 目标页无法识别这些参数，直接打开即可
+    const url = window.AppNavigator.openServiceSearch();
     debugLog('[subscription] 跳转 ITAMP 服务搜索:', url);
-    toast('🔗 已在新窗口打开 ITAMP 服务搜索（预填该行条件）', 2600);
+    toast('🔗 已在新窗口打开 ITAMP 服务搜索', 2600);
   }
 
   // ═══════════════════════════════════════════════════
-  // 导出
+  // 整批取数（供单批次查询做全局优先级排序）
   // ═══════════════════════════════════════════════════
 
-  /** CSV 末尾追加的两列优先级信息（表格里已展示优先级本身，这里补上截止日） */
-  const CSV_EXTRA = [
-    ['_prioNext', '下一步里程碑'],
-    ['_prioDeadline', '里程碑截止日'],
-  ];
-
-  // CSV 导出走 js/ui/csv-export.js 的 CsvExporter.downloadRows（含模块缺失保护）
-
   /**
-   * 按页把当前查询结果全部拉回来（服务端分页），顺手算好优先级。
+   * 按页把当前查询结果整批拉回来（服务端分页），顺手算好优先级。
    * 并发拉（PAGE_CONCURRENCY 个 worker），按页码顺序拼接 —— 原来是串行 for，
-   * EXPORT_PAGE_SIZE=50 时 5000 条要 100 次串行往返，导出/统计会明显卡顿。
+   * BULK_PAGE_SIZE=50 时 5000 条要 100 次串行往返，明显卡顿。
    * @param {Function} [onProgress] (done, total) => void，每完成一页调用一次
    */
   async function fetchAll(onProgress) {
-    const want = Math.min(state.total, EXPORT_MAX);
+    const want = Math.min(state.total, BULK_MAX);
     const fetchP = (p) => window.ToolApi.fetchSubscriptionPublishHistory({
-      ...state.cond, pageNum: p, pageSize: EXPORT_PAGE_SIZE,
+      ...state.cond, pageNum: p, pageSize: BULK_PAGE_SIZE,
     });
 
     const first = await fetchP(1);
@@ -845,10 +815,10 @@
     let got = (first.rows || []).length;
 
     if (!got || got >= want) {
-      return { rows: (pageRows.get(1) || []).slice(0, want), truncated: state.total > EXPORT_MAX };
+      return { rows: (pageRows.get(1) || []).slice(0, want), truncated: state.total > BULK_MAX };
     }
 
-    const pageCount = Math.ceil(want / EXPORT_PAGE_SIZE);
+    const pageCount = Math.ceil(want / BULK_PAGE_SIZE);
     const pending = [];
     for (let p = 2; p <= pageCount; p++) pending.push(p);
 
@@ -867,131 +837,7 @@
 
     const out = [];
     for (let p = 1; p <= pageCount; p++) out.push(...(pageRows.get(p) || []));
-    return { rows: out.slice(0, want), truncated: state.total > EXPORT_MAX };
-  }
-
-  /**
-   * 导出。两个按钮共用：
-   *   · 后端导出接口已配置（__APP_CONFIG__.toolEndpoints.subscriptionExport）→ 走后端文件流
-   *   · 未配置（现状，缺抓包）→ 本地 CSV，并在 toast 里说明
-   * byBatch=true 时按「提供方最新变更批次 + 接口编码」排序，文件名加后缀。
-   */
-  async function exportRows(byBatch) {
-    if (!state.queried || !state.total) { toast('⚠️ 请先查询再导出', 2200); return; }
-    const btn = byBatch ? $('#btnExportByBatch') : $('#btnExport');
-    const label = byBatch ? '按接口变更批次导出' : '按查询结果导出';
-    if (btn) { btn.disabled = true; btn.textContent = '导出中…'; }
-    setLoading(true);
-
-    try {
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      const api = window.ToolApi;
-
-      // 后端导出（预留路径，当前默认关闭）
-      if (api && api.isEnabled && api.isEnabled('subscriptionExport')) {
-        const res = await api.exportSubscriptionPublishHistory({
-          ...state.cond, pageNum: 1, pageSize: state.pageSize,
-        });
-        if (!res.ok) throw new Error(res.error || '未知错误');
-        toast(`✅ 已导出：${res.filename || '订阅关系文件'}`, 2600);
-        return;
-      }
-
-      // 本地兜底
-      let rows;
-      let truncated = false;
-      if (selected.size) {
-        // 勾选是跨页累计的（key 存 Set），导出要把其他页勾中的也带上
-        const pool = (state.mode === 'client' && state.allRows)
-          ? state.allRows
-          : (await fetchAll((d, t) => { if (btn) btn.textContent = `导出中 ${d}/${t} 页`; })).rows;
-        rows = pool.filter((r) => selected.has(rowKey(r)));
-      } else if (state.mode === 'client' && state.allRows) {
-        rows = sortRows(state.allRows);      // 全量已在手上，顺序与页面一致
-      } else {
-        const all = await fetchAll((d, t) => { if (btn) btn.textContent = `导出中 ${d}/${t} 页`; });
-        rows = all.rows;
-        rows = sortRows(rows);     // 与屏幕一致：按当前优先级方向排（byBatch 分支会再覆盖为批次序）
-        truncated = all.truncated;
-      }
-      if (!rows.length) { toast('⚠️ 没有可导出的数据', 2200); return; }
-
-      if (byBatch) {
-        rows = rows.slice().sort((a, b) => {
-          const d = String(a.prodBatchList || '').localeCompare(String(b.prodBatchList || ''), 'zh-CN');
-          return d !== 0 ? d : String(a.serverCoding || '').localeCompare(String(b.serverCoding || ''), 'zh-CN');
-        });
-      }
-      window.CsvExporter.downloadRows(rows, COLUMNS.concat(CSV_EXTRA), `服务订阅关系${byBatch ? '_按变更批次' : ''}_${stamp}.csv`);
-      toast(
-        (selected.size ? `✅ 已按勾选导出 ${rows.length} 条` : `✅ 已导出 ${rows.length} 条`) +
-        (truncated ? `（共 ${state.total} 条，超出上限 ${EXPORT_MAX}）` : ''),
-        2800
-      );
-    } catch (e) {
-      toast(`⚠️ 导出失败：${e.message || String(e)}`, 3000);
-    } finally {
-      setLoading(false);
-      if (btn) { btn.disabled = false; btn.textContent = label; }
-    }
-  }
-
-  // ═══════════════════════════════════════════════════
-  // 全量逾期统计
-  // ═══════════════════════════════════════════════════
-
-  /** 等级 → 中文名 / 样式（与 js/ui/priority.js 的 LEVELS 对应） */
-  const LEVEL_META = [
-    ['overdue',  '逾期'],
-    ['critical', '紧急（≤7 天）'],
-    ['soon',     '临近（≤30 天）'],
-    ['normal',   '正常'],
-    ['done',     '已完成'],
-    ['unknown',  '无法判断'],
-  ];
-
-  /**
-   * 拉全量结果做一次逾期统计。
-   * 后端是分页的，本页只能算本页，所以这里按页拉完（上限 EXPORT_MAX 条）。
-   */
-  async function countAll() {
-    if (!state.queried || !state.total) { toast('⚠️ 请先查询再统计', 2200); return; }
-    const btn = $('#btnCountAll');
-    if (btn) { btn.disabled = true; btn.textContent = '统计中…'; }
-    setLoading(true);
-    try {
-      // 全量已在手上就不要再拉一遍
-      const all = (state.mode === 'client' && state.allRows)
-        ? { rows: state.allRows, truncated: false }
-        : await fetchAll((d, t) => { if (btn) btn.textContent = `统计中 ${d}/${t} 页`; });
-      const { rows, truncated } = all;
-      if (!rows.length) { toast('⚠️ 没有可统计的数据', 2200); return; }
-
-      const buckets = {};
-      rows.forEach((r) => {
-        const lv = (r._prio && r._prio.level) || 'unknown';
-        buckets[lv] = (buckets[lv] || 0) + 1;
-      });
-
-      const chips = LEVEL_META
-        .filter(([key]) => buckets[key])
-        .map(([key, label]) => `<span class="prio-chip is-${key}">${esc(label)} <b>${buckets[key]}</b></span>`)
-        .join('');
-      const box = $('#prioSummary');
-      box.innerHTML = `<span class="prio-summary-title">全部 ${num(rows.length)} 条：</span>${chips}`
-        + (truncated ? `<span class="prio-summary-note">仅统计前 ${EXPORT_MAX} 条（共 ${num(state.total)} 条）</span>` : '')
-        + '<button type="button" class="text-btn" id="btnSummaryClose">收起</button>';
-      box.style.display = '';
-      box.querySelector('#btnSummaryClose').addEventListener('click', hideSummary);
-
-      const od = buckets.overdue || 0;
-      toast(od ? `⚠️ 全部 ${num(rows.length)} 条里有 ${od} 条已逾期` : `✅ 全部 ${num(rows.length)} 条均未逾期`, 3000);
-    } catch (e) {
-      toast(`⚠️ 统计失败：${e.message || String(e)}`, 3000);
-    } finally {
-      setLoading(false);
-      if (btn) { btn.disabled = false; btn.textContent = '统计全部逾期'; }
-    }
+    return { rows: out.slice(0, want), truncated: state.total > BULK_MAX };
   }
 
   // ═══════════════════════════════════════════════════
@@ -1141,9 +987,6 @@
       query(1);
       if (state.sort === null) toast('已恢复后端返回顺序', 2200);
     });
-    $('#btnExport').addEventListener('click', () => exportRows(false));
-    $('#btnExportByBatch').addEventListener('click', () => exportRows(true));
-    $('#btnCountAll').addEventListener('click', countAll);
     const retryBtn = $('#btnRetryQuery');
     if (retryBtn) retryBtn.addEventListener('click', () => query(state.pageNum));
 
@@ -1191,15 +1034,6 @@
       const n = Number(e.target.value);
       if (n >= 1 && n <= totalPages()) gotoPage(n);
       else e.target.value = String(state.pageNum);
-    });
-    $('#checkAll').addEventListener('change', (e) => {
-      const on = e.target.checked;
-      state.rows.forEach((r) => { if (on) selected.add(rowKey(r)); else selected.delete(rowKey(r)); });
-      $('#resultBody').querySelectorAll('input[data-pick]').forEach((cb) => { cb.checked = on; });
-      $('#resultBody').querySelectorAll('tr[data-key]').forEach((tr) => {
-        tr.classList.toggle('is-picked', on);
-      });
-      renderCount();
     });
 
     // ESC 关闭批次时间弹窗（详情弹窗已移除，「查 看」改为跳转 ITAMP 服务搜索）
@@ -1254,14 +1088,15 @@
     bindEvents();
     syncSortIndicator();   // 默认就是「紧急在前」，把箭头摆对
 
-    // 24 列 + 固定列宽，表头挂拖拽把手：拖右边框改列宽，双击恢复默认，宽度记在本地
+    // 22 个数据列 + 操作列；表头挂拖拽把手：拖右边框改列宽，双击恢复默认，宽度记在本地。
+    // 左固定区那 5 列不给把手 —— 它们的 left 偏移写死在 subscription.html，拖了会和 sticky 对不上。
     if (typeof window.createTableResizer === 'function') {
       window.createTableResizer(document.querySelector('.subq-table'), {
         minWidth: 60,
-        skipFirst: true,                     // 复选框列固定 55px，不参与拖拽
-        skipIndices: [1, 2],                 // 优先级列 + 基线状态列（左固定区，拖动会破坏 sticky 偏移）
-        // v2：列顺序调整（基线状态移到优先级右侧）后旧存档已失效，换 key 防错位
-        storageKey: 'itamp.subq.colWidths.v2',
+        skipFirst: false,                    // 第一列（优先级）已在 skipIndices 里，不需要额外跳过
+        skipIndices: [0, 1, 2, 3, 4],        // 优先级 / 基线状态 / 审核流程状态 / 服务中文名 / 接口编码
+        // v3：列序重排（三列前置固定）+ 复选框列移除后旧存档宽度已对不上，换 key 防错位
+        storageKey: 'itamp.subq.colWidths.v3',
       });
     }
 

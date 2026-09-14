@@ -11,12 +11,14 @@
     /* 结果条数说明（与首页 #resultCount 同款） */
     .result-count { font-size: var(--fs-xs); color: var(--muted); margin-right: var(--sp1); }
 
-    /* 结果表格：22 个数据列 + 复选框 + 操作列，列宽集中在 colgroup。
-       table-layout: fixed + min-width 让横向滚动条出现时表头列宽不塌。 */
+    /* 结果表格：22 个数据列 + 操作列，列宽集中在 colgroup（列宽之和 = min-width = 3850px）。
+       table-layout: fixed + min-width 让横向滚动条出现时表头列宽不塌。
+       ⚠️ colgroup 的 <col> 个数必须与 thead 的 <th> 个数一致：js/ui/table-resize.js
+       用「两者长度相等」判断结构是否可拖拽，差一个就静默不绑定把手。 */
     .subq-table {
       table-layout: fixed;
       width: 100%;
-      min-width: 3875px;
+      min-width: 3850px;
       border-collapse: separate;
       border-spacing: 0;
     }
@@ -46,42 +48,45 @@
     }
     .subq-table tbody tr:last-child td { border-bottom: none; }
     .subq-table tbody tr:hover td { background: var(--surface-1); }
-    .subq-table tbody tr.is-picked td { background: var(--primary-c); }
-    .subq-table tbody tr.is-picked:hover td { background: var(--primary-c); }
 
-    /* 左固定区：复选框列（55px）+ 优先级列（130px）+ 基线状态列（130px）。
-       优先级、基线状态是最该先看的信息，横向滚动时不能丢，三列一起固定。 */
-    .subq-table th.col-chk,
-    .subq-table td.col-chk {
-      position: sticky;
-      left: 0;
-      z-index: 2;
-      background: var(--surface);
-    }
+    /* 左固定区：优先级(130) + 基线状态(130) + 审核流程状态(140) + 服务中文名称(200)
+       + 接口编码(160)，共 760px。这几个是「一眼必看 + 高频筛选」的字段，横向滚动时不能丢；
+       最右一列（接口编码）投阴影，标出固定区的边界。
+       left 偏移 = 前面所有固定列宽度之和，改 colgroup 宽度必须同步改这里。 */
     .subq-table th.col-prio,
-    .subq-table td.col-prio {
+    .subq-table td.col-prio,
+    .subq-table th.col-st,
+    .subq-table td.col-st,
+    .subq-table th.col-review,
+    .subq-table td.col-review,
+    .subq-table th.col-name,
+    .subq-table td.col-name,
+    .subq-table th.col-coding,
+    .subq-table td.col-coding {
       position: sticky;
-      left: 55px;                        /* = 复选框列宽，见 colgroup */
       z-index: 2;
       background: var(--surface);
     }
-    .subq-table th.col-st,
-    .subq-table td.col-st {
-      position: sticky;
-      left: 185px;                       /* = 复选框(55) + 优先级(130)，见 colgroup */
-      z-index: 2;
-      background: var(--surface);
+    .subq-table th.col-prio,   .subq-table td.col-prio   { left: 0; }        /* 固定区起点 */
+    .subq-table th.col-st,     .subq-table td.col-st     { left: 130px; }    /* = 优先级 130 */
+    .subq-table th.col-review, .subq-table td.col-review { left: 260px; }    /* = + 基线状态 130 */
+    .subq-table th.col-name,   .subq-table td.col-name   { left: 400px; }    /* = + 审核状态 140 */
+    .subq-table th.col-coding, .subq-table td.col-coding { left: 600px; }    /* = + 服务中文名 200 */
+    .subq-table th.col-coding,
+    .subq-table td.col-coding {
       box-shadow: 6px 0 8px -8px rgba(26, 28, 30, .45);   /* 左固定区的最右一列投阴影 */
     }
-    .subq-table thead th.col-chk,
     .subq-table thead th.col-prio,
-    .subq-table thead th.col-st { z-index: 3; background: var(--surface-1); }
-    .subq-table tbody tr:hover td.col-chk,
+    .subq-table thead th.col-st,
+    .subq-table thead th.col-review,
+    .subq-table thead th.col-name,
+    .subq-table thead th.col-coding { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-prio,
-    .subq-table tbody tr:hover td.col-st { background: var(--surface-1); }
-    .subq-table tbody tr.is-picked td.col-chk,
-    .subq-table tbody tr.is-picked td.col-prio,
-    .subq-table tbody tr.is-picked td.col-st { background: var(--primary-c); }
+    .subq-table tbody tr:hover td.col-st,
+    .subq-table tbody tr:hover td.col-review,
+    .subq-table tbody tr:hover td.col-name,
+    .subq-table tbody tr:hover td.col-coding { background: var(--surface-1); }
+
     .subq-table th.col-op,
     .subq-table td.col-op {
       position: sticky;
@@ -92,10 +97,9 @@
     }
     .subq-table thead th.col-op { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-op { background: var(--surface-1); }
-    .subq-table tbody tr.is-picked td.col-op { background: var(--primary-c); }
 
-    /* 空态：表格总宽 3875px，若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
-       所以这里左对齐（贴着复选框列显示） */
+    /* 空态：表格总宽 3850px，若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
+       所以这里左对齐（贴着第一列显示） */
     .subq-table td[colspan] {
       text-align: left;
       padding: 40px 0 40px 20px;
@@ -106,7 +110,6 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: var(--fs-nano);
     }
-    .subq-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary); }
 
     /* 详情弹窗：字段多，主体滚动 + 两列网格（.kv-grid 在 theme.css） */
     .subq-detail-body { max-height: 62vh; overflow-y: auto; }
@@ -139,16 +142,21 @@
       background: var(--red-c);
       color: var(--on-red-c);
     }
-    .subq-table tbody tr.is-overdue td.col-chk,
     .subq-table tbody tr.is-overdue td.col-prio,
     .subq-table tbody tr.is-overdue td.col-st,
+    .subq-table tbody tr.is-overdue td.col-review,
+    .subq-table tbody tr.is-overdue td.col-name,
+    .subq-table tbody tr.is-overdue td.col-coding,
     .subq-table tbody tr.is-overdue td.col-op {
       background: var(--red-c);
       color: var(--on-red-c);
     }
     .subq-table tbody tr.is-overdue:hover td,
-    .subq-table tbody tr.is-overdue:hover td.col-chk,
     .subq-table tbody tr.is-overdue:hover td.col-prio,
+    .subq-table tbody tr.is-overdue:hover td.col-st,
+    .subq-table tbody tr.is-overdue:hover td.col-review,
+    .subq-table tbody tr.is-overdue:hover td.col-name,
+    .subq-table tbody tr.is-overdue:hover td.col-coding,
     .subq-table tbody tr.is-overdue:hover td.col-op {
       background: color-mix(in srgb, var(--red-c) 88%, var(--on-surface));
     }
@@ -157,45 +165,12 @@
       color: var(--red-c);
     }
 
-    /* 结果卡片头里的逾期提示 */
+    /* 结果卡片头里的本页逾期提示 */
     .prio-alert { color: var(--on-red-c); font-weight: 600; }
 
     /* 查询失败提示条：文字占满左侧并允许换行，重试按钮留在右边 */
     .fail-bar { justify-content: flex-start; flex-wrap: wrap; }
     .fail-bar .retry-text { flex: 1 1 320px; min-width: 0; text-align: left; line-height: 1.5; }
-
-    /* ── 全量统计条（点「统计全部逾期」后出现）─────────── */
-    .prio-summary {
-      display: flex;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: var(--sp1);
-      margin: 0 0 var(--sp2);
-      padding: var(--sp1) var(--sp2);
-      border: 1px solid var(--outline-soft);
-      border-radius: var(--r-xs);
-      background: var(--surface-1);
-      font-size: var(--fs-sm);
-      color: var(--on-surface);
-    }
-    .prio-summary-title { color: var(--muted); }
-    .prio-summary .prio-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 10px;
-      border-radius: 999px;
-      font-size: var(--fs-xs);
-    }
-    .prio-summary .prio-chip b { font-weight: 700; }
-    .prio-summary .prio-chip.is-overdue  { background: var(--red-c);   color: var(--on-red-c); }
-    .prio-summary .prio-chip.is-critical { background: var(--amber-c); color: var(--on-amber-c); }
-    .prio-summary .prio-chip.is-soon     { background: var(--info-c);  color: var(--info); }
-    .prio-summary .prio-chip.is-normal   { background: var(--surface); color: var(--muted); }
-    .prio-summary .prio-chip.is-done     { background: var(--green-c); color: var(--on-green-c); }
-    .prio-summary .prio-chip.is-unknown  { background: var(--surface); color: var(--faint); }
-    .prio-summary .prio-summary-note { color: var(--faint); font-size: var(--fs-nano); }
-    .prio-summary .text-btn { margin-left: auto; }
 
     /* ── 点击复制功能 ────────────────────────────────────── */
     .copy-cell {
@@ -261,15 +236,8 @@
     .batch-time-table tbody tr:hover td {
       background: var(--surface-1);
     }
-    .batch-time-table input[type="date"] {
-      width: 100%;
-      padding: 4px 8px;
-      border: 1px solid var(--outline-soft);
-      border-radius: var(--r-xs);
-      font-size: var(--fs-sm);
-      color: var(--on-surface);
-      background: var(--surface);
-    }
+    /* 批次日期输入框不在这里定样式：统一走 js/ui/date-picker.js + theme.css 的
+       .dp-wrapper / .dp-input（42px 高、--fs-md、--outline 边框），与页面其它日期控件同款。 */
     .batch-time-table .batch-label {
       font-weight: 600;
       color: var(--on-surface);
@@ -397,16 +365,10 @@
         <h2>查询结果</h2>
         <div class="toolbar">
           <span id="resultCount" class="result-count"></span>
-          <span id="overdueCount" class="result-count prio-alert"></span>
-          <span id="pickedCount" class="result-count"
-                title="勾选会跨页累计，导出时包含全部勾选行"></span>
-          <button class="outlined btn-xs" id="btnCountAll"
-                  title="拉取全部查询结果做一次逾期统计（最多 5000 条）">统计全部逾期</button>
+          <span id="overdueCount" class="result-count prio-alert" title="仅统计当前页"></span>
           <button class="outlined btn-xs" id="btnBatchTimeEdit"
                   title="批量修改近 12 个月各批次的功能测试时间和上线时间">批量修改批次时间</button>
           <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">刷 新</button>
-          <button class="outlined btn-xs" id="btnExportByBatch" title="按接口变更批次导出">按接口变更批次导出</button>
-          <button class="filled btn-xs" id="btnExport" title="按查询结果导出">按查询结果导出</button>
         </div>
       </div>
 
@@ -416,45 +378,47 @@
         <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">重 试</button>
       </div>
 
-      <div class="prio-summary" id="prioSummary" style="display:none;"></div>
-
       <div class="tbl-scroll">
         <table class="subq-table">
           <colgroup>
-            <col class="col-chk" style="width:55px">
             <col class="col-prio" style="width:130px">
             <col class="col-st" style="width:130px">
+            <col class="col-review" style="width:140px">
+            <col class="col-name" style="width:200px">
+            <col class="col-coding" style="width:160px">
             <col style="width:180px"><col style="width:200px"><col style="width:200px">
-            <col style="width:220px"><col style="width:200px"><col style="width:160px">
-            <col style="width:140px"><col style="width:140px"><col style="width:200px">
-            <col style="width:220px"><col style="width:200px"><col style="width:180px">
-            <col style="width:180px"><col style="width:180px"><col style="width:160px">
-            <col style="width:150px"><col style="width:80px"><col style="width:140px">
-            <col style="width:140px"><col style="width:140px"><col style="width:140px">
+            <col style="width:200px"><col style="width:160px"><col style="width:180px">
+            <col style="width:200px"><col style="width:200px"><col style="width:220px">
+            <col style="width:160px"><col style="width:180px"><col style="width:180px">
+            <col style="width:150px"><col style="width:180px"><col style="width:80px">
+            <col style="width:140px"><col style="width:140px">
             <col class="col-op" style="width:140px">
           </colgroup>
           <thead>
             <tr>
-              <th class="col-chk"><label><input type="checkbox" id="checkAll" title="全选本页"></label></th>
               <th class="col-prio is-sorted" id="thPrio"
                   title="默认按优先级排序：逾期 / 临期的在最上面。点击循环切换 宽松在前 → 恢复后端顺序 → 紧急在前（后端分页，仅排当前页）；规则见 js/ui/priority.js">
                 优先级<span class="sort-ind" id="prioSortInd">↑</span>
               </th>
               <th class="col-st" title="status">订阅关系基线状态</th>
+              <!-- 以下三列与优先级 / 基线状态一起左固定（审核进度 + 业务标识 + 技术定位） -->
+              <th class="col-review" title="prodReviewStatus">订阅关系审核流程状态</th>
+              <th class="col-name" title="sysServeName">提供方应用系统服务中文名称</th>
+              <th class="col-coding" title="serverCoding">接口编码</th>
+              <!-- 可滚动区：提供方身份 -->
               <th title="sysNo">提供方应用系统编号</th>
               <th title="assemblyEnName">提供方应用系统英文简称</th>
               <th title="sysServeNo">提供方应用系统服务编号</th>
               <th title="sysServeEnName">提供方应用系统服务英文名称</th>
-              <th title="sysServeName">提供方应用系统服务中文名称</th>
               <th title="prodBatchList">提供方最新变更批次</th>
               <th title="deptName">提供方部门名称</th>
-              <th title="serverCoding">接口编码</th>
+              <!-- 可滚动区：调用方身份 -->
               <th title="callerComponent">调用方系统/分行编号</th>
               <th title="callerComponentEnName">调用方系统英文简称/分行名称</th>
               <th title="prodSysServeNo">调用方应用系统服务编号</th>
               <th title="prodBatch">调用方投产/变更批次</th>
               <th title="prodTaskNo">调用方任务编号</th>
-              <th title="reviewStatus">订阅关系审核流程状态</th>
+              <!-- 可滚动区：实施 / 人员 / 附加 -->
               <th title="prodImplementationUnit">订阅方产品实施单元</th>
               <th title="subscriberUserName">订阅人</th>
               <th title="prodDeptName">调用方部门名称</th>
@@ -465,7 +429,7 @@
             </tr>
           </thead>
           <tbody id="resultBody">
-            <tr><td colspan="24" class="empty-hint">请输入条件后点击「查询」</td></tr>
+            <tr><td colspan="23" class="empty-hint">请输入条件后点击「查询」</td></tr>
           </tbody>
         </table>
       </div>
@@ -530,6 +494,7 @@
     顺序错了不会报错，只会静默降级成空实现。硬约束：
       · debug.js 早于其它模块（否则 debugLog 取不到，日志全丢）
       · toast.js 早于 dict-selects.js（后者加载时即取 window.toast）
+      · date-picker.js 早于 subscription-batch-times.js（批次时间弹窗要用 createDatePicker）
       · table-utils.js / subscription-batch-times.js 早于 subscription.js
     启动时由 js/core/bootstrap.js 统一校验依赖并在控制台报缺失。
   -->
@@ -545,9 +510,11 @@
   <script src="js/ui/multi-select.js"></script>
   <script src="js/ui/table-resize.js"></script>
   <script src="js/ui/priority.js"></script>
+  <script src="js/ui/date-picker.js"></script>
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/core/app-navigator.js"></script>
   <script src="js/ui/toast.js"></script>
+  <!-- 本页已无导出功能，但保留该引入：csv-export.js 由三页共用，index / task 页仍在用 -->
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/page/subscription-batch-times.js"></script>

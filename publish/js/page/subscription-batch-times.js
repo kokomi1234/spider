@@ -10,6 +10,10 @@
  *   init({ toast, setLoading, batchWindow, refreshPriority })
  * 这样模块只管「批次时间」这一件事，不反向依赖页面的私有状态。
  *
+ * 另外用全局 window.createDatePicker（js/ui/date-picker.js）渲染弹窗里的日期输入，
+ * 与页面其它日期控件保持同一套外观；该脚本缺失时降级成可直接输入的文本框。
+ * ⚠️ subscription.html 必须引 js/ui/date-picker.js，否则会静默降级。
+ *
  * ── 落盘路径（不走 ITAMP 后端）────────────────────────
  *   GET/POST local/batch-times（代理端点，写 config/batch-times.json）
  *   → 静态 config/batch-times.json → localStorage，三级降级。
@@ -85,20 +89,45 @@
     }
   }
 
+  /** 弹窗内已创建的日期选择器实例。重渲染前必须先 destroy：
+      createDatePicker 会在 document 上挂 click / keydown 监听，直接覆盖 innerHTML
+      会把监听留在 document 上（旧 input 成了游离节点，越点越卡）。 */
+  let datePickers = [];
+
   function renderList() {
     const tbody = $('#batchTimeList');
+    datePickers.forEach((dp) => { if (dp && typeof dp.destroy === 'function') dp.destroy(); });
+    datePickers = [];
+
     tbody.innerHTML = batchTimeData.map((item, idx) => `<tr>
         <td class="batch-label">${esc(item.batch)}</td>
-        <td><input type="date" data-idx="${idx}" data-field="testDate" value="${esc(item.testDate)}"></td>
-        <td><input type="date" data-idx="${idx}" data-field="releaseDate" value="${esc(item.releaseDate)}"></td>
+        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="testDate"
+                   value="${esc(item.testDate)}" placeholder="选择日期" readonly></td>
+        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="releaseDate"
+                   value="${esc(item.releaseDate)}" placeholder="选择日期" readonly></td>
       </tr>`).join('');
 
-    // 绑定日期选择器变化事件（仅用于 UI 反馈，不触发 API）
-    tbody.querySelectorAll('input[type="date"]').forEach((input) => {
+    const inputs = Array.from(tbody.querySelectorAll('input.batch-time-date'));
+
+    // 日期统一走全站同款 createDatePicker（js/ui/date-picker.js + theme.css 的 .dp-* ），
+    // 不再用原生 <input type="date">：各家浏览器外观不一致，也没法跟页面其它日期控件对齐。
+    // 组件缺失（脚本顺序错 / 静态裁剪）时降级为可直接输入的文本框，功能不丢。
+    if (typeof window.createDatePicker === 'function') {
+      inputs.forEach((inputEl) => {
+        const dp = window.createDatePicker(inputEl);
+        if (dp) datePickers.push(dp);
+      });
+    } else {
+      inputs.forEach((inputEl) => { inputEl.readOnly = false; });
+    }
+
+    // 选中日期时组件会向原始 input 派发冒泡的 change —— 这里只把值记回 batchTimeData，
+    // 不触发任何接口（落盘统一在 save() 做）。
+    inputs.forEach((input) => {
       input.addEventListener('change', () => {
         const idx = Number(input.dataset.idx);
         const field = input.dataset.field;
-        batchTimeData[idx][field] = input.value;
+        if (batchTimeData[idx]) batchTimeData[idx][field] = input.value;
       });
     });
   }
