@@ -108,6 +108,9 @@
   let callerOptions = [];      // 调用方系统选项缓存
 
   let currentRow = null;       // 当前订阅的行数据
+  let openSeq = 0;             // 弹窗会话号：open / close 各 +1，用来丢弃「关窗后才回来的异步响应」
+  let submitting = false;      // 确认订阅 in-flight 锁：防连点重复提交
+  let judgeFetching = false;   // 评委拉取 in-flight 锁：同上
   let returnFocus = null;      // 关闭后要还原的焦点
   let dragInstances = {};      // 'sub' / 'doc' → dialog-utils 的拖拽句柄（含 reset）
   let judgeSeq = 0;            // 评委行自增 id
@@ -404,6 +407,8 @@
     if (!dom || !dom.overlay) return;
 
     currentRow = row;
+    openSeq += 1;               // 新会话：之前那次提交的迟到响应一律作废
+    submitting = false;
     returnFocus = document.activeElement;
     resetForm();
 
@@ -418,6 +423,7 @@
 
   function close() {
     if (!dom || !dom.overlay) return;
+    openSeq += 1;               // 关窗即作废：在途的订阅/评委请求回来时不再回写界面
     // 关最外层时子弹窗可能还开着 → 顺手一起关，然后一次性解锁
     if (dom.docOverlay && dom.docOverlay.classList.contains('show')) closeDocDialog();
     dom.overlay.classList.remove('show');
@@ -554,13 +560,34 @@
       return;
     }
 
+    // 提交锁：写请求期间禁掉确认按钮并挡住重入 —— 否则连点会发两次订阅
+    if (submitting) return;
+    submitting = true;
+    const seq = openSeq;
+    if (dom && dom.btnConfirm) dom.btnConfirm.disabled = true;
+
     const api = window.ServiceApi;
     let res = { ok: true, local: true };
-    if (api && typeof api.subscribeWithForm === 'function') {
-      res = await api.subscribeWithForm(currentRow, form);  // 传整个 row
-    } else if (api && typeof api.subscribe === 'function') {
-      res = await api.subscribe(serverCoding);
+    try {
+      if (api && typeof api.subscribeWithForm === 'function') {
+        res = await api.subscribeWithForm(currentRow, form);  // 传整个 row
+      } else if (api && typeof api.subscribe === 'function') {
+        res = await api.subscribe(serverCoding);
+      }
+    } catch (e) {
+      res = { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      submitting = false;
+      if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
     }
+
+    // 弹窗在等响应期间被关掉 / 换了一行 → 只报结果，不回写界面，避免幽灵行与错位的 toast
+    if (seq !== openSeq) {
+      if (res && res.ok) toast(`✅ 已订阅: ${serverCoding}`, 2200, 'success');
+      else toast(`⚠️ 订阅失败：${(res && res.error) || '未知错误'}`, 3000, 'error');
+      return;
+    }
+
     if (!res || !res.ok) {
       toast(`⚠️ 订阅失败：${(res && res.error) || '未知错误'}`, 3000, 'error');
       return;
@@ -771,13 +798,30 @@
       toast('⚠️ 当前行缺少组件编号（assemblyNo），无法拉取评委', 2800, 'warn');
       return;
     }
+    // 拉取期间禁掉按钮 + 记会话号：连点只会发一次，关窗/换行后回来的数据直接丢弃
+    if (judgeFetching) return;
+    judgeFetching = true;
+    const seq = openSeq;
+    const btn = dom && dom.btnFetchJudges;
+    if (btn) btn.disabled = true;
+
     const form = collectForm();
     toast('评委信息拉取中…', 2000);
-    const r = await window.ToolApi.fetchJudgeInfo({
-      compNum,
-      principal: '',
-      callerComponent: form.callerSystem || '',
-    });
+    let r = null;
+    try {
+      r = await window.ToolApi.fetchJudgeInfo({
+        compNum,
+        principal: '',
+        callerComponent: form.callerSystem || '',
+      });
+    } catch (e) {
+      r = { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      judgeFetching = false;
+      if (btn) btn.disabled = false;
+    }
+
+    if (seq !== openSeq) return;            // 弹窗已关闭 / 换了行 → 别往已失效的表格里写
     if (!r || !r.ok) {
       toast(`⚠️ 拉取失败：${(r && r.error) || '未知错误'}`, 3000, 'error');
       return;

@@ -62,8 +62,10 @@
     rows: [],
     cond: null,
     queried: false,
+    reqSeq: 0,        // 请求序号：连点时旧响应直接丢弃（见 query()）
   };
 
+  let lastOkPageNum = 1;        // 最近一次成功查询的页码：失败时把 state.pageNum 退回它，避免旧表格配新页码
   let currentUser = null;
   let defaultDept = '';         // 牵头部门默认值（当前用户所在团队）
   let deptSelect = null;        // 牵头部门 searchable-select 实例
@@ -163,27 +165,42 @@
     state.pageNum = pageNum || state.pageNum || 1;
     state.cond = collectCond();
 
+    // 请求序号：快速连点查询 / 翻页时，先发的慢响应不能让它在后到之后覆盖新结果，
+    // 否则屏幕上是「A 条件的数据 + B 条件的页码」。（与 subscription 页同一套写法）
+    const seq = ++state.reqSeq;
+
     const btn = $('#btnQuery');
     if (btn) { btn.disabled = true; btn.textContent = '查询中…'; }
 
     try {
       const res = await window.TaskApi.fetchTaskList(state.cond, state.pageNum, state.pageSize);
+      if (seq !== state.reqSeq) return;          // 已被更新的请求取代，整段丢弃
       if (!res.ok) {
         toast(`⚠️ 查询失败：${res.error || '未知错误'}`, 3500);
-        // 失败不清空已有结果，方便对照 / 重试
-        if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
+        // 失败不清空已有结果，方便对照 / 重试；但所有「页码 / 条数」显示都要退回上一次成功的状态，
+        // 否则旧表格会配着一个已经前进过的页码，看起来像「查到了但没变化」。
+        if (state.queried) {
+          state.pageNum = lastOkPageNum;
+          renderPagination();
+          renderStats();
+        } else {
+          renderEmpty('查询失败，请检查代理或网络');
+        }
         return;
       }
       state.total = res.total;
       state.rows = res.rows;
       state.queried = true;
+      lastOkPageNum = state.pageNum;
       render();
       if (!res.rows.length) toast('查询完成，没有匹配的任务单', 2200);
     } catch (e) {
+      if (seq !== state.reqSeq) return;
       toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
       console.error('[task] query 异常', e);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '查 询'; }
+      // 只有最新那次请求有权恢复按钮状态，否则连点时按钮会提前解禁
+      if (seq === state.reqSeq && btn) { btn.disabled = false; btn.textContent = '查 询'; }
     }
   }
 
