@@ -3,6 +3,9 @@
  *
  * 设计约定：可见 input 复用页面原始 input，外层只负责边框/箭头，
  * 日历面板宽度始终跟输入框一致；所有视觉样式由 theme.css 的 .dp-* 提供。
+ *
+ * 面板方向：默认在输入框下方；若处在滚动容器（弹窗主体等 overflow:auto）里且下方放不下，
+ * 会给 wrapper 加 `is-dropup` 翻到上方（样式在 theme.css），避免被容器裁掉。
  */
 (function () {
   'use strict';
@@ -313,6 +316,100 @@
       panel.replaceChildren(renderHeader(), ...body, ...(panelView === 'days' ? [renderFooter()] : []));
     }
 
+    /** 向上找最近的滚动容器（如弹窗的 .batch-time-body 这类 overflow:auto 元素）；没有则返回 null */
+    function scrollParentOf(el) {
+      let node = el.parentElement;
+      while (node && node !== document.body && node !== document.documentElement) {
+        const style = window.getComputedStyle(node);
+        const scrollable = /(auto|scroll|overlay)/;
+        if (scrollable.test(style.overflowY) || scrollable.test(style.overflowX)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    }
+
+    /** 面板是否已脱离滚动容器（fixed + 直接挂在 body 上） */
+    let floating = false;
+
+    /** 把面板升到 body 上并改成视口定位 —— 只有这样才能彻底不被容器的 overflow 裁掉 */
+    function enterFloat() {
+      if (floating) return;
+      floating = true;
+      // 挂到 body：祖先里没有 overflow / transform，fixed 才真正相对视口，
+      // 也不会被弹窗的拖拽（transform）改写包含块
+      document.body.appendChild(panel);
+      panel.classList.add('is-floating');
+    }
+
+    /** 关面板时把面板放回 wrapper 原位，恢复纯 CSS 定位 */
+    function leaveFloat() {
+      if (!floating) return;
+      floating = false;
+      panel.classList.remove('is-floating');
+      panel.style.position = '';
+      panel.style.left = '';
+      panel.style.width = '';
+      panel.style.top = '';
+      panel.style.bottom = '';
+      panel.style.maxHeight = '';
+      wrapper.appendChild(panel);
+    }
+
+    /**
+     * 给面板定位。两种模式：
+     *   ① 输入框在滚动容器里（弹窗主体）→ 面板 fixed 挂到 body，按视口算坐标。
+     *      必须在容器外渲染：容器 `overflow: auto` 会按可视区裁剪绝对定位的后代，
+     *      面板超出部分要滚动才看得见（点最后一行时最明显，下方只剩几十像素、面板却要 ~300px）。
+     *   ② 普通文档流（页面筛选区）→ 保持纯 CSS 定位，放不下时翻到输入框上方。
+     * 两种模式都在「上下都放不下」时给面板压一个 max-height，让日历自己滚，而不是被切一截。
+     */
+    function layoutPanel() {
+      const GAP = 4;                                    // 与 .dp-panel 的 calc(100% + 4px) 保持一致
+      const inputRect = inputEl.getBoundingClientRect();
+      const container = scrollParentOf(inputEl);
+
+      panel.style.maxHeight = '';                       // 先清掉上一轮的限制，量的才是真实高度
+      const panelHeight = panel.offsetHeight || 300;    // 面板未渲染完时按常态高度估
+
+      // ① 需要脱离滚动容器
+      if (container) {
+        enterFloat();
+        const viewportHeight = window.innerHeight || 0;
+        const spaceBelow = viewportHeight - inputRect.bottom - GAP;
+        const spaceAbove = inputRect.top - GAP;
+        const openUp = panelHeight > spaceBelow && spaceAbove > spaceBelow;
+
+        panel.style.left = Math.round(inputRect.left) + 'px';
+        panel.style.width = Math.round(inputRect.width) + 'px';
+        panel.style.top = openUp ? 'auto' : Math.round(inputRect.bottom + GAP) + 'px';
+        panel.style.bottom = openUp ? Math.round(viewportHeight - inputRect.top + GAP) + 'px' : 'auto';
+
+        const room = Math.max(spaceBelow, spaceAbove);
+        if (panelHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
+        return;
+      }
+
+      // ② 文档流内：靠 CSS 定位，必要时翻到上面
+      leaveFloat();
+      const containerRect = { top: 0, bottom: window.innerHeight || 0 };
+      const spaceBelow = containerRect.bottom - inputRect.bottom - GAP;
+      const spaceAbove = inputRect.top - containerRect.top - GAP;
+
+      wrapper.classList.toggle('is-dropup', panelHeight > spaceBelow && spaceAbove > spaceBelow);
+
+      const room = Math.max(spaceBelow, spaceAbove);
+      if (panelHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
+    }
+
+    function onWindowResize() {
+      if (isOpen) layoutPanel();
+    }
+
+    /** 容器滚动 / 页面滚动时输入框相对视口的位置变了，面板要跟着重定位 */
+    function onScroll() {
+      if (isOpen) layoutPanel();
+    }
+
     function openPanel() {
       if (disabled || isOpen) return;
       isOpen = true;
@@ -320,6 +417,8 @@
       focusDate = new Date(selectedDate || viewDate);
       render();
       updateOpenState();
+      // 必须在面板可见（hidden=false）之后算，否则量不到真实高度
+      layoutPanel();
       // 只让外层获得 focus-within，避免全局 .form-group input:focus 在输入框中间画出第二条高亮。
       inputEl.focus({ preventScroll: true });
     }
@@ -328,6 +427,7 @@
       if (!isOpen) return;
       isOpen = false;
       updateOpenState();
+      leaveFloat();
     }
 
     function togglePanel(event) {
@@ -341,7 +441,8 @@
     }
 
     function onDocumentClick(event) {
-      if (!wrapper.contains(event.target)) closePanel();
+      // 面板可能被升到 body 上（浮动模式），所以不能只判断 wrapper
+      if (!wrapper.contains(event.target) && !panel.contains(event.target)) closePanel();
     }
 
     function onDocumentKeydown(event) {
@@ -365,6 +466,9 @@
     inputEl.addEventListener('keydown', onInputKeydown);
     document.addEventListener('click', onDocumentClick);
     document.addEventListener('keydown', onDocumentKeydown);
+    // 面板浮动时按视口定位，任何滚动（弹窗主体内 / 页面）都要重定位；用 capture 才能收到容器滚动
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('resize', onWindowResize);
 
     updateDisplay();
 
@@ -400,6 +504,8 @@
         inputWrapper.removeEventListener('click', onWrapperClick);
         arrowButton.removeEventListener('click', togglePanel);
         inputEl.removeEventListener('keydown', onInputKeydown);
+        document.removeEventListener('scroll', onScroll, { capture: true });
+        window.removeEventListener('resize', onWindowResize);
 
         inputEl.className = originalClassName;
         inputEl.readOnly = originalReadOnly;

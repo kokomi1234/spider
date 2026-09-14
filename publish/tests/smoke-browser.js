@@ -141,6 +141,31 @@ const PAGES = [
           process.stdout.write(`    [FAIL] 日期控件数 ${dialogState.pickers} ≠ 行数 × 2 = ${dialogState.rows * 2}\n`);
           anyFail = true;
         }
+
+        // 日历面板不能被弹窗主体的 overflow 裁掉：滚到底点最后一行，
+        // 面板应脱离容器（浮动）并抬到输入框上方、完整落在视口内。
+        const datePanel = await page.evaluate(() => {
+          const body = document.getElementById('batchTimeBody');
+          if (body) body.scrollTop = body.scrollHeight;
+          const inputs = document.querySelectorAll('#batchTimeList input.batch-time-date');
+          if (!inputs.length) return { err: '没有日期控件' };
+          const lastInput = inputs[inputs.length - 1];
+          lastInput.click();
+          const panel = document.querySelector('.dp-panel:not([hidden])');
+          if (!panel) return { err: '面板未打开' };
+          const pr = panel.getBoundingClientRect();
+          const ir = lastInput.getBoundingClientRect();
+          return {
+            floating: panel.classList.contains('is-floating'),
+            visible: pr.top >= -1 && pr.bottom <= window.innerHeight + 1,
+            above: pr.bottom <= ir.top + 1,
+          };
+        });
+        process.stdout.write(`  日期面板（最后一行）: ${JSON.stringify(datePanel)}\n`);
+        if (!datePanel.floating || !datePanel.visible || !datePanel.above) {
+          process.stdout.write('    [FAIL] 日历面板仍被弹窗滚动容器裁剪\n');
+          anyFail = true;
+        }
       }
 
       if (missing.length || pageErrors.length || bootstrapErrs.length || realErrs.length) anyFail = true;

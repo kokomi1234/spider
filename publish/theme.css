@@ -609,9 +609,27 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   background: var(--surface);
   box-shadow: var(--shadow-pop);
   z-index: 100;
+  /* 两边都放不下时 date-picker.js 会给面板压一个 max-height，这里要能自己滚 */
+  overflow-y: auto;
 }
 
 .dp-panel[hidden] { display: none; }
+
+/* 下方放不下时（弹窗主体这类滚动容器会把面板裁掉）翻到输入框上方。
+   方向由 date-picker.js 的 layoutPanel() 按可用空间判定。 */
+.dp-wrapper.is-dropup .dp-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* 输入框处在滚动容器里时（弹窗主体），面板会被 date-picker.js 升到 body 上并改成 fixed，
+   彻底避开容器的 overflow 裁剪；坐标按视口算，left/width/top/bottom 由行内样式给。
+   z-index 落在「子弹窗 1050」与「加载遮罩 2000」之间。 */
+.dp-panel.is-floating {
+  position: fixed;
+  right: auto;
+  z-index: 1600;
+}
 
 .dp-header {
   display: flex;
