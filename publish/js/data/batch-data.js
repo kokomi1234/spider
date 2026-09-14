@@ -102,6 +102,38 @@
       .map(({ label, value }) => ({ label, value }));
   }
 
+  /**
+   * 「近 12 个月」批次 label：从（基准月 −2）到（基准月 +9），含两端，共 12 个。
+   * 例：基准 2026-09 ⇒ [2607批次, …, 2706批次]。label 与抓包一致（YYMM批次），
+   * 直接作为 prodBatch 的过滤值发给后端。
+   *
+   * 月份安全的两个要点（改这个函数时别破坏）：
+   *   · **一律用 1 号构造再 setMonth(+1)**：若拿当天日期（比如 31 号）去加一个月，
+   *     3/31 → 5/1（Date 的 day 溢出不会自减月份），会直接跳过一个月。
+   *   · **跨年交给 Date 自己进位**：month 传 13 / 0 / -1 都合法，别手写 year--。
+   *
+   * @param {Date} [now] 基准日期（业务时区的"今天"）；留空取当前时刻
+   * @returns {string[]}
+   */
+  function batchWindowLabels(now) {
+    const Fmt = (typeof window !== 'undefined') ? window.Fmt : null;
+    const base = (now instanceof Date)
+      ? now
+      : (Fmt && typeof Fmt.businessToday === 'function' ? Fmt.businessToday() : new Date());
+
+    const start = new Date(base.getFullYear(), base.getMonth() - 2, 1);
+    const end = new Date(base.getFullYear(), base.getMonth() + 9, 1);
+    const out = [];
+    const cur = new Date(start.getFullYear(), start.getMonth(), 1);
+    while (cur <= end) {
+      const yy = String(cur.getFullYear()).slice(2);
+      const mm = String(cur.getMonth() + 1).padStart(2, '0');
+      out.push(`${yy}${mm}批次`);
+      cur.setMonth(cur.getMonth() + 1);
+    }
+    return out;
+  }
+
   /** 请求批次列表（与提供方系统共用同一次订阅条件接口响应，只发一次 HTTP） */
   async function fetchBatchList() {
     debugLog('🔄 加载批次列表（复用订阅条件接口，单次请求）...');
@@ -112,5 +144,6 @@
   if (typeof window !== 'undefined') {
     window.loadBatchList = fetchBatchList;
     window.parseBatchPayload = parseBatchList;
+    window.batchWindowLabels = batchWindowLabels;
   }
 })();

@@ -35,6 +35,17 @@
       : null;
   }
 
+  /**
+   * "今天"：与优先级计算同源（Fmt.businessToday，业务时区 UTC+8）。
+   * 直接用 new Date() 的话，机器时区不是 +8 时日历的"今天"高亮和「今天」按钮
+   * 会比优先级里用的今天差一天（北京时间 00:00~08:00 尤其明显）。
+   */
+  function now() {
+    const Fmt = (typeof window !== 'undefined') ? window.Fmt : null;
+    if (Fmt && typeof Fmt.businessToday === 'function') return Fmt.businessToday();
+    return new Date();
+  }
+
   function isSameDay(left, right) {
     return left.getFullYear() === right.getFullYear()
       && left.getMonth() === right.getMonth()
@@ -51,7 +62,7 @@
     const pickerKey = 'date-picker-' + (++pickerId);
 
     let selectedDate = parseDate(inputEl.value);
-    let viewDate = new Date(selectedDate || new Date());
+    let viewDate = new Date(selectedDate || now());
     let focusDate = new Date(viewDate);
     let panelView = 'days'; // days -> months -> years
     let isOpen = false;
@@ -248,7 +259,7 @@
       const month = viewDate.getMonth();
       const firstDay = new Date(year, month, 1).getDay();
       const daysInMonth = new Date(year, month + 1, 0).getDate();
-      const today = new Date();
+      const today = now();
 
       for (let i = 0; i < firstDay; i += 1) {
         const blank = document.createElement('span');
@@ -289,7 +300,7 @@
       todayButton.textContent = '今天';
       todayButton.addEventListener('click', (event) => {
         event.stopPropagation();
-        selectDate(new Date());
+        selectDate(now());
       });
 
       const clearButton = document.createElement('button');

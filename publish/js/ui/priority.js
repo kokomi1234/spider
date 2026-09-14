@@ -61,7 +61,16 @@
 
   const DAY = 24 * 60 * 60 * 1000;
 
+  /**
+   * "今天"（当地 0 点）。
+   * 走 window.Fmt.businessToday()（业务时区 UTC+8），不要直接 new Date()：
+   * 机器时区不是 +8 时，北京时间每月 1 日 00:00~08:00 会被算成上个月，
+   * 整批结果的优先级和逾期判定都会跟着偏一天到一个月。
+   * Fmt 缺失时（脚本顺序异常 / 单测环境）退化为本地时区，行为与改造前一致。
+   */
   function today0() {
+    const Fmt = (typeof window !== 'undefined') ? window.Fmt : null;
+    if (Fmt && typeof Fmt.businessToday === 'function') return Fmt.businessToday();
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
@@ -93,9 +102,21 @@
     return null;   // 只有年份（如"技术支持类-2026年批次"）→ 无法判断
   }
 
-  /** 里程碑截止日：批次月 + offsetMonth 个月的 day 号 */
+  /**
+   * 里程碑截止日：批次月 + offsetMonth 个月的 day 号。
+   *
+   * 月份相关的两个坑在这里一起堵掉：
+   *   · 跨年/跨月进位交给 Date（month 传 0 / 13 / -1 都合法）：2601批次 -3 个月
+   *     要落到上一年的 10 月，手写 `month - 3` 再减年会算错。
+   *   · day 超过目标月天数时**钳到当月最后一天**，而不是让 Date 溢出到下个月
+   *     （规则现在是 15 号，每月都有；但 day 一旦被改成 29/30/31，2 月和小月会跑偏）。
+   */
   function deadlineOf(ym, offsetMonth, day) {
-    return new Date(ym.year, ym.month - 1 + offsetMonth, day);
+    const first = new Date(ym.year, ym.month - 1 + offsetMonth, 1);
+    const y = first.getFullYear();
+    const m = first.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();   // 当月最后一天：下个月第 0 天
+    return new Date(y, m, Math.min(Number(day) || 1, lastDay));
   }
 
   function dateText(d) {
@@ -103,7 +124,13 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  /** 剩余天数（负数=逾期）；两个日期都按当地 0 点算 */
+  /**
+   * 剩余天数（负数=逾期）。
+   * 两个日期都先归零到当天 0 点再相减：否则"截止日 0 点 vs 现在 14 点"会凭空少算 0.58 天，
+   * 同一天里上午/下午看到的剩余天数会不一样。
+   * 除以 86400000 后用 Math.round（而不是 floor/ceil）：跨夏令时的那一天会差 ±1 小时，
+   * round 能把它拉回整天，floor 会少算一天。
+   */
   function daysBetween(from, to) {
     const a = new Date(from.getFullYear(), from.getMonth(), from.getDate());
     const b = new Date(to.getFullYear(), to.getMonth(), to.getDate());

@@ -11,6 +11,7 @@ require('./csv-export.test');
 require('./table-utils.test');
 require('./subscription-batch-times.test');
 require('./subscription-table.test');
+require('./date-rules.test');
 require('./tool-api.test');
 require('./publish-response.test');
 require('./bootstrap.test');

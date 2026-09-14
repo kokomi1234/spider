@@ -42,7 +42,10 @@
     const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    // 文件名时间戳按业务时区取：toISOString() 是 UTC，北京时间 00:00~08:00 会落成前一天
+    const stamp = (window.Fmt && typeof window.Fmt.stamp === 'function')
+      ? window.Fmt.stamp()
+      : new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     anchor.href = url;
     anchor.download = `服务发布数据_${stamp}.csv`;
     document.body.appendChild(anchor);

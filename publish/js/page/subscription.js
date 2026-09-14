@@ -307,12 +307,12 @@
     if (state.sort && first.total > 0 && first.total <= CLIENT_SORT_MAX) {
       let all = null;
       if (first.total <= first.rows.length) {
-        all = first.rows.map(decorateRow);          // 一页就装得下，不用再请求
+        all = decorateRows(first.rows);             // 一页就装得下，不用再请求
       } else {
         // 先把第 1 页画出来 —— 整批拉完才渲染的话，几百条也要等十几秒才出第一屏
         state.mode = 'server';
         state.allRows = null;
-        state.rows = first.rows.map((r) => decorateRow(r));
+        state.rows = decorateRows(first.rows);
         state.progress = {
           done: 1,
           total: Math.ceil(Math.min(first.total, BULK_MAX) / BULK_PAGE_SIZE),
@@ -345,12 +345,12 @@
       } else {
         state.mode = 'server';
         state.allRows = null;
-        state.rows = first.rows.map((r) => decorateRow(r));
+        state.rows = decorateRows(first.rows);
       }
     } else {
       state.mode = 'server';
       state.allRows = null;
-      state.rows = first.rows.map((r) => decorateRow(r));
+      state.rows = decorateRows(first.rows);
       if (state.sort && first.total > CLIENT_SORT_MAX && !state.sortLimited) {
         state.sortLimited = true;
         toast(`⚠️ 结果共 ${num(first.total)} 条，超过 ${CLIENT_SORT_MAX} 条上限，`
@@ -374,7 +374,7 @@
       if (seq !== state.reqSeq) return;
       hideQueryFail();
       state.queried = true;
-      state.allRows = rows.map(decorateRow);
+      state.allRows = decorateRows(rows);
       state.total = rows.length;
       state.mode = 'client';
       state.rows = [];
@@ -395,7 +395,7 @@
     state.queried = true;
 
     // 窗口内全量已在本地，统一走 client 模式（排序 / 分页 / 导出 / 统计都复用现成逻辑）
-    const all = res.rows.map(decorateRow);
+    const all = decorateRows(res.rows);
     state.allRows = all;
     state.total = all.length;
     state.mode = 'client';
@@ -411,23 +411,16 @@
   }
 
   /**
-   * 生成「近 12 个月」批次 label 列表：从 (当前月 −2) 到 (当前月 +9)，含两端。
-   * 例：26年9月 ⇒ [2607批次, 2608批次, …, 2706批次]，共 12 个。
-   * label 格式与抓包一致（YYMM批次），直接作为 prodBatch 过滤值发后端。
+   * 生成「近 12 个月」批次 label 列表。
+   * 算法（含月份安全的两个约束）在 js/data/batch-data.js 的 batchWindowLabels()，
+   * 这里只负责取基准日 —— 必须是业务时区（UTC+8）的今天，
+   * 否则机器时区不是 +8 时，每月 1 日前后窗口会整体偏一个月。
    */
   function batchWindow() {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 9, 1);
-    const out = [];
-    const cur = new Date(start.getFullYear(), start.getMonth(), 1);
-    while (cur <= end) {
-      const yy = String(cur.getFullYear()).slice(2);
-      const mm = String(cur.getMonth() + 1).padStart(2, '0');
-      out.push(`${yy}${mm}批次`);
-      cur.setMonth(cur.getMonth() + 1);
-    }
-    return out;
+    const Fmt = window.Fmt;
+    const now = (Fmt && typeof Fmt.businessToday === 'function') ? Fmt.businessToday() : new Date();
+    if (typeof window.batchWindowLabels === 'function') return window.batchWindowLabels(now);
+    return [];   // 模块缺失时不猜：宁可空窗口，也别发出错月份的请求
   }
 
   /**
@@ -545,16 +538,40 @@
    * 给一行算出投产优先级（批次 + 基线状态 + 今天）。
    * 规则全在 js/ui/priority.js，写回的下划线字段只在前端用。
    */
-  function decorateRow(r) {
+  /** "今天"的基准：一律取业务时区（UTC+8），见 Fmt.businessToday 的说明 */
+  function todayBase() {
+    const Fmt = window.Fmt;
+    return (Fmt && typeof Fmt.businessToday === 'function') ? Fmt.businessToday() : new Date();
+  }
+
+  /**
+   * 给一行算优先级。
+   * @param {object} row 订阅关系行
+   * @param {Date} [now] 计算基准；**必须**由 decorateRows / redecorateRows 传入同一个值 ——
+   *   逐行各取一次"今天"的话，跨零点时同一屏结果会出现两种天数、排序也会错乱。
+   */
+  function decorateRow(row, now) {
     if (window.Priority && typeof window.Priority.decorate === 'function') {
-      return window.Priority.decorate(r);
+      return window.Priority.decorate(row, now);
     }
     // 组件没加载：退化成不影响展示的占位
-    r._prio = { level: 'unknown', days: null, text: '—', next: '', deadline: '', sortKey: 9e6, overdue: false };
-    r._prioText = '—';
-    r._prioNext = '';
-    r._prioDeadline = '';
-    return r;
+    row._prio = { level: 'unknown', days: null, text: '—', next: '', deadline: '', sortKey: 9e6, overdue: false };
+    row._prioText = '—';
+    row._prioNext = '';
+    row._prioDeadline = '';
+    return row;
+  }
+
+  /** 一批行：共用同一个"今天"，返回新数组（.map(decorateRow) 会把下标当基准传进去，别直接传函数） */
+  function decorateRows(rows) {
+    const base = todayBase();
+    return (rows || []).map((r) => decorateRow(r, base));
+  }
+
+  /** 一批行：共用同一个"今天"，原地重算（优先级配置变了以后刷新用） */
+  function redecorateRows(rows) {
+    const base = todayBase();
+    (rows || []).forEach((r) => decorateRow(r, base));
   }
 
   /** 按当前排序方向排一批行（不动入参数组） */
@@ -811,7 +828,7 @@
 
     const first = await fetchP(1);
     if (!first.ok) throw new Error(first.error || '未知错误');
-    const pageRows = new Map([[1, (first.rows || []).map(decorateRow)]]);
+    const pageRows = new Map([[1, decorateRows(first.rows || [])]]);
     let got = (first.rows || []).length;
 
     if (!got || got >= want) {
@@ -828,7 +845,7 @@
         const res = await fetchP(p);
         if (!res.ok) throw new Error(res.error || '未知错误');
         if (!res.rows.length) return;
-        pageRows.set(p, res.rows.map(decorateRow));
+        pageRows.set(p, decorateRows(res.rows));
         got += res.rows.length;
         if (onProgress) onProgress(pageRows.size, pageCount);
       }
@@ -945,8 +962,8 @@
   // 这里只留「把配置喂给优先级 + 重算重绘」，因为要碰本页的 state / decorateRow / render。
   function refreshPriority() {
     window.SubscriptionBatchTimes.applyToPriority();
-    if (Array.isArray(state.allRows)) state.allRows.forEach(decorateRow);
-    else if (Array.isArray(state.rows)) state.rows.forEach(decorateRow);
+    if (Array.isArray(state.allRows)) redecorateRows(state.allRows);
+    else if (Array.isArray(state.rows)) redecorateRows(state.rows);
     if (state.queried) render();
   }
 

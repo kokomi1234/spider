@@ -306,7 +306,10 @@
         out.push(...res.rows);
       }
       const rows = out.slice(0, want);
-      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+      // 文件名时间戳按业务时区取：toISOString() 是 UTC，北京时间 00:00~08:00 会落成前一天
+      const stamp = (window.Fmt && typeof window.Fmt.stamp === 'function')
+        ? window.Fmt.stamp()
+        : new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
       window.CsvExporter.downloadRows(rows, DETAIL_FIELDS, `任务单查询_${stamp}.csv`);
       toast(
         rows.length >= state.total
