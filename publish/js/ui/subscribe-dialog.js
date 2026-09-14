@@ -126,6 +126,7 @@
   let docAllRows = [];          // 当前调用方系统下的全部文档行（前端内存分页的数据源）
   let docBackendTotal = 0;      // 后端声明的总数（可能大于实际拿到的，用于提示截断）
   let docTruncated = false;     // 是否因上限没拉全
+  let docPickedDetails = [];    // 已勾选文档的完整明细（提交时要用到真实报文里的 6 个字段）
   let docLoadedFor = '';        // 已成功拉过文档的调用方系统编号（空结果也算拉过，避免每次打开重复请求）
   let docFiltered = [];
   let docSelected = new Set();
@@ -462,6 +463,7 @@
     dom.remark.value = '';
     dom.relDoc.value = '';
     dom.relDocIds.value = '';
+    docPickedDetails = [];
 
     docSelected = new Set();
     judgeSeq = 0;
@@ -512,6 +514,7 @@
       callerSystem:        selVal('sub_callerSystem'),
       relDocIds:           dom.relDocIds.value,
       relDocNames:         dom.relDoc.value,
+      relDocDetails:       docPickedDetails,   // 完整文档明细（见 confirmDocSelection）
       callerServiceNo:     selVal('sub_callerServiceNo'),
       serviceCnName:       val('sub_serviceCnName'),
       serviceMode:         selVal('sub_serviceMode'),
@@ -1323,6 +1326,16 @@
     const picked = docAllRows.filter((d) => docSelected.has(docId(d)));
     dom.relDoc.value = picked.map((d) => d.docName || d.name || '').join('、');
     dom.relDocIds.value = picked.map(docId).join(',');
+    // 连同 docNo / batchNum / label / templateCode 一起留给提交用：
+    // 真实成功报文里这 6 个字段都有值（原先只传 id + 名称，其余发空串）
+    docPickedDetails = picked.map((d) => ({
+      docInstId:    docId(d),
+      docNo:        d.docNo || '',
+      docName:      d.docName || d.name || '',
+      batchNum:     d.batchNum || '',
+      label:        d.label || '',
+      templateCode: d.templateCode || '',
+    }));
 
     // 选完文档 → 联动拉取调用方应用系统服务编号（getDocSysServeNoList，来自 har/订阅.json 抓包）
     const docInstIds = picked.map(docId).filter(Boolean);

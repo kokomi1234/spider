@@ -144,11 +144,26 @@
     let serverCoding = isRow ? (row.serverCoding || row.sysServeNo || '') : String(rowOrCode || '');
 
     // ── documents: 关联文档列表 ──
+    // 真实成功报文（analysis/har/订阅.json 两次）里每条文档是 6 个字段：
+    //   { batchNum, docName, docNo, label, templateCode, docInstId }
+    // 所以优先用弹窗传来的完整明细；只有「只有 id + 名称」的旧调用方式时才降级。
+    const relDocDetails = (form && Array.isArray(form.relDocDetails)) ? form.relDocDetails : [];
     const relDocIds = (form && form.relDocIds) ? String(form.relDocIds).split(',').filter(Boolean) : [];
     const relDocNames = (form && form.relDocNames) ? String(form.relDocNames).split('、').filter(Boolean) : [];
 
     let documents;
-    if (relDocIds.length > 0) {
+    if (relDocDetails.length > 0) {
+      documents = relDocDetails
+        .filter((d) => d && d.docInstId)
+        .map((d) => ({
+          docInstId:    d.docInstId,
+          docNo:        d.docNo || '',
+          docName:      d.docName || '',
+          batchNum:     d.batchNum || '',
+          label:        d.label || '',
+          templateCode: d.templateCode || '',
+        }));
+    } else if (relDocIds.length > 0) {
       documents = relDocIds.map((id, i) => ({
         docInstId: id,
         docNo: '',
@@ -242,7 +257,7 @@
       prodServiceType:          '',
       prodMCISCode:             '',
       prodIPSCode:              '',
-      prodBatchList:            row.prodBatchList || row.offerVersionBatch || null,
+      prodBatchList:            row.prodBatchList || row.prodBatch || null,
       prodTaskNo:               null,
       prodMessageInfo:          '',
       prodTopicName:            '',
@@ -281,7 +296,8 @@
       principalName:            null,
       deptId:                   null,
       deptName:                 null,
-      isBackup:                 row.isBackup || null,
+      // 弹窗没有「是否做副本」输入项；两次真实成功报文里都是「否」，按业务默认值填
+      isBackup:                 row.isBackup || '否',
       backupInfo:               '',
       prodDeptId:               null,
       prodDeptName:             null,
@@ -331,7 +347,12 @@
     pubSub.serverNo                   = row.serverNo || row.taskNo || null;
     pubSub.version                    = row.version || null;
     pubSub.prodBatch                  = row.prodBatch || null;
-    pubSub.prodTaskNo                 = row.prodTaskNo || row.taskNo || null;
+    // prodBatchList：行数据里这个字段恒为空（40/40 样本），而降级用的 offerVersionBatch 也是空的。
+    // 两次真实成功报文里 prodBatchList 都等于 prodBatch（订阅的来源批次），所以按这个口径补，
+    // 而不是发 null 让后端去猜。
+    pubSub.prodBatchList              = row.prodBatchList || row.prodBatch || null;
+    // prodTaskNo：行里为空，两次真实报文里它都等于 serverNo（服务编号 M-YYYYMM-xxxxx）
+    pubSub.prodTaskNo                 = row.prodTaskNo || row.taskNo || row.serverNo || null;
     pubSub.assemblyNo                 = row.assemblyNo || row.provideSystemNumber || null;
     pubSub.assemblyName               = row.assemblyName || row.provideComponentName || null;
     pubSub.deptId                     = row.deptId || null;

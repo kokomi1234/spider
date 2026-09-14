@@ -149,3 +149,62 @@ test('接口失败收敛成 { ok:false, error }，不抛异常', async () => {
   assert.strictEqual(res.ok, false);
   assert.ok(res.error && res.error.includes('500'), '错误里应带状态码：' + res.error);
 });
+
+// ── 以下 4 条依据 analysis/har/订阅.json 里两次**真实成功**的 setSubcription 报文 ──
+
+test('协议常量：isChecked / isDelete / reviewStatus 就是真实报文里的值（别乱改）', async () => {
+  const { captured } = await captureBody((api) => api.subscribeWithForm(ROW, { callerSystem: 'E00406' }));
+  const pub = captured.opts.body.publishSubcription;
+  // 2026-09-04 两次成功订阅的请求体里分别是 '1' / '1' / '03'；
+  // 这三个看着像「后端约定的有效标志」（与字段名直觉相反），改动前必须有新报文佐证。
+  assert.strictEqual(pub.isChecked, '1');
+  assert.strictEqual(pub.isDelete, '1');
+  assert.strictEqual(pub.reviewStatus, '03');
+});
+
+test('字段来源对齐真实报文：prodBatchList / prodTaskNo / isBackup 不再发 null', async () => {
+  // 行数据里：prodBatchList 与 offerVersionBatch 恒为空、isBackup 恒为空、prodTaskNo 恒为空
+  // （40 行样本统计），而真实报文里它们分别是 订阅批次 / serverNo / 「否」
+  const { captured } = await captureBody((api) => api.subscribeWithForm(
+    { serverCoding: 'C1', prodBatch: '2611批次', serverNo: 'M-202607-11289' }, null));
+  const pub = captured.opts.body.publishSubcription;
+
+  assert.strictEqual(pub.prodBatchList, '2611批次', '应回落到订阅批次，而不是 null');
+  assert.strictEqual(pub.prodTaskNo, 'M-202607-11289', '应回落到 serverNo，而不是 null');
+  assert.strictEqual(pub.isBackup, '否', '弹窗无此输入项，默认「否」');
+});
+
+test('documents：优先用完整明细（真实报文里是 6 个字段）', async () => {
+  const { captured } = await captureBody((api) => api.subscribeWithForm(ROW, {
+    callerSystem: 'E00406',
+    relDocIds: 'd1',
+    relDocNames: '甲文档',
+    relDocDetails: [{
+      docInstId: 'b87c5270-eff5-4755-9cc5-9ae2161a0d5b',
+      docNo: 'BOCNETC-O-MAPSN_CD_84',
+      docName: '系统细化设计说明书_网上银行服务前端-海外个人手机银行客户端',
+      batchNum: '2611',
+      label: 'BOCNETC-O-MAPSN_CD_84-系统细化设计说明书_…',
+      templateCode: '16',
+    }],
+  }));
+  const doc = captured.opts.body.documents[0];
+  assert.strictEqual(doc.docInstId, 'b87c5270-eff5-4755-9cc5-9ae2161a0d5b');
+  assert.strictEqual(doc.docNo, 'BOCNETC-O-MAPSN_CD_84');
+  assert.strictEqual(doc.batchNum, '2611');
+  assert.strictEqual(doc.templateCode, '16');
+  assert.ok(doc.label.startsWith('BOCNETC-O-MAPSN_CD_84-'));
+  assert.ok(doc.docName.length > 0);
+});
+
+test('documents：只有 id + 名称的旧调用方式仍可用（降级路径）', async () => {
+  const { captured } = await captureBody((api) => api.subscribeWithForm(ROW, {
+    callerSystem: 'E00406',
+    relDocIds: 'doc-1,doc-2',
+    relDocNames: '甲、乙',
+  }));
+  const docs = captured.opts.body.documents;
+  assert.strictEqual(docs.length, 2);
+  assert.strictEqual(docs[1].docName, '乙');
+  assert.strictEqual(docs[1].docNo, '');
+});
