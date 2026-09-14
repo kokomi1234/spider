@@ -17,6 +17,7 @@
  *                         body { docInstIdList }，返回 sysServeNoList[{label,value,shortEn}]
  *   文档/文本数据       → POST /itamp-tool/publish/getTextData  body { assemblyNo }
  *   产品批次列表        → POST /itamp-tool/publish/getInformationProdBatch  body { compNum }
+ *                         ⚠️ 响应是三层嵌套（data.data.sysServeNoList），见该函数说明
  *   服务编码列表        → POST /itamp-tool/publish/getInformationServerCoding body { compNum }
  *   历史记录            → POST /itamp-tool/publish/getHistory   body { dataId, pageNum, pageSize, delFlg }
  *   历史详情            → POST /itamp-tool/publish/getHistoryDetail body { informationId, createTime, publishId }
@@ -35,9 +36,6 @@
  * 注意：openapi.json 只记录了请求体结构，多数接口没有保存响应样本，
  * 适配函数统一按「{ code, msg, data | rows }」的通用形态做防御式解析。
  * 某接口真实响应有出入时，在对应 adapt 函数里改，调用方不用动。
- *
- * 导出订阅关系（exportSubscriptionPublishHistoryList）目前**没有抓包**，
- * 按项目铁律只留空 endpoint：未配置时前端不发起任何网络请求，直接走本地 CSV。
  *
  * 约定：所有方法都不抛异常，失败一律返回 { ok:false, error }。
  */
@@ -68,8 +66,6 @@
       // ── 服务订阅关系查询页（服务订阅关系查询.har，2026-09-10）──
       subscriptionHistory: '/itamp-tool/publish/getSubscriptionPublishHistoryList',
       prodSysServeNo:     '/itamp-tool/publish/getProdSysServeNoList',
-      // 导出接口没有抓包，留空 = 关闭；配置后才会真的发请求
-      subscriptionExport: '',
     },
     CONFIG.toolEndpoints || {}
   );
@@ -94,7 +90,6 @@
       perfOperationData: 'POST',
       subscriptionHistory: 'POST',
       prodSysServeNo:     'POST',
-      subscriptionExport: 'POST',
     },
     CONFIG.toolEndpointMethods || {}
   );
@@ -144,6 +139,22 @@
     if (Array.isArray(json.data)) return json.data;
     if (json.data && Array.isArray(json.data.rows)) return json.data.rows;
     if (Array.isArray(json.rows)) return json.rows;
+    return [];
+  }
+
+  /**
+   * 从可能多层嵌套的响应里挖出 sysServeNoList（取不到就返回 []）。
+   * `getInformationProdBatch` 是「D 型」三层嵌套（见 analysis/output/ITAMP接口总览.md）：
+   *   { code, msg, data: { code, msg, data: { sysServeNoList: [{ label, value, shortEn }] } } }
+   * 只解一层 data 会**永远**拿到空数组（多选下拉一直是空的），所以按层往里探。
+   */
+  function pickSysServeNoList(json) {
+    let node = json;
+    for (let depth = 0; depth < 3 && node && typeof node === 'object'; depth += 1) {
+      if (Array.isArray(node)) return node;                 // 万一直接给了数组
+      if (Array.isArray(node.sysServeNoList)) return node.sysServeNoList;
+      node = node.data;
+    }
     return [];
   }
 
@@ -269,7 +280,11 @@
 
   // ── 信息维护类（按组件编号取下拉数据源）─────────────────
 
-  /** 组件下所有产品批次的系统服务号列表：body { compNum }，返回 sysServeNoList[{label,value,shortEn}] */
+  /**
+   * 组件下所有产品批次的系统服务号列表（即订阅页「提供方应用系统服务编号」多选的数据源）。
+   * body { compNum }，响应形状见 pickSysServeNoList：**三层嵌套**的 D 型特例。
+   * 响应样本：`publish/cache/` 里 path=getInformationProdBatch 那条（368KB，E00301 下 1000+ 个编号）。
+   */
   async function fetchInformationProdBatch(compNum) {
     if (!isEnabled('infoProdBatch')) return { ok: true, local: true, list: [] };
     if (!window.API || typeof window.API.call !== 'function') {
@@ -277,9 +292,7 @@
     }
     try {
       const json = await request('infoProdBatch', { compNum: String(compNum || '') });
-      const data = (json && json.data) || {};
-      const arr = Array.isArray(data.sysServeNoList) ? data.sysServeNoList : pickArray(json);
-      return { ok: true, local: false, list: arr };
+      return { ok: true, local: false, list: pickSysServeNoList(json) };
     } catch (e) {
       return { ok: false, list: [], error: e.message || String(e) };
     }
@@ -548,66 +561,6 @@
     }
   }
 
-  /**
-   * 导出订阅关系（预留）。
-   *
-   * ⚠️ 该接口**没有抓包**，路径/参数都未经确认，所以默认 endpoint 为空：
-   *    · 未配置 → 返回 { ok:false, notConfigured:true }，前端改走本地 CSV，不发任何请求
-   *    · 抓包确认后在 __APP_CONFIG__.toolEndpoints.subscriptionExport 填上路径即可
-   *
-   * @returns {Promise<{ok:boolean, notConfigured?:boolean, filename?:string, error?:string}>}
-   *          成功时直接触发浏览器下载（后端返回文件流）
-   */
-  async function exportSubscriptionPublishHistory(body) {
-    if (!isEnabled('subscriptionExport')) {
-      return { ok: false, notConfigured: true, error: '导出接口未接入（缺抓包）' };
-    }
-    if (!window.API || typeof window.API.call !== 'function') {
-      return { ok: false, error: 'API 客户端未就绪' };
-    }
-    try {
-      const resp = await window.API.call(ENDPOINTS.subscriptionExport, {
-        method: METHODS.subscriptionExport || 'POST',
-        body: body || {},
-        query: { n: cacheBuster() },
-      });
-      if (!resp.ok) {
-        let detail = '';
-        try { detail = (await resp.text()).slice(0, 200); } catch (_) { /* ignore */ }
-        throw new Error(`HTTP ${resp.status} ${detail}`.trim());
-      }
-      // 后端偶发把错误当 200 + JSON 返回（如 { code:500 }），此时 body 是 JSON 不是文件，
-      // 必须拦下来，否则会把错误报文当成 xlsx 下载。
-      const ct = resp.headers.get('content-type') || '';
-      if (ct.includes('application/json')) {
-        let j = null;
-        try { j = await resp.json(); } catch (_) { /* ignore */ }
-        if (j && j.code != null && j.code !== 0 && j.code !== 200 && j.code !== '200') {
-          throw new Error(`导出失败（业务码 ${j.code}）：${j.msg || j.message || ''}`.trim());
-        }
-        throw new Error('导出接口返回了 JSON 而非文件，可能后端异常，请重试或检查参数');
-      }
-      const blob = await resp.blob();
-      const disposition = resp.headers.get('content-disposition') || '';
-      const matched = /filename[^;=\n]*=((['"])(.*?)\2|([^;\n]*))/.exec(disposition);
-      const filename = matched
-        ? decodeURIComponent((matched[3] || matched[4] || '').trim())
-        : `服务订阅关系_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.xlsx`;
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      return { ok: true, filename };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
-  }
-
   if (typeof window !== 'undefined') {
     window.ToolApi = {
       endpoints: ENDPOINTS,
@@ -630,7 +583,6 @@
       fetchPerformanceOperationData,
       fetchSubscriptionPublishHistory,
       fetchProdSysServeNoList,
-      exportSubscriptionPublishHistory,
     };
   }
 })();
