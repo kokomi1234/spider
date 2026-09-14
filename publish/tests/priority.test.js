@@ -33,12 +33,18 @@ test('parseYmd：合法 / 非法', () => {
   assert.strictEqual(P.parseYmd(null), null);
 });
 
-test('evaluate：开发基线 → 批次月 -3 个月的 15 日', () => {
+test('evaluate：开发基线 → 批次月 -1 个月的 15 日', () => {
   const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, NOW);
   assert.strictEqual(r.next, '功能测试基线');
-  assert.strictEqual(r.deadline, '2026-06-15', '2609 → 9-3=6 月 15 日');
-  assert.strictEqual(r.days, 14);
-  assert.strictEqual(r.level, 'soon');
+  assert.strictEqual(r.deadline, '2026-08-15', '2609 → 9-1=8 月 15 日');
+  assert.strictEqual(r.days, 75);
+  assert.strictEqual(r.level, 'normal');
+  assert.strictEqual(r.from, 'rule');
+});
+
+test('evaluate：开发基线的截止日跨年（2601批次 → 上一年 12 月）', () => {
+  const r = P.evaluate({ prodBatch: '2601批次', status: '开发基线' }, NOW);
+  assert.strictEqual(r.deadline, '2025-12-15', '1-1=0 → 上一年的 12 月');
   assert.strictEqual(r.from, 'rule');
 });
 
@@ -56,17 +62,17 @@ test('evaluate：终点状态（正式版基线 / 下线）不提醒', () => {
 });
 
 test('evaluate：逾期标红且天数取绝对值', () => {
-  const now = new Date(2026, 6, 1); // 2026-07-01，晚于 2026-06-15
+  const now = new Date(2026, 8, 1); // 2026-09-01，晚于 2026-08-15
   const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, now);
-  assert.strictEqual(r.days, -16);
+  assert.strictEqual(r.days, -17);
   assert.strictEqual(r.overdue, true);
   assert.strictEqual(r.level, 'overdue');
-  assert.strictEqual(r.text, '逾期 16 天');
+  assert.strictEqual(r.text, '逾期 17 天');
 });
 
 test('evaluate：LEVELS 临界值（-1 / 0 / 7 / 8 / 30 / 31）', () => {
-  // 截止日固定 2026-06-15，用 now 反推剩余天数 d
-  const at = (d) => P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 5, 15 - d)).level;
+  // 截止日固定 2026-08-15，用 now 反推剩余天数 d
+  const at = (d) => P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 7, 15 - d)).level;
   assert.strictEqual(at(-1), 'overdue');
   assert.strictEqual(at(0), 'critical');
   assert.strictEqual(at(7), 'critical');

@@ -30,13 +30,13 @@ const monthIndex = (label) => {
 
 // ── 1. 截止日：跨年 / 大小月 / 2 月 ────────────────────
 
-test('截止日：12 个月的批次全部落在"批次月-3 的 15 日"，跨年由 Date 自己进位', () => {
+test('截止日：12 个月的批次全部落在"批次月-1 的 15 日"，跨年由 Date 自己进位', () => {
   const now = new Date(2026, 8, 14);
   const expected = {
-    '2601批次': '2025-10-15', '2602批次': '2025-11-15', '2603批次': '2025-12-15',
-    '2604批次': '2026-01-15', '2605批次': '2026-02-15', '2606批次': '2026-03-15',
-    '2607批次': '2026-04-15', '2608批次': '2026-05-15', '2609批次': '2026-06-15',
-    '2610批次': '2026-07-15', '2611批次': '2026-08-15', '2612批次': '2026-09-15',
+    '2601批次': '2025-12-15', '2602批次': '2026-01-15', '2603批次': '2026-02-15',
+    '2604批次': '2026-03-15', '2605批次': '2026-04-15', '2606批次': '2026-05-15',
+    '2607批次': '2026-06-15', '2608批次': '2026-07-15', '2609批次': '2026-08-15',
+    '2610批次': '2026-09-15', '2611批次': '2026-10-15', '2612批次': '2026-11-15',
   };
   Object.entries(expected).forEach(([label, want]) => {
     const r = Priority.evaluate({ prodBatch: label, status: '开发基线' }, now);
@@ -47,9 +47,9 @@ test('截止日：12 个月的批次全部落在"批次月-3 的 15 日"，跨�
 
 test('截止日：跨年两侧（2512 / 2701）不串年', () => {
   const now = new Date(2026, 8, 14);
-  assert.strictEqual(Priority.evaluate({ prodBatch: '2512批次', status: '开发基线' }, now).deadline, '2025-09-15');
-  assert.strictEqual(Priority.evaluate({ prodBatch: '2701批次', status: '开发基线' }, now).deadline, '2026-10-15');
-  // 正式版基线：批次月当月 15 日，不做 -3
+  assert.strictEqual(Priority.evaluate({ prodBatch: '2512批次', status: '开发基线' }, now).deadline, '2025-11-15');
+  assert.strictEqual(Priority.evaluate({ prodBatch: '2701批次', status: '开发基线' }, now).deadline, '2026-12-15');
+  // 功能测试基线：批次月当月 15 日，不做 -1
   assert.strictEqual(Priority.evaluate({ prodBatch: '2701批次', status: '功能测试基线' }, now).deadline, '2027-01-15');
 });
 

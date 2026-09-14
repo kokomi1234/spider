@@ -112,7 +112,8 @@ spider/
 - **改主题**：只改 `publish/theme.css` 的 `:root` 令牌，不要逐处改 px。
 - **改投产优先级规则**（批次 → 基线里程碑 / 逾期标红）：只改 `publish/js/ui/priority.js`
   顶部的 `MILESTONES`（状态机）和 `LEVELS`（紧急阈值）两个常量，页面代码不用动。
-  当前规则：批次月 − 3 个月的 15 日转功能测试基线，批次月的 15 日转正式版基线。
+  当前规则：批次月 − 1 个月的 15 日转功能测试基线，批次月的 15 日转正式版基线
+  （与「批量修改批次时间」选择栏的默认值口径一致：功测 = 批次月的上一个月）。
 - **前端自动化验证**：本机已有 chromium（`~/Library/Caches/ms-playwright/`），用 playwright-core
   显式传 executablePath 即可，无需下载浏览器。
 
