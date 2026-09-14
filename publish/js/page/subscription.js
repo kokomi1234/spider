@@ -135,6 +135,8 @@
 
   let selects = {};             // id -> searchable-select 实例
   let multiSelects = {};        // key -> multi-select 实例
+  let batchOptions = [];        // 接口返回的完整批次列表（含「26年8月独立批次」这类独立批次），
+                                // 批次时间弹窗要拿它做候选，所以留在模块级而不是只在 loadDicts 里用一次
 
   // ═══════════════════════════════════════════════════
   // 小工具
@@ -875,6 +877,7 @@
     const [providers, batches, departments] = await Promise.allSettled(tasks);
     const systems = providers.status === 'fulfilled' ? providers.value : [];
     const batchList = batches.status === 'fulfilled' ? batches.value : [];
+    batchOptions = batchList;   // 留给「批量修改批次时间」弹窗做批次候选（常规 + 独立批次）
     const deptList = departments.status === 'fulfilled' ? departments.value : [];
 
     ['f_providerCompNum', 'f_callerCompNum'].forEach((id) => {
@@ -968,7 +971,11 @@
   }
 
   if (window.SubscriptionBatchTimes) {
-    window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
+    window.SubscriptionBatchTimes.init({
+      toast, setLoading, batchWindow, refreshPriority,
+      // 批次候选要包含接口里的独立批次（「26年8月独立批次」），不能只有窗口生成的月度批次
+      batchOptions: () => batchOptions,
+    });
   }
 
   // 薄封装：bindEvents / boot 里的调用点保持不变

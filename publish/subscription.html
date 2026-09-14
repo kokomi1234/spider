@@ -236,8 +236,35 @@
     .batch-time-table tbody tr:hover td {
       background: var(--surface-1);
     }
-    /* 批次日期输入框不在这里定样式：统一走 js/ui/date-picker.js + theme.css 的
-       .dp-wrapper / .dp-input（42px 高、--fs-md、--outline 边框），与页面其它日期控件同款。 */
+    /* ── 批次时间选择栏：批次 → 功测时间 / 上线时间（年月下拉，随批次联动）── */
+    .bt-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--sp2);
+      margin: 0 0 var(--sp1);
+    }
+    .bt-field { flex: 1 1 200px; min-width: 180px; }
+    .bt-field > label {
+      display: block;
+      margin-bottom: 4px;
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .bt-range {
+      margin: 0 0 var(--sp2);
+      font-size: var(--fs-xs);
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .bt-saved-head {
+      margin: var(--sp2) 0 var(--sp1);
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .batch-time-table td.bt-empty { color: var(--faint); }
+
     .batch-time-table .batch-label {
       font-weight: 600;
       color: var(--on-surface);
@@ -468,15 +495,38 @@
         <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
       </div>
       <div class="sub-body batch-time-body" id="batchTimeBody">
-        <p class="batch-time-hint">设置批次日期后保存到本地配置文件（config/batch-times.json，不调后端），
-           并<strong>覆盖</strong>「优先级」的里程碑截止日（默认按 批次月−3 的 15 日 / 批次月 15 日 推算）。
-           对应关系：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
+        <p class="batch-time-hint">
+          为某个批次设定「功测时间 / 上线时间」，保存到本地配置文件（config/batch-times.json，不调后端），
+          并<strong>覆盖</strong>「优先级」的里程碑截止日。<br>
+          切换批次会自动带出默认值：<strong>功测时间 = 批次月的上一个月</strong>、
+          <strong>上线时间 = 批次月当月</strong>（跨年自动进位，如 2601批次 的功测时间 = 上一年 12 月）。
+          截止日按所选月份的 <strong>15 日</strong>计。两个时间都能手动改。
+        </p>
+
+        <div class="bt-bar">
+          <div class="bt-field">
+            <label for="btBatch">批次</label>
+            <select id="btBatch" placeholder="请选择批次"></select>
+          </div>
+          <div class="bt-field">
+            <label for="btTest">功测时间</label>
+            <select id="btTest" placeholder="请选择月份"></select>
+          </div>
+          <div class="bt-field">
+            <label for="btRelease">上线时间</label>
+            <select id="btRelease" placeholder="请选择月份"></select>
+          </div>
+        </div>
+        <p class="bt-range" id="btRange"></p>
+
+        <div class="bt-saved-head">已保存的批次时间</div>
         <table class="batch-time-table">
           <thead>
             <tr>
-              <th style="width:160px">批次</th>
-              <th style="width:200px">功能测试时间</th>
-              <th style="width:200px">上线时间</th>
+              <th style="width:220px">批次</th>
+              <th style="width:160px">功测时间</th>
+              <th style="width:160px">上线时间</th>
+              <th style="width:100px">操作</th>
             </tr>
           </thead>
           <tbody id="batchTimeList"></tbody>
@@ -494,8 +544,8 @@
     顺序错了不会报错，只会静默降级成空实现。硬约束：
       · debug.js 早于其它模块（否则 debugLog 取不到，日志全丢）
       · toast.js 早于 dict-selects.js（后者加载时即取 window.toast）
-      · date-picker.js 早于 subscription-batch-times.js（批次时间弹窗要用 createDatePicker）
       · table-utils.js / subscription-batch-times.js 早于 subscription.js
+      （批次时间弹窗改成年月下拉后，本页不再引 date-picker.js —— 该组件仍由首页 / 任务单页使用）
     启动时由 js/core/bootstrap.js 统一校验依赖并在控制台报缺失。
   -->
   <script src="js/core/runtime-config.js"></script>
@@ -510,7 +560,6 @@
   <script src="js/ui/multi-select.js"></script>
   <script src="js/ui/table-resize.js"></script>
   <script src="js/ui/priority.js"></script>
-  <script src="js/ui/date-picker.js"></script>
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/core/app-navigator.js"></script>
   <script src="js/ui/toast.js"></script>

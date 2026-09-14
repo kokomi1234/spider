@@ -59,7 +59,7 @@ function startServer() {
 const PAGES = [
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter'] },
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter'] },
 ];
 
 (async () => {
@@ -93,6 +93,43 @@ const PAGES = [
       process.stdout.write(`  console.error: 共 ${errors.length} 条（后端 404 等环境噪音 ${errors.length - realErrs.length} 条，真报错 ${realErrs.length} 条）\n`);
       realErrs.forEach((e) => process.stdout.write(`    [真报错] ${e}\n`));
 
+      if (pg.file === 'index.html') {
+        // 日期面板「浮动」回归：面板落在滚动容器里时必须升到 body + fixed，
+        // 否则会被容器的 overflow 裁掉（订阅页的批次时间弹窗已改成年月下拉，
+        // 这里临时造一个滚动容器直接验组件行为）。
+        const floatCheck = await page.evaluate(() => {
+          if (typeof window.createDatePicker !== 'function') return { err: 'createDatePicker 缺失' };
+          const box = document.createElement('div');
+          box.style.cssText = 'position:fixed;left:24px;top:24px;width:200px;height:120px;'
+            + 'overflow:auto;background:#fff;z-index:9999';
+          const input = document.createElement('input');
+          input.type = 'text';
+          box.appendChild(input);
+          document.body.appendChild(box);
+          let panel = null;
+          try {
+            window.createDatePicker(input);
+            input.click();
+            panel = document.querySelector('.dp-panel:not([hidden])');
+            if (!panel) return { err: '面板未打开' };
+            const pr = panel.getBoundingClientRect();
+            return {
+              floating: panel.classList.contains('is-floating'),
+              inBody: panel.parentElement === document.body,
+              visible: pr.top >= -1 && pr.bottom <= window.innerHeight + 1 && pr.width > 0,
+            };
+          } finally {
+            if (panel) panel.remove();
+            box.remove();
+          }
+        });
+        process.stdout.write(`  日期面板浮动: ${JSON.stringify(floatCheck)}\n`);
+        if (!floatCheck.floating || !floatCheck.inBody || !floatCheck.visible) {
+          process.stdout.write(`    [FAIL] 日期面板仍会被滚动容器裁剪：${JSON.stringify(floatCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
       if (pg.file === 'subscription.html') {
         const clickErr = [];
         page.on('pageerror', (e) => clickErr.push(e.message));
@@ -123,47 +160,55 @@ const PAGES = [
         await page.waitForTimeout(600);
         const dialogState = await page.evaluate(() => {
           const ov = document.getElementById('batchTimeOverlay');
-          if (!ov) return { text: 'overlay 不存在' };
-          const list = document.getElementById('batchTimeList');
-          const rows = list ? list.children.length : 0;
+          if (!ov) return { err: 'overlay 不存在' };
+          const bar = ['btBatch', 'btTest', 'btRelease']
+            .filter((id) => document.getElementById(id));
+          const testSel = document.getElementById('btTest');
+          const relSel = document.getElementById('btRelease');
           return {
-            text: `display=${getComputedStyle(ov).display}, listRows=${rows},`
-              + ` 日期控件=${ov.querySelectorAll('.dp-wrapper').length}`,
-            rows,
-            pickers: ov.querySelectorAll('.dp-wrapper').length,
+            display: getComputedStyle(ov).display,
+            bar: bar.length,
+            // searchable-select 会把原生 select 藏起来，用它的容器判断有没有建起来
+            wrappers: ov.querySelectorAll('.searchable-select').length,
+            testValue: window.SubscriptionBatchTimes ? null : null,
+            listRows: document.getElementById('batchTimeList').children.length,
           };
         });
-        process.stdout.write(`  弹窗点击后: ${dialogState.text}\n`);
+        process.stdout.write(`  弹窗点击后: ${JSON.stringify(dialogState)}\n`);
         process.stdout.write(`  弹窗点击后 pageerror: ${clickErr.length ? clickErr.join(' | ') : '无'}\n`);
         if (clickErr.length) anyFail = true;
-        // 每行两个日期（功能测试时间 / 上线时间），都必须是统一日期控件
-        if (dialogState.rows && dialogState.pickers !== dialogState.rows * 2) {
-          process.stdout.write(`    [FAIL] 日期控件数 ${dialogState.pickers} ≠ 行数 × 2 = ${dialogState.rows * 2}\n`);
+        // 选择栏三栏（批次 / 功测时间 / 上线时间）都必须建成下拉
+        if (dialogState.bar !== 3 || dialogState.wrappers < 3) {
+          process.stdout.write('    [FAIL] 批次时间选择栏未建成（应有 3 个下拉）\n');
           anyFail = true;
         }
 
-        // 日历面板不能被弹窗主体的 overflow 裁掉：滚到底点最后一行，
-        // 面板应脱离容器（浮动）并抬到输入框上方、完整落在视口内。
-        const datePanel = await page.evaluate(() => {
-          const body = document.getElementById('batchTimeBody');
-          if (body) body.scrollTop = body.scrollHeight;
-          const inputs = document.querySelectorAll('#batchTimeList input.batch-time-date');
-          if (!inputs.length) return { err: '没有日期控件' };
-          const lastInput = inputs[inputs.length - 1];
-          lastInput.click();
-          const panel = document.querySelector('.dp-panel:not([hidden])');
-          if (!panel) return { err: '面板未打开' };
-          const pr = panel.getBoundingClientRect();
-          const ir = lastInput.getBoundingClientRect();
-          return {
-            floating: panel.classList.contains('is-floating'),
-            visible: pr.top >= -1 && pr.bottom <= window.innerHeight + 1,
-            above: pr.bottom <= ir.top + 1,
-          };
+        // 切换批次 → 两个时间必须联动（功测 = 批次月的上一个月，上线 = 批次月当月）。
+        // 走真实交互：点开批次下拉 → 选「2608…」那个选项 → 看两个时间的原生 select 值。
+        // （searchable-select 会把选中值镜像进原生 select，所以直接读 el.value 即可）
+        await page.locator('#btBatch + .searchable-select .searchable-select-input').click();
+        await page.waitForTimeout(200);
+        const picked = await page.evaluate(() => {
+          const items = [...document.querySelectorAll('.searchable-select-option')];
+          const hit = items.find((el) => /2608/.test(el.textContent || ''));
+          if (!hit) return null;
+          const text = hit.textContent.trim();
+          hit.click();
+          return text;
         });
-        process.stdout.write(`  日期面板（最后一行）: ${JSON.stringify(datePanel)}\n`);
-        if (!datePanel.floating || !datePanel.visible || !datePanel.above) {
-          process.stdout.write('    [FAIL] 日历面板仍被弹窗滚动容器裁剪\n');
+        await page.waitForTimeout(250);
+        const linkage = await page.evaluate(() => ({
+          batch: document.getElementById('btBatch').value,
+          test: document.getElementById('btTest').value,
+          release: document.getElementById('btRelease').value,
+          range: (document.getElementById('btRange') || {}).textContent || '',
+        }));
+        process.stdout.write(`  批次联动（选中 ${picked}）: ${JSON.stringify(linkage)}\n`);
+        if (!picked) {
+          process.stdout.write('    [FAIL] 批次下拉里找不到 2608 批次\n');
+          anyFail = true;
+        } else if (!/^2026-07$/.test(linkage.test) || !/^2026-08$/.test(linkage.release)) {
+          process.stdout.write('    [FAIL] 2608批次 应联动出 功测 2026-07 / 上线 2026-08\n');
           anyFail = true;
         }
       }

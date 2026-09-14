@@ -33,7 +33,6 @@
       ['SubscriptionBatchTimes', () => has(window.SubscriptionBatchTimes, 'load')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
-      ['createDatePicker', () => typeof window.createDatePicker === 'function'],
       ['toast', () => typeof window.toast === 'function'],
     ],
     task: [
