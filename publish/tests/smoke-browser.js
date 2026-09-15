@@ -192,21 +192,26 @@ const PAGES = [
         // 否则 js/ui/table-resize.js 会直接 return null（列宽拖拽静默失效）。
         const table = await page.evaluate(() => {
           const t = document.querySelector('.subq-table');
-          const coding = t.querySelector('thead th.col-coding');
+          const review = t.querySelector('thead th.col-review');
           return {
             cols: t.querySelectorAll('colgroup > col').length,
             ths: t.querySelectorAll('thead > tr > th').length,
             handles: t.querySelectorAll('thead .col-resizer').length,
-            codingLeft: coding ? getComputedStyle(coding).left : 'n/a',
+            // 仍固定的「审核流程状态」列 sticky left 应等于前面两列宽之和（130 + 130 = 260px）
+            reviewLeft: review ? getComputedStyle(review).left : 'n/a',
           };
         });
-        process.stdout.write(`  表格结构: col=${table.cols} th=${table.ths} 拖拽把手=${table.handles} 接口编码列 left=${table.codingLeft}\n`);
+        process.stdout.write(`  表格结构: col=${table.cols} th=${table.ths} 拖拽把手=${table.handles} 审核列 left=${table.reviewLeft}\n`);
         if (table.cols !== table.ths) {
           process.stdout.write('    [FAIL] colgroup 与 thead 列数不一致，列宽拖拽会失效\n');
           anyFail = true;
         }
         if (!table.handles) {
           process.stdout.write('    [FAIL] 表头没有挂上列宽拖拽把手\n');
+          anyFail = true;
+        }
+        if (table.reviewLeft !== '260px') {
+          process.stdout.write(`    [FAIL] 审核流程状态列 sticky left 应为 260px，实际 ${table.reviewLeft}\n`);
           anyFail = true;
         }
 
@@ -232,6 +237,24 @@ const PAGES = [
         }
         if (dialogState.legacyBar) {
           process.stdout.write('    [FAIL] 旧的「选择栏」下拉仍在（btBatch/btTest/btRelease）\n');
+          anyFail = true;
+        }
+
+        // 「临期(≤3天)仅优先级变红」：注入一个 is-near 的 tag，确认字色为红（整行不变红由 CSS 只作用于 .prio-tag 保证）
+        const nearCss = await page.evaluate(() => {
+          const el = document.createElement('span');
+          el.className = 'prio-tag is-near';
+          el.textContent = 'T';
+          document.body.appendChild(el);
+          const c = getComputedStyle(el).color;
+          el.remove();
+          return c;
+        });
+        process.stdout.write(`  临期优先级样式: color=${nearCss}\n`);
+        const nm = /rgb\((\d+), (\d+), (\d+)\)/.exec(nearCss);
+        const isRed = nm && Number(nm[1]) > 80 && Number(nm[2]) < 80 && Number(nm[3]) < 80;
+        if (!isRed) {
+          process.stdout.write(`    [FAIL] 临期优先级字色 ${nearCss} 不是红色\n`);
           anyFail = true;
         }
 

@@ -40,7 +40,8 @@ function parsePage() {
   return { html, js, style, cols, ths, widths };
 }
 
-const fixedClasses = ['col-prio', 'col-st', 'col-review', 'col-name', 'col-coding'];
+// 固定列已缩减为 3 列（提供方应用系统服务中文名称 / 接口编码不再固定，见 2026-09-15）
+const fixedClasses = ['col-prio', 'col-st', 'col-review'];
 
 test('colgroup 的 <col> 个数与 thead 的 <th> 个数必须相等', () => {
   const { cols, ths } = parsePage();

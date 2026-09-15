@@ -49,20 +49,17 @@
     .subq-table tbody tr:last-child td { border-bottom: none; }
     .subq-table tbody tr:hover td { background: var(--surface-1); }
 
-    /* 左固定区：优先级(130) + 基线状态(130) + 审核流程状态(140) + 服务中文名称(200)
-       + 接口编码(160)，共 760px。这几个是「一眼必看 + 高频筛选」的字段，横向滚动时不能丢；
-       最右一列（接口编码）投阴影，标出固定区的边界。
+    /* 左固定区：优先级(130) + 基线状态(130) + 审核流程状态(140)，共 400px。
+       这几个是「一眼必看 + 高频筛选」的字段，横向滚动时不能丢。
+       ※ 提供方应用系统服务中文名称(200) / 接口编码(160) 不再固定 ——
+         用户反馈固定列过多会让横向滚动时可见信息太少。
        left 偏移 = 前面所有固定列宽度之和，改 colgroup 宽度必须同步改这里。 */
     .subq-table th.col-prio,
     .subq-table td.col-prio,
     .subq-table th.col-st,
     .subq-table td.col-st,
     .subq-table th.col-review,
-    .subq-table td.col-review,
-    .subq-table th.col-name,
-    .subq-table td.col-name,
-    .subq-table th.col-coding,
-    .subq-table td.col-coding {
+    .subq-table td.col-review {
       position: sticky;
       z-index: 2;
       background: var(--surface);
@@ -70,22 +67,12 @@
     .subq-table th.col-prio,   .subq-table td.col-prio   { left: 0; }        /* 固定区起点 */
     .subq-table th.col-st,     .subq-table td.col-st     { left: 130px; }    /* = 优先级 130 */
     .subq-table th.col-review, .subq-table td.col-review { left: 260px; }    /* = + 基线状态 130 */
-    .subq-table th.col-name,   .subq-table td.col-name   { left: 400px; }    /* = + 审核状态 140 */
-    .subq-table th.col-coding, .subq-table td.col-coding { left: 600px; }    /* = + 服务中文名 200 */
-    .subq-table th.col-coding,
-    .subq-table td.col-coding {
-      box-shadow: 6px 0 8px -8px rgba(26, 28, 30, .45);   /* 左固定区的最右一列投阴影 */
-    }
     .subq-table thead th.col-prio,
     .subq-table thead th.col-st,
-    .subq-table thead th.col-review,
-    .subq-table thead th.col-name,
-    .subq-table thead th.col-coding { z-index: 3; background: var(--surface-1); }
+    .subq-table thead th.col-review { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-prio,
     .subq-table tbody tr:hover td.col-st,
-    .subq-table tbody tr:hover td.col-review,
-    .subq-table tbody tr:hover td.col-name,
-    .subq-table tbody tr:hover td.col-coding { background: var(--surface-1); }
+    .subq-table tbody tr:hover td.col-review { background: var(--surface-1); }
 
     .subq-table th.col-op,
     .subq-table td.col-op {
@@ -116,7 +103,7 @@
 
     /* ── 投产优先级 ──────────────────────────────────────
        规则在 js/ui/priority.js：批次月-1 个月的 15 日转功能测试基线，
-       批次月 15 日转正式版基线；逾期整行标红。 */
+       批次月 15 日转正式版基线；逾期整行标红，临期(≤3天)仅优先级变红。 */
     .subq-table th.col-prio { cursor: pointer; user-select: none; }
     .subq-table th.col-prio:hover { color: var(--on-surface); }
     .sort-ind { opacity: .45; font-size: var(--fs-nano); margin-left: 2px; }
@@ -136,6 +123,8 @@
     .prio-tag.is-normal   { background: var(--surface-1); color: var(--muted); }
     .prio-tag.is-done     { background: var(--green-c); color: var(--on-green-c); }
     .prio-tag.is-unknown  { background: var(--surface-1); color: var(--faint); }
+    /* 临期（剩余 ≤3 天）：优先级这一格变红，但整行不变红（与「逾期整行标红」区分开） */
+    .prio-tag.is-near { color: var(--on-red-c); font-weight: 700; }
 
     /* 逾期整行标红：放在 hover / 固定列规则之后，靠同权重后置覆盖 */
     .subq-table tbody tr.is-overdue td {
@@ -145,8 +134,6 @@
     .subq-table tbody tr.is-overdue td.col-prio,
     .subq-table tbody tr.is-overdue td.col-st,
     .subq-table tbody tr.is-overdue td.col-review,
-    .subq-table tbody tr.is-overdue td.col-name,
-    .subq-table tbody tr.is-overdue td.col-coding,
     .subq-table tbody tr.is-overdue td.col-op {
       background: var(--red-c);
       color: var(--on-red-c);
@@ -155,8 +142,6 @@
     .subq-table tbody tr.is-overdue:hover td.col-prio,
     .subq-table tbody tr.is-overdue:hover td.col-st,
     .subq-table tbody tr.is-overdue:hover td.col-review,
-    .subq-table tbody tr.is-overdue:hover td.col-name,
-    .subq-table tbody tr.is-overdue:hover td.col-coding,
     .subq-table tbody tr.is-overdue:hover td.col-op {
       background: color-mix(in srgb, var(--red-c) 88%, var(--on-surface));
     }
@@ -383,8 +368,8 @@
             <col class="col-prio" style="width:130px">
             <col class="col-st" style="width:130px">
             <col class="col-review" style="width:140px">
-            <col class="col-name" style="width:200px">
-            <col class="col-coding" style="width:160px">
+            <col style="width:200px">
+            <col style="width:160px">
             <col style="width:180px"><col style="width:200px"><col style="width:200px">
             <col style="width:200px"><col style="width:160px"><col style="width:180px">
             <col style="width:200px"><col style="width:200px"><col style="width:220px">
@@ -402,8 +387,8 @@
               <th class="col-st" title="status">订阅关系基线状态</th>
               <!-- 以下三列与优先级 / 基线状态一起左固定（审核进度 + 业务标识 + 技术定位） -->
               <th class="col-review" title="prodReviewStatus">订阅关系审核流程状态</th>
-              <th class="col-name" title="sysServeName">提供方应用系统服务中文名称</th>
-              <th class="col-coding" title="serverCoding">接口编码</th>
+              <th title="sysServeName">提供方应用系统服务中文名称</th>
+              <th title="serverCoding">接口编码</th>
               <!-- 可滚动区：提供方身份 -->
               <th title="sysNo">提供方应用系统编号</th>
               <th title="assemblyEnName">提供方应用系统英文简称</th>

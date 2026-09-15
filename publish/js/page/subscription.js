@@ -69,8 +69,8 @@
     _prioText:        'col-prio',
     status:           'col-st',
     prodReviewStatus: 'col-review',
-    sysServeName:     'col-name',
-    serverCoding:     'col-coding',
+    // 提供方应用系统服务中文名称(col-name) / 接口编码(col-coding) 不再固定：
+    // 用户反馈固定列过多会让横向滚动时可见信息太少。
   };
 
 
@@ -696,8 +696,11 @@
     const hint = p.next
       ? `${r.prodBatch || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}${src}`
       : (p.level === 'done' ? '已到正式版基线 / 已下线' : '批次或基线状态无法判断');
+    // 临期（剩余 ≥0 且 ≤3 天）：优先级这一格变红，但整行不变红（与「逾期整行标红」区分）
+    const near = p.days !== null && p.days >= 0 && p.days <= 3;
+    const tagCls = `prio-tag is-${esc(p.level)}${near ? ' is-near' : ''}`;
     return `<td class="col-prio" title="${esc(hint)}">
-      <span class="prio-tag is-${esc(p.level)}">${esc(p.text)}</span>
+      <span class="${tagCls}">${esc(p.text)}</span>
     </td>`;
   }
 
@@ -1130,7 +1133,7 @@
       window.createTableResizer(document.querySelector('.subq-table'), {
         minWidth: 60,
         skipFirst: false,                    // 第一列（优先级）已在 skipIndices 里，不需要额外跳过
-        skipIndices: [0, 1, 2, 3, 4],        // 优先级 / 基线状态 / 审核流程状态 / 服务中文名 / 接口编码
+        skipIndices: [0, 1, 2],                    // 优先级 / 基线状态 / 审核流程状态（服务中文名、接口编码不再固定）
         // v3：列序重排（三列前置固定）+ 复选框列移除后旧存档宽度已对不上，换 key 防错位
         storageKey: 'itamp.subq.colWidths.v3',
       });
