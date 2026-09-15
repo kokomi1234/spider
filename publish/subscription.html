@@ -408,7 +408,7 @@
       <div class="card-head">
         <h2>查询结果</h2>
         <div class="toolbar">
-          <span id="resultCount" class="result-count"></span>
+          <span id="resultCount" class="result-count" aria-live="polite"></span>
           <span id="overdueCount" class="result-count prio-alert" title="仅统计当前页"></span>
           <button class="outlined btn-xs" id="btnBatchTimeEdit"
                   title="批量修改近 12 个月各批次的功能测试时间和上线时间">批量修改批次时间</button>
@@ -503,7 +503,7 @@
         <button class="outlined btn-xs" id="btnPrev">‹ 上一页</button>
         <ul class="page-numbers" id="pageNumbers"></ul>
         <button class="outlined btn-xs" id="btnNext">下一页 ›</button>
-        <span class="page-jump">前往 <input type="number" id="pageJumpInput" min="1" value="1"> 页</span>
+        <span class="page-jump">前往 <input type="number" id="pageJumpInput" min="1" value="1" aria-label="跳转到页码"> 页</span>
       </div>
     </div>
   </div>
@@ -531,7 +531,7 @@
            保存时只写你改过的行，没填的行不影响优先级（按规则推算）。</p>
         <p class="batch-time-hint">
            打开日历会直接定位到该批次对应的月份：<strong>功能测试 = 批次月 −1</strong>、
-           <strong>上线 = 批次月</strong>。例：<strong>2608批次 → 功测落在 2026年7月、上线落在 2026年8月</strong>。
+           <strong>上线 = 批次月</strong>。例：<strong>2608批次 → 功能测试落在 2026年7月、上线落在 2026年8月</strong>。
            状态对应：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
         <!-- 表格的滚动只发生在这里（.batch-time-table-wrap）：表头在本区域内吸顶 -->
         <div class="batch-time-table-wrap">

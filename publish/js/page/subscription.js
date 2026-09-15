@@ -416,7 +416,9 @@
     state.rows = [];
 
     if (res.partial.length) {
-      toast(`⚠️ 窗口内有 ${res.partial.length} 个批次查询失败（${res.partial.join('、')}），已展示其余批次`, 4200);
+      // toast 只负责"立刻看到有失败"；完整批次清单交给常驻条（4 秒看不完一长串批次名，见 U-08）
+      toast(`⚠️ 有 ${res.partial.length} 个批次查询失败，结果不完整`, 3000);
+      showPartialFail(res.partial);
     }
 
     render();
@@ -685,6 +687,21 @@
   function hideQueryFail() {
     const bar = $('#failBar');
     if (bar) bar.style.display = 'none';
+  }
+
+  /**
+   * 窗口查询里**部分批次**失败：结果不完整，必须常驻说明是哪几个批次。
+   * toast 只有几秒，一长串批次名根本看不完（评估报告 U-08），
+   * 所以清单放常驻条，toast 只负责"立刻看到有失败"。
+   */
+  function showPartialFail(batches) {
+    const bar = $('#failBar');
+    if (!bar || !batches || !batches.length) return;
+    const txt = $('#failText');
+    if (txt) {
+      txt.textContent = `⚠️ 窗口内有 ${batches.length} 个批次查询失败（${batches.join('、')}），当前结果不完整`;
+    }
+    bar.style.display = '';
   }
 
   function statusTag(v) {
