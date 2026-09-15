@@ -1077,6 +1077,12 @@ tbody tr.unsubscribed-row:hover td {
 }
 
 /* ── 空数据提示 ───────────────────────────────────── */
+/* 空态有三套类，**按上下文刻意分开**，不是重复实现：
+     .empty-hint  页面 / 表格级，留白大（--sp5）
+     .sub-empty   弹窗内的表格
+     .msel-empty  下拉面板内，最紧凑
+   （另有 .judge-empty-hint 用于评委区的独立提示块。）
+   要统一的是**文案**，文案走 js/ui/table-utils.js 的 EMPTY_TEXT —— 别为了「看起来一致」把这三个类合并掉。 */
 .empty-hint {
   text-align: center;
   padding: var(--sp5) 0;

@@ -207,9 +207,10 @@
       if (!matched.length) {
         const empty = document.createElement('div');
         empty.className = 'searchable-select-empty';
-        // 远程搜索（如评委工号）在结果回来之前给个提示，别让用户盯着「无匹配结果」发呆。
+        // 远程搜索（如评委工号）在结果回来之前给个提示，别让用户盯着空面板发呆。
         // 本地已经能匹配到选项时优先显示选项，所以 busyText 只在没有命中时才露出来。
-        empty.textContent = busyText || (kw ? `无匹配结果：${query.trim()}` : '暂无可选项');
+        // 文案与全站空态统一为「没有匹配项」（此前这里写作「无匹配结果」，同一产品两种说法）。
+        empty.textContent = busyText || (kw ? `没有匹配项：${query.trim()}` : '暂无可选项');
         frag.appendChild(empty);
       } else {
         // 「已选择数据」section — 仅在无搜索词且已有选中时显示，

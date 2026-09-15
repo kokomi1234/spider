@@ -505,7 +505,11 @@
   // ── 渲染表格 ────────────────────────────────────────
   function renderTable(rows, isFiltered = false) {
     if (!rows.length) {
-      const hint = isFiltered ? '当前筛选条件下无数据' : '暂无数据';
+      // 文案走全站模板（js/ui/table-utils.js 的 EMPTY_TEXT），别再就地写字符串
+      const et = (window.TableUtils && window.TableUtils.EMPTY_TEXT) || {};
+      const hint = isFiltered
+        ? (et.filtered ? et.filtered('服务') : '没有匹配的服务')
+        : (et.none ? et.none('服务') : '暂无数据');
       resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">${hint}</td></tr>`;
       // 早退前必须把计数 / 分页 / 统计一起复位。
       // 否则从「全部 129 条」切到「已订阅（0 条）」时，计数仍显示旧值、
@@ -1012,8 +1016,10 @@
       showToast(`❌ ${errorMsg}`, 5000, 'error');
       // 失败时表格、分页条、统计面板、结果计数要一起复位：
       // 只清表格的话，屏幕上会是「错误提示 + 上一次的统计数字」，看起来像数据没变。
+      const etFail = (window.TableUtils && window.TableUtils.EMPTY_TEXT) || {};
       resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">`
-        + '请求失败，请检查网络或接口地址<br><small style="color:var(--muted);font-family:monospace;">'
+        + `${esc(etFail.fail || '查询失败，请检查网络或稍后重试')}`
+        + '<br><small style="color:var(--muted);font-family:monospace;">'
         + esc(err?.message || '未知错误') + '</small></td></tr>';
       pagination.style.display = 'none';
       statsRow.style.display = 'none';
@@ -1045,7 +1051,9 @@
     if (changeTimeInstance) changeTimeInstance.clear();
 
     // 清空结果
-    resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">请输入条件后点击「查询」</td></tr>`;
+    const etInit = (window.TableUtils && window.TableUtils.EMPTY_TEXT) || {};
+    resultBody.innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">`
+      + `${esc(etInit.initial || '请输入条件后点击「查询」')}</td></tr>`;
     pagination.style.display = 'none';
     resultCount.textContent = '';
     statsRow.style.display = 'none';

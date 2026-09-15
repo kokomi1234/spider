@@ -213,7 +213,7 @@
           renderPagination();
           renderStats();
         } else {
-          renderEmpty('查询失败，请检查网络或稍后重试');
+          renderEmpty(emptyText('fail', null, '查询失败，请检查网络或稍后重试'));
         }
         return;
       }
@@ -253,10 +253,21 @@
       window.TableUtils.renderEmpty(text, 13);
     }
 
+    /**
+     * 空态文案统一走 js/ui/table-utils.js 的 EMPTY_TEXT（延迟取，避免脚本顺序敏感）。
+     * 本页此前自己写「没有匹配的任务单」等字面量，虽与模板一致，但两处各写会慢慢分叉。
+     */
+    function emptyText(kind, what, fallback) {
+      const et = (window.TableUtils && window.TableUtils.EMPTY_TEXT) || null;
+      const v = et ? et[kind] : null;
+      if (v == null) return fallback || '';
+      return typeof v === 'function' ? v(what) : v;
+    }
+
   function renderTable() {
     // 空结果走 renderEmpty（会隐藏 #pagination），与上面 renderEmpty 的声明意图一致
     if (!state.rows.length) {
-      renderEmpty('没有匹配的任务单');
+      renderEmpty(emptyText('none', '任务单', '没有匹配的任务单'));
       return;
     }
     const body = $('#resultBody');

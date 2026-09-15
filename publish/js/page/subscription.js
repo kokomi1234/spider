@@ -151,6 +151,20 @@
     if (el) el.classList.toggle('show', !!on);
   }
 
+  /**
+   * 空态文案统一走 js/ui/table-utils.js 的 EMPTY_TEXT（延迟取，避免脚本顺序敏感）。
+   * 此前本页自己写「查询失败，请检查代理或网络」——「代理」是开发概念，不该出现在业务界面。
+   * @param {'initial'|'none'|'filtered'|'fail'} kind
+   * @param {string} [what] none/filtered 用的对象名（如「订阅关系」）
+   * @param {string} [fallback]
+   */
+  function emptyText(kind, what, fallback) {
+    const et = (window.TableUtils && window.TableUtils.EMPTY_TEXT) || null;
+    const v = et ? et[kind] : null;
+    if (v == null) return fallback || '';
+    return typeof v === 'function' ? v(what) : v;
+  }
+
   /** 复制到剪贴板：点击时把文本写入剪贴板，toast 提示成功 */
   async function copyToClipboard(text, toastEl) {
     const raw = String(text ?? '').trim();
@@ -295,7 +309,7 @@
     if (!first.ok) {
       toast(`⚠️ 查询失败：${shortError(first.error)}`, 3500);
       showQueryFail(first.error || '未知错误');
-      if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
+      if (!state.queried) renderEmpty(emptyText('fail', null, '查询失败，请检查网络或稍后重试'));
       return;
     }
     hideQueryFail();
@@ -388,7 +402,7 @@
     if (!res.ok) {
       toast(`⚠️ 查询失败：${shortError(res.error)}`, 3500);
       showQueryFail(res.error || '未知错误');
-      if (!state.queried) renderEmpty('查询失败，请检查代理或网络');
+      if (!state.queried) renderEmpty(emptyText('fail', null, '查询失败，请检查网络或稍后重试'));
       return;
     }
     hideQueryFail();
@@ -710,7 +724,7 @@
     const rows = pageRows();
     const body = $('#resultBody');
     if (!rows.length) {
-      renderEmpty('没有匹配的订阅关系');
+      renderEmpty(emptyText('none', '订阅关系', '没有匹配的订阅关系'));
       return;
     }
     body.innerHTML = rows.map((r) => {
