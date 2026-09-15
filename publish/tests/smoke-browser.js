@@ -99,6 +99,13 @@ const PAGES = [
       process.stdout.write(`  pageerror(未捕获异常): ${pageErrors.length ? pageErrors.join(' | ') : '无'}\n`);
       process.stdout.write(`  console.error: 共 ${errors.length} 条（环境噪音 ${noise.length} 条，疑似真报错 ${realErrs.length} 条）\n`);
       process.stdout.write(`  bootstrap 兜住的未捕获异常: ${uncaught}\n`);
+
+      // SMOKE_DUMP_CONSOLE=1 时逐条打印 console.error 明细，用于人工溯源「环境噪音」判定是否准确。
+      // 默认不打印，避免日常跑测试时被无后端固有的接口失败日志刷屏。
+      if (process.env.SMOKE_DUMP_CONSOLE) {
+        errors.forEach((e, i) =>
+          process.stdout.write(`    [console ${i + 1}/${errors.length}] ${e.replace(/\s+/g, ' ').slice(0, 220)}\n`));
+      }
       realErrs.forEach((e) => process.stdout.write(`    [真报错] ${e}\n`));
 
       if (pg.file === 'index.html') {

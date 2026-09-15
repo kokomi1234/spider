@@ -796,7 +796,14 @@
       <br><em style="color:var(--ok-c,#0a7)">✔ 已落地（<code>33c14c9</code> 补齐 → <code>1f8e608</code> 上提为 <code>js/ui/query-feedback.js</code>，三页 page 脚本只剩薄别名）。</em></li>
     <li><strong>清理界面层的开发术语</strong>：移除 <code>subscription.html:461-485</code> 的 21 个接口字段名 tooltip，改为业务说明或删除（L-01）；把 <code>subscription.html:458</code> 的"规则见 js/ui/priority.js"换成用户可读表述（L-03）。</li>
     <li><strong>修 <code>task.js:225</code></strong> 越过公共空态函数的问题（U-04 / C-03 类）。</li>
-    <li><strong>统一日期格式口径</strong>：导出文件名改用 UTC+8 业务时间（C-04）。</li>
+    <li><strong>统一日期格式口径</strong>：导出文件名改用 UTC+8 业务时间（C-04）。
+      <br><em style="color:var(--muted)">✘ <b>本条经 2026-09-16 复核为误报，已撤回</b>：导出入口只有两处
+      （<code>index.js</code> 走 <code>CsvExporter.exportRows</code>、<code>task.js:356</code> 走 <code>downloadRows</code>），
+      两者文件名时间戳都取 <code>window.Fmt.stamp()</code>，而该函数用 <code>BUSINESS_TZ_OFFSET_MIN</code> 按 UTC+8 折算
+      （<code>js/core/format.js:46-54</code>，由更早的 <code>88f5c4c</code> 引入）。
+      <code>subscription</code> 页无导出功能。代码里残留的 <code>toISOString()</code> 仅在 <code>Fmt.stamp</code> 缺失时的兜底分支，
+      而 <code>Fmt</code> 三页均加载，实际不会触发。结论：<b>主路径已合规，无需改动</b>；与「修复状态总览」中
+      C-04 判为误报一致，此处路线图条目为漏改，现予标注。</em></li>
     <li><strong>弹窗宽度改挂三档类名</strong>，移除页内 ID 选择器样式（C-01）。</li>
   </ol>
 
