@@ -342,41 +342,127 @@ const PAGES = [
           anyFail = true;
         }
 
-        // 日期面板不能被弹窗主体的 overflow 裁掉：滚到底点最后一行，
-        // 面板应脱离容器（浮动）并抬到输入框上方、完整落在视口内。
-        const datePanel = await page.evaluate(() => {
-          const body = document.getElementById('batchTimeBody');
-          if (body) body.scrollTop = body.scrollHeight;
-          const inputs = document.querySelectorAll('#batchTimeList input.batch-time-date');
-          if (!inputs.length) return { err: '没有日期控件' };
-          const lastInput = inputs[inputs.length - 1];
-          lastInput.click();
-          const panel = document.querySelector('.dp-panel:not([hidden])');
-          if (!panel) return { err: '面板未打开' };
-          const pr = panel.getBoundingClientRect();
-          const ir = lastInput.getBoundingClientRect();
-          // 面板宽度要跟「可见的输入框外框」一致（不是内层 input —— 它被右侧箭头挤掉 36px，
-          // 曾经因此让浮动面板比输入框窄一截，两条定位路径表现不一致）
-          const box = lastInput.closest('.dp-input-wrapper') || lastInput;
-          const br = box.getBoundingClientRect();
-          return {
-            floating: panel.classList.contains('is-floating'),
-            visible: pr.top >= -1 && pr.bottom <= window.innerHeight + 1,
-            above: pr.bottom <= ir.top + 1,
-            boxW: Math.round(br.width),
-            panelW: Math.round(pr.width),
-            dx: Math.round(pr.left - br.left),
-          };
+        // ── 弹窗两个问题的回归（2026-09-15 用户反馈）──────────────────────
+        //  ① 表头吸顶：只在「表格自己的滚动区」(.batch-time-table-wrap) 顶部吸顶，
+        //     不再被全局 thead th{sticky;top:0} 顶到弹窗顶部、跟内容一起滚不动。
+        //  ② 下拉栏完整可见：日历面板展开超出可视范围时，自动向下滚动表格容器，
+        //     让面板完整落在输入框下方 —— 不用用户手动调。
+        // 用「12 个月度批次 + localStorage 里 20 个自定义批次」把表格撑长，制造真实滚动。
+        const btScroll = await page.evaluate(async () => {
+          const KEY = 'itamp.batchTimes';
+          const before = localStorage.getItem(KEY);
+
+          const months = [];
+          for (let m = 7; m <= 12; m += 1) months.push('26' + String(m).padStart(2, '0') + '批次');
+          for (let m = 1; m <= 6; m += 1) months.push('27' + String(m).padStart(2, '0') + '批次');
+          window.loadBatchList = async () => months.map((label, i) => ({ label, value: 'm' + i }));
+
+          const saved = {};
+          for (let i = 1; i <= 20; i += 1) {
+            saved['自定义批次' + String(i).padStart(2, '0')] = { testDate: '', releaseDate: '' };
+          }
+          localStorage.setItem(KEY, JSON.stringify(saved));
+
+          const tick = () => new Promise((r) => setTimeout(r, 30));
+          const out = {};
+          try {
+            await window.SubscriptionBatchTimes.load();
+            await window.SubscriptionBatchTimes.open();
+
+            const wrap = document.querySelector('.batch-time-table-wrap');
+            const body = document.getElementById('batchTimeBody');
+            const head = document.querySelector('#batchTimeDialog .sub-head');
+            if (!wrap) { out.err = '缺少 .batch-time-table-wrap'; return out; }
+            out.rows = document.querySelectorAll('#batchTimeList tr').length;
+
+            // ── ① 表头吸顶 ──────────────────────────────────────────
+            if (wrap.scrollHeight <= wrap.clientHeight) wrap.style.maxHeight = '160px';  // 视口太高时限高兜底
+            wrap.scrollTop = wrap.scrollHeight;
+            const th = document.querySelector('.batch-time-table thead th');
+            const thRect = th.getBoundingClientRect();
+            const wrapRect = wrap.getBoundingClientRect();
+            const headRect = head.getBoundingClientRect();
+            out.scrollable = wrap.scrollHeight > wrap.clientHeight;
+            out.scrolled = wrap.scrollTop > 0;
+            out.thPosition = getComputedStyle(th).position;
+            out.bodyOverflowY = getComputedStyle(body).overflowY;
+            out.thOffset = Math.round(thRect.top - wrapRect.top);   // 吸在表格区顶部 ≈ 1px（外框边框）
+            out.thBelowHead = thRect.top >= headRect.bottom - 1;    // 没有被顶到弹窗顶部
+
+            // ── ② 下拉栏自动滚动 ─────────────────────────────────────
+            wrap.style.maxHeight = '';                              // 还原限高
+            wrap.scrollTop = Math.round((wrap.scrollHeight - wrap.clientHeight) / 2);
+            await tick();
+
+            const inputs = [...document.querySelectorAll('#batchTimeList input.batch-time-date')];
+            const wr = wrap.getBoundingClientRect();
+            let target = null;
+            inputs.forEach((el) => {
+              const r = el.getBoundingClientRect();
+              if (r.top >= wr.top && r.bottom <= wr.bottom) target = el;   // 可视区里最靠下的那个
+            });
+            if (!target) { out.err = '没有可见的日期输入框'; return out; }
+
+            const beforeScroll = wrap.scrollTop;
+            out.scrollRoom = wrap.scrollHeight - wrap.clientHeight - beforeScroll;
+            target.click();
+            await tick();
+
+            const panel = document.querySelector('.dp-panel:not([hidden])');
+            if (!panel) { out.err = '面板未打开'; return out; }
+            const pr = panel.getBoundingClientRect();
+            const ir = target.getBoundingClientRect();
+            const box = target.closest('.dp-input-wrapper') || target;
+            const br = box.getBoundingClientRect();
+            out.before = Math.round(beforeScroll);
+            out.after = Math.round(wrap.scrollTop);
+            out.autoScrolled = wrap.scrollTop > beforeScroll + 1;
+            out.floating = panel.classList.contains('is-floating');
+            out.visible = pr.top >= -1 && pr.bottom <= window.innerHeight + 1;
+            out.below = pr.top >= ir.bottom - 1;                     // 优先保持在输入框下方
+            out.inputVisible = ir.top >= -1 && ir.bottom <= window.innerHeight + 1;
+            out.boxW = Math.round(br.width);
+            out.panelW = Math.round(pr.width);
+            out.dx = Math.round(pr.left - br.left);
+
+            // ── ③ 容器已到底（最后一行）仍要完整可见（退化为翻到上方）────
+            wrap.scrollTop = wrap.scrollHeight;
+            await tick();
+            inputs[inputs.length - 1].click();                       // auto-close 上一个面板
+            await tick();
+            const panel2 = document.querySelector('.dp-panel:not([hidden])');
+            if (panel2) {
+              const r2 = panel2.getBoundingClientRect();
+              out.lastVisible = r2.top >= -1 && r2.bottom <= window.innerHeight + 1;
+            }
+            return out;
+          } finally {
+            if (before === null) localStorage.removeItem(KEY);
+            else localStorage.setItem(KEY, before);
+          }
         });
-        process.stdout.write(`  日期面板（最后一行）: ${JSON.stringify(datePanel)}\n`);
-        if (!datePanel.floating || !datePanel.visible || !datePanel.above) {
-          process.stdout.write('    [FAIL] 日历面板仍被弹窗滚动容器裁剪\n');
+        process.stdout.write(`  弹窗表格滚动: ${JSON.stringify(btScroll)}\n`);
+        if (btScroll.err) {
+          process.stdout.write(`    [FAIL] 弹窗滚动场景无法验证：${btScroll.err}\n`);
           anyFail = true;
-        }
-        if (!datePanel.err
-            && (Math.abs(datePanel.panelW - datePanel.boxW) > 1 || Math.abs(datePanel.dx) > 1)) {
-          process.stdout.write(`    [FAIL] 日历面板与输入框没对齐：面板 ${datePanel.panelW}px@${datePanel.dx >= 0 ? '+' : ''}${datePanel.dx} vs 输入框 ${datePanel.boxW}px\n`);
-          anyFail = true;
+        } else {
+          const fails = [];
+          if (!btScroll.scrollable || !btScroll.scrolled) fails.push('表格区没有形成真实滚动');
+          if (btScroll.thPosition !== 'sticky') fails.push('表头不是 sticky');
+          if (btScroll.bodyOverflowY !== 'hidden') fails.push('弹窗主体仍在滚（应只有表格区一条滚动条）');
+          if (Math.abs(btScroll.thOffset) > 2) fails.push(`表头没吸在表格区顶部（偏移 ${btScroll.thOffset}px）`);
+          if (!btScroll.thBelowHead) fails.push('表头被顶到了弹窗顶部');
+          if (!btScroll.autoScrolled) fails.push(`下拉栏未自动向下滚动（${btScroll.before} → ${btScroll.after}，余量 ${btScroll.scrollRoom}）`);
+          if (!btScroll.floating || !btScroll.visible || !btScroll.below) fails.push('下拉栏未完整可见 / 没落在输入框下方');
+          if (!btScroll.inputVisible) fails.push('自动滚动把输入框滚出了视口');
+          if (Math.abs(btScroll.panelW - btScroll.boxW) > 1 || Math.abs(btScroll.dx) > 1) {
+            fails.push(`下拉栏与输入框没对齐：${btScroll.panelW}px@${btScroll.dx} vs ${btScroll.boxW}px`);
+          }
+          if (btScroll.lastVisible !== true) fails.push('最后一行（容器已到底）的下拉栏不完整可见');
+          if (fails.length) {
+            fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+            anyFail = true;
+          }
         }
 
         // 「精确到日」：给第一行填一个具体日期，保存后 POST 出去的配置必须就是这个日期

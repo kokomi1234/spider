@@ -6,6 +6,10 @@
  *
  * 面板方向：默认在输入框下方；若处在滚动容器（弹窗主体等 overflow:auto）里且下方放不下，
  * 会给 wrapper 加 `is-dropup` 翻到上方（样式在 theme.css），避免被容器裁掉。
+ *
+ * 面板完整可见：展开时若下方空间不足，会先把输入框所在的滚动容器（或页面）向下滚动，
+ * 让面板能完整落在输入框下方（scrollToRevealPanel）——用户不用手动调整。
+ * 只有容器已经滚到底、确实腾不出空间时，才翻到上方或压 max-height。
  */
 (function () {
   'use strict';
@@ -380,32 +384,69 @@
     }
 
     /**
+     * 「下拉栏完整可见」增强：面板展开后若下方空间不足，自动把输入框所在的滚动容器
+     * （或页面本身）向下滚动，直到面板能完整落在输入框下方 —— 用户无需手动调整。
+     * 返回滚动后重新测量的输入框矩形（没滚则原样返回）；能否吸顶/翻上交给调用方判断。
+     *
+     * 约束：滚到容器底部就停（不能凭空造空间）、输入框顶部至少留 8px（别把它滚出屏幕）。
+     * 只有同时满足「还需要滚」且「确实有可滚空间」才动，避免无谓抖动。
+     */
+    function scrollToRevealPanel(naturalHeight, GAP) {
+      // ⚠️ 量的是「可见的输入框外框」.dp-input-wrapper，不是内层 <input>：
+      // 内层 input 是 flex:1，右侧箭头（.dp-arrow）会挤掉它 36px，height 也少 2px 边框。
+      // 拿内层 input 当基准 → 浮动面板比可见输入框窄 36px、还右偏 1px，
+      // 跟文档流内那条路径（.dp-panel 靠 left:0;right:0 撑满 .dp-wrapper）宽度对不上。
+      const rect = inputWrapper.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || 0;
+      if (viewportHeight - rect.bottom - GAP >= naturalHeight) return rect;   // 下方已放得下
+
+      const need = rect.bottom + GAP + naturalHeight - viewportHeight;        // 还需向下滚多少
+      if (need <= 0) return rect;
+      const keepInputVisible = Math.max(0, rect.top - 8);
+
+      // ① 在滚动容器里 → 滚容器
+      const container = scrollParentOf(inputEl);
+      if (container) {
+        const room = Math.max(0, container.scrollHeight - container.clientHeight - container.scrollTop);
+        const delta = Math.min(need, room, keepInputVisible);
+        if (delta <= 0) return rect;                                          // 已到底 / 无可滚空间
+        container.scrollTop += delta;
+        return inputWrapper.getBoundingClientRect();
+      }
+
+      // ② 没有滚动容器（页面筛选区）→ 滚页面本身
+      const scroller = document.scrollingElement || document.documentElement;
+      const room = Math.max(0, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop);
+      const delta = Math.min(need, room, keepInputVisible);
+      if (delta <= 0) return rect;
+      scroller.scrollTop += delta;
+      return inputWrapper.getBoundingClientRect();
+    }
+
+    /**
      * 给面板定位。两种模式：
      *   ① 输入框在滚动容器里（弹窗主体）→ 面板 fixed 挂到 body，按视口算坐标。
      *      必须在容器外渲染：容器 `overflow: auto` 会按可视区裁剪绝对定位的后代，
      *      面板超出部分要滚动才看得见（点最后一行时最明显，下方只剩几十像素、面板却要 ~300px）。
      *   ② 普通文档流（页面筛选区）→ 保持纯 CSS 定位，放不下时翻到输入框上方。
-     * 两种模式都在「上下都放不下」时给面板压一个 max-height，让日历自己滚，而不是被切一截。
+     * 两种模式都先 scrollToRevealPanel 滚动腾地方；实在腾不出（已在容器底部）才翻上/压 max-height。
      */
     function layoutPanel() {
       const GAP = 4;                                    // 与 .dp-panel 的 calc(100% + 4px) 保持一致
-      // ⚠️ 量的是「可见的输入框外框」.dp-input-wrapper，不是内层 <input>：
-      // 内层 input 是 flex:1，右侧箭头（.dp-arrow）会挤掉它 36px，height 也少 2px 边框。
-      // 拿内层 input 当基准 → 浮动面板比可见输入框窄 36px、还右偏 1px，
-      // 跟文档流内那条路径（.dp-panel 靠 left:0;right:0 撑满 .dp-wrapper）宽度对不上。
-      const inputRect = inputWrapper.getBoundingClientRect();
       const container = scrollParentOf(inputEl);
 
       panel.style.maxHeight = '';                       // 先清掉上一轮的限制，量的才是真实高度
-      const panelHeight = panel.offsetHeight || 300;    // 面板未渲染完时按常态高度估
+      const naturalHeight = panel.offsetHeight || 300;  // 面板未渲染完时按常态高度估
 
       // ① 需要脱离滚动容器
       if (container) {
         enterFloat();
+        // 先按「面板完整可见」滚动容器腾地方，再按滚动后的位置定位（优先保持在输入框下方）
+        const inputRect = scrollToRevealPanel(naturalHeight, GAP);
         const viewportHeight = window.innerHeight || 0;
         const spaceBelow = viewportHeight - inputRect.bottom - GAP;
         const spaceAbove = inputRect.top - GAP;
-        const openUp = panelHeight > spaceBelow && spaceAbove > spaceBelow;
+        const openUp = naturalHeight > spaceBelow && spaceAbove > spaceBelow;
 
         panel.style.left = Math.round(inputRect.left) + 'px';
         panel.style.width = Math.round(inputRect.width) + 'px';
@@ -413,20 +454,21 @@
         panel.style.bottom = openUp ? Math.round(viewportHeight - inputRect.top + GAP) + 'px' : 'auto';
 
         const room = Math.max(spaceBelow, spaceAbove);
-        if (panelHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
+        if (naturalHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
         return;
       }
 
       // ② 文档流内：靠 CSS 定位，必要时翻到上面
       leaveFloat();
-      const containerRect = { top: 0, bottom: window.innerHeight || 0 };
-      const spaceBelow = containerRect.bottom - inputRect.bottom - GAP;
-      const spaceAbove = inputRect.top - containerRect.top - GAP;
+      const inputRect = scrollToRevealPanel(naturalHeight, GAP);
+      const viewportHeight = window.innerHeight || 0;
+      const spaceBelow = viewportHeight - inputRect.bottom - GAP;
+      const spaceAbove = inputRect.top - GAP;
 
-      wrapper.classList.toggle('is-dropup', panelHeight > spaceBelow && spaceAbove > spaceBelow);
+      wrapper.classList.toggle('is-dropup', naturalHeight > spaceBelow && spaceAbove > spaceBelow);
 
       const room = Math.max(spaceBelow, spaceAbove);
-      if (panelHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
+      if (naturalHeight > room) panel.style.maxHeight = Math.max(180, room) + 'px';
     }
 
     function onWindowResize() {

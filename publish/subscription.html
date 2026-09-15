@@ -221,30 +221,63 @@
 
     /* ── 批量修改批次时间弹窗 ─────────────────────────────────────── */
     .batch-time-dialog { max-width: 720px; min-width: 600px; }
-    .batch-time-body { max-height: 60vh; overflow-y: auto; padding: 16px 20px; }
+    /* 表头吸顶只发生在「表格自己的滚动区」里。
+       theme.css 有一条全局 `thead th { position: sticky; top: 0 }`，原先表格的直接滚动
+       祖先是 .batch-time-body（overflow-y:auto）→ 表头被吸到弹窗顶部、说明文字被它盖住、
+       滚到底也不随内容走（用户报的 bug）。这里改成：主体不滚（overflow:hidden），
+       由内部 .batch-time-table-wrap 单独滚动 —— 表头只在表格区顶部吸顶，
+       弹窗里也只有这一条滚动条。 */
+    .batch-time-body {
+      display: flex;
+      flex-direction: column;
+      max-height: 60vh;
+      overflow: hidden;
+      padding: 16px 20px;
+    }
     .batch-time-hint {
       font-size: var(--fs-sm);
       color: var(--muted);
       margin: 0 0 16px;
       line-height: 1.6;
     }
+    .batch-time-table-wrap {
+      flex: 1 1 auto;
+      min-height: 0;              /* 允许在 flex 列里收缩，内部才会出现自己的滚动条 */
+      overflow-y: auto;
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-sm);
+    }
+    /* border-collapse: separate + 单元格只画右/下边框：
+       collapse 下 <th> 的边框「归表格所有」，吸顶时会整条消失；
+       外框改由 .batch-time-table-wrap 提供，网格观感与原来一致。 */
     .batch-time-table {
       width: 100%;
-      border-collapse: collapse;
+      border-collapse: separate;
+      border-spacing: 0;
       font-size: var(--fs-sm);
     }
     .batch-time-table th,
     .batch-time-table td {
       padding: 8px 10px;
-      border: 1px solid var(--outline-soft);
+      border-right: 1px solid var(--outline-soft);
+      border-bottom: 1px solid var(--outline-soft);
       text-align: left;
     }
+    .batch-time-table th:last-child,
+    .batch-time-table td:last-child { border-right: none; }
+    .batch-time-table tbody tr:last-child td { border-bottom: none; }
     .batch-time-table thead th {
+      position: sticky;          /* 只在 .batch-time-table-wrap 内吸顶 */
+      top: 0;
+      z-index: 2;                /* 盖住滚上来的数据行 */
       background: var(--surface-1);
       color: var(--muted);
       font-weight: 600;
       font-size: var(--fs-nano);
     }
+    /* 表头两角跟着外框圆角收一下，吸顶时不留方角 */
+    .batch-time-table thead th:first-child { border-top-left-radius: calc(var(--r-sm) - 1px); }
+    .batch-time-table thead th:last-child { border-top-right-radius: calc(var(--r-sm) - 1px); }
     .batch-time-table tbody tr:hover td {
       background: var(--surface-1);
     }
@@ -500,16 +533,19 @@
            打开日历会直接定位到该批次对应的月份：<strong>功能测试 = 批次月 −1</strong>、
            <strong>上线 = 批次月</strong>。例：<strong>2608批次 → 功测落在 2026年7月、上线落在 2026年8月</strong>。
            状态对应：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
-        <table class="batch-time-table">
-          <thead>
-            <tr>
-              <th style="width:180px">批次</th>
-              <th style="width:200px">功能测试时间</th>
-              <th style="width:200px">上线时间</th>
-            </tr>
-          </thead>
-          <tbody id="batchTimeList"></tbody>
-        </table>
+        <!-- 表格的滚动只发生在这里（.batch-time-table-wrap）：表头在本区域内吸顶 -->
+        <div class="batch-time-table-wrap">
+          <table class="batch-time-table">
+            <thead>
+              <tr>
+                <th style="width:180px">批次</th>
+                <th style="width:200px">功能测试时间</th>
+                <th style="width:200px">上线时间</th>
+              </tr>
+            </thead>
+            <tbody id="batchTimeList"></tbody>
+          </table>
+        </div>
       </div>
       <div class="sub-foot">
         <button type="button" class="outlined btn-sm" id="btnBatchTimeCancel">取 消</button>
