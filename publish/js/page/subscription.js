@@ -135,8 +135,6 @@
 
   let selects = {};             // id -> searchable-select 实例
   let multiSelects = {};        // key -> multi-select 实例
-  let batchOptions = [];        // 接口返回的完整批次列表（含「26年8月独立批次」这类独立批次），
-                                // 批次时间弹窗要拿它做候选，所以留在模块级而不是只在 loadDicts 里用一次
 
   // ═══════════════════════════════════════════════════
   // 小工具
@@ -877,7 +875,6 @@
     const [providers, batches, departments] = await Promise.allSettled(tasks);
     const systems = providers.status === 'fulfilled' ? providers.value : [];
     const batchList = batches.status === 'fulfilled' ? batches.value : [];
-    batchOptions = batchList;   // 留给「批量修改批次时间」弹窗做批次候选（常规 + 独立批次）
     const deptList = departments.status === 'fulfilled' ? departments.value : [];
 
     ['f_providerCompNum', 'f_callerCompNum'].forEach((id) => {
@@ -961,6 +958,21 @@
   // 批量修改批次时间
   // ═══════════════════════════════════════════════════
 
+  /**
+   * 当前查询结果里出现过的批次（去重，保持出现顺序）。
+   * 给「批量修改批次时间」弹窗当行用：独立批次（如「26年8月独立批次」）不在近 12 个月的
+   * 月度窗口里，但用户在结果里确实看得到，得能给它设时间。
+   */
+  function observedBatches() {
+    const seen = new Set();
+    const src = Array.isArray(state.allRows) ? state.allRows : (state.rows || []);
+    src.forEach((r) => {
+      const b = String((r && r.prodBatch) || '').trim();
+      if (b) seen.add(b);
+    });
+    return Array.from(seen);
+  }
+
   // 批次时间的读写 / 弹窗全部在 js/page/subscription-batch-times.js（见该文件头说明）。
   // 这里只留「把配置喂给优先级 + 重算重绘」，因为要碰本页的 state / decorateRow / render。
   function refreshPriority() {
@@ -973,8 +985,8 @@
   if (window.SubscriptionBatchTimes) {
     window.SubscriptionBatchTimes.init({
       toast, setLoading, batchWindow, refreshPriority,
-      // 批次候选要包含接口里的独立批次（「26年8月独立批次」），不能只有窗口生成的月度批次
-      batchOptions: () => batchOptions,
+      // 弹窗的行除了月度窗口，还要带上结果里出现的批次（独立批次不在窗口里）
+      observedBatches,
     });
   }
 
