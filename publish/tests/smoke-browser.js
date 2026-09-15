@@ -258,41 +258,76 @@ const PAGES = [
           anyFail = true;
         }
 
-        // 批次时间的「批次 → 功测/上线月份」映射：每行都要显示规则默认值，
-        // 且 2608批次 必须是 功测 07-15 / 上线 08-15（功测 = 批次月 −1，上线 = 批次月）。
-        // 这条守着「映射到错误月份」这类回归 —— 口径唯一来源是 priority.js 的 defaultDeadlines()。
-        const btDefaults = await page.evaluate(() => {
-          const rows = [...document.querySelectorAll('#batchTimeList tr')].map((tr) => ({
-            batch: (tr.children[0] || {}).textContent ? tr.children[0].textContent.trim() : '',
-            defs: [...tr.querySelectorAll('.bt-default')].map((s) => s.textContent.trim()),
-          }));
-          const hit = rows.find((r) => r.batch === '2608批次');
-          return { rows: rows.length, hit: hit || null, missingHint: rows.filter((r) => r.defs.length !== 2).length };
+        // 批次时间的行来源 + 日历初始月份（2026-09-15 用户反馈的三个点一起守）：
+        //   · 行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立），
+        //     不再有「查询结果里冒出来的历史批次」（2408批次 就是这么进来的）；
+        //   · 「作废」批次、解析不出年月的批次不进弹窗；
+        //   · 打开日历直接定位到批次对应月份：功测 = 批次月 −1、上线 = 批次月。
+        const btRows = await page.evaluate(async () => {
+          // 字典桩：真实字典要打接口，冒烟环境用固定样本覆盖（窗口 = 2607 ~ 2706）
+          window.loadBatchList = async () => [
+            { label: '2607批次', value: 'z' },
+            { label: '2608批次', value: 'a' },
+            { label: '26年8月独立', value: 'b' },       // 独立批次，窗口内 → 要有
+            { label: '2408批次', value: 'c' },          // 窗口外的历史批次 → 不能有
+            { label: '26年8月独立批次(作废)', value: 'd' }, // 作废 → 不能有
+            { label: '技术支持类-2026年批次', value: 'e' }, // 解析不出年月 → 不能有
+            { label: '2706批次', value: 'f' },
+          ];
+          await window.SubscriptionBatchTimes.load();
+          await window.SubscriptionBatchTimes.open();
+          const rows = [...document.querySelectorAll('#batchTimeList tr')]
+            .map((tr) => (tr.children[0] ? tr.children[0].textContent.trim() : ''));
+          return rows;
         });
-        process.stdout.write(`  批次默认口径: ${btDefaults.rows} 行，2608批次 → ${btDefaults.hit ? btDefaults.hit.defs.join(' / ') : '（没找到该行）'}\n`);
-        if (!btDefaults.hit || btDefaults.hit.defs[0].indexOf('2026-07-15') < 0
-            || btDefaults.hit.defs[1].indexOf('2026-08-15') < 0) {
-          process.stdout.write('    [FAIL] 2608批次默认口径应为 功测 2026-07-15 / 上线 2026-08-15\n');
-          anyFail = true;
-        }
-        if (btDefaults.missingHint) {
-          process.stdout.write(`    [FAIL] 有 ${btDefaults.missingHint} 行的日期格没有默认口径提示\n`);
+        process.stdout.write(`  批次行: ${btRows.join('、')}\n`);
+        const mustHave = ['2607批次', '2608批次', '26年8月独立', '2706批次'];
+        mustHave.forEach((b) => {
+          if (!btRows.includes(b)) {
+            process.stdout.write(`    [FAIL] 批次行缺少 ${b}（字典窗口过滤 / 排序有问题）\n`);
+            anyFail = true;
+          }
+        });
+        ['2408批次', '26年8月独立批次(作废)', '技术支持类-2026年批次'].forEach((b) => {
+          if (btRows.includes(b)) {
+            process.stdout.write(`    [FAIL] 批次行不该出现 ${b}（窗口外/作废/解析不出年月）\n`);
+            anyFail = true;
+          }
+        });
+
+        // 打开 2608批次 的两个日历，初始月份应分别是 2026年7月（功测）/ 2026年8月（上线）
+        const btMonth = await page.evaluate(() => {
+          const row = [...document.querySelectorAll('#batchTimeList tr')]
+            .find((r) => r.children[0].textContent.trim() === '2608批次');
+          if (!row) return { err: '没有 2608批次 行' };
+          const inputs = [...row.querySelectorAll('input.batch-time-date')];
+          const read = (el) => {
+            el.click();
+            const panel = document.querySelector('.dp-panel:not([hidden])');
+            const title = panel ? panel.querySelector('.dp-title') : null;
+            return title ? title.textContent.trim() : '（面板没开）';
+          };
+          return { test: read(inputs[0]), release: read(inputs[1]) };
+        });
+        process.stdout.write(`  2608批次日历初始月份: 功测=${btMonth.test} 上线=${btMonth.release}\n`);
+        if (btMonth.err || !/2026年\s*7月/.test(btMonth.test) || !/2026年\s*8月/.test(btMonth.release)) {
+          process.stdout.write('    [FAIL] 日历初始月份应为 功测 2026年7月 / 上线 2026年8月\n');
           anyFail = true;
         }
 
         // 保存过的批次不能被「随包发的空 config/batch-times.json」盖掉：
-        // 模拟「上次保存过（只落到了 localStorage），重开页面」——独立批次行与日期都必须还在。
+        // 模拟「上次保存过（只落到了 localStorage），重开页面」——行和日期都必须还在。
         const persistCheck = await page.evaluate(async () => {
           const KEY = 'itamp.batchTimes';
           const before = localStorage.getItem(KEY);
           localStorage.setItem(KEY, JSON.stringify({
-            '26年8月独立': { testDate: '2026-07-15', releaseDate: '2026-08-15' },
+            '我的自定义批次2026': { testDate: '2026-07-15', releaseDate: '2026-08-15' },
           }));
           try {
             await window.SubscriptionBatchTimes.load();
-            window.SubscriptionBatchTimes.open();
+            await window.SubscriptionBatchTimes.open();   // open 是异步的（要等字典），必须 await
             const tr = [...document.querySelectorAll('#batchTimeList tr')]
-              .find((r) => r.children[0].textContent.trim() === '26年8月独立');
+              .find((r) => r.children[0].textContent.trim() === '我的自定义批次2026');
             return {
               found: !!tr,
               vals: tr ? [...tr.querySelectorAll('input')].map((i) => i.value) : null,
@@ -303,7 +338,7 @@ const PAGES = [
         });
         process.stdout.write(`  保存过的批次重开还在: ${JSON.stringify(persistCheck)}\n`);
         if (!persistCheck.found || !persistCheck.vals || persistCheck.vals[0] !== '2026-07-15') {
-          process.stdout.write('    [FAIL] 保存过的批次/独立批次被空的 config/batch-times.json 盖掉了\n');
+          process.stdout.write('    [FAIL] 保存过的批次被空的 config/batch-times.json 盖掉了\n');
           anyFail = true;
         }
 

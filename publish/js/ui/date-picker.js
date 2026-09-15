@@ -14,6 +14,12 @@
   const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
   let pickerId = 0;
 
+  /** 当前面板开着的实例（各存自己的 closePanel）。
+      togglePanel 里的 stopPropagation 会挡住其它实例的 document click，所以从 A 点到 B 时
+      A 的面板不会自己收起 —— 会留下两个叠着的浮动面板（批次时间弹窗里连点两列实测）。
+      打开新的之前在这里统一把别的关掉。 */
+  const openPickers = new Set();
+
   function pad(value) {
     return value < 10 ? '0' + value : String(value);
   }
@@ -52,8 +58,15 @@
       && left.getDate() === right.getDate();
   }
 
-  function createDatePicker(inputEl) {
+  function createDatePicker(inputEl, opts) {
     if (!inputEl || inputEl.dataset.datePickerReady === 'true') return null;
+    const options = (opts && typeof opts === 'object') ? opts : {};
+    // 面板初次打开（还没选过值）时定位到的月份。批次时间弹窗按「批次月」传：
+    // 功测 = 批次月 −1、上线 = 批次月，用户不用在日历里来回翻年份。
+    // 不传维持原行为 = 今天；输入框已有值时仍以值为准（selectedDate 优先）。
+    const fallbackViewDate = (options.fallbackViewDate instanceof Date && !isNaN(options.fallbackViewDate.getTime()))
+      ? options.fallbackViewDate
+      : null;
 
     const originalParent = inputEl.parentNode;
     const originalNextSibling = inputEl.nextSibling;
@@ -62,7 +75,7 @@
     const pickerKey = 'date-picker-' + (++pickerId);
 
     let selectedDate = parseDate(inputEl.value);
-    let viewDate = new Date(selectedDate || now());
+    let viewDate = new Date(selectedDate || fallbackViewDate || now());
     let focusDate = new Date(viewDate);
     let panelView = 'days'; // days -> months -> years
     let isOpen = false;
@@ -427,6 +440,8 @@
 
     function openPanel() {
       if (disabled || isOpen) return;
+      openPickers.forEach((close) => close());   // 同页多个日期控件：同时只开一个
+      openPickers.add(closePanel);
       isOpen = true;
       panelView = 'days';
       focusDate = new Date(selectedDate || viewDate);
@@ -441,6 +456,7 @@
     function closePanel() {
       if (!isOpen) return;
       isOpen = false;
+      openPickers.delete(closePanel);
       updateOpenState();
       leaveFloat();
     }

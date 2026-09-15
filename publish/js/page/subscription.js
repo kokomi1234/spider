@@ -963,21 +963,6 @@
   // 批量修改批次时间
   // ═══════════════════════════════════════════════════
 
-  /**
-   * 当前查询结果里出现过的批次（去重，保持出现顺序）。
-   * 给「批量修改批次时间」弹窗当行用：独立批次（如「26年8月独立批次」）不在近 12 个月的
-   * 月度窗口里，但用户在结果里确实看得到，得能给它设时间。
-   */
-  function observedBatches() {
-    const seen = new Set();
-    const src = Array.isArray(state.allRows) ? state.allRows : (state.rows || []);
-    src.forEach((r) => {
-      const b = String((r && r.prodBatch) || '').trim();
-      if (b) seen.add(b);
-    });
-    return Array.from(seen);
-  }
-
   // 批次时间的读写 / 弹窗全部在 js/page/subscription-batch-times.js（见该文件头说明）。
   // 这里只留「把配置喂给优先级 + 重算重绘」，因为要碰本页的 state / decorateRow / render。
   function refreshPriority() {
@@ -988,11 +973,8 @@
   }
 
   if (window.SubscriptionBatchTimes) {
-    window.SubscriptionBatchTimes.init({
-      toast, setLoading, batchWindow, refreshPriority,
-      // 弹窗的行除了月度窗口，还要带上结果里出现的批次（独立批次不在窗口里）
-      observedBatches,
-    });
+    // 弹窗的行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立，见 subscription-batch-times.js）
+    window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
   }
 
   // 薄封装：bindEvents / boot 里的调用点保持不变

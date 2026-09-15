@@ -12,15 +12,21 @@
  * evaluate() 会返回 from:'config'）。
  * 没设过的行保持空白、不塞默认值 —— 否则一次保存会把整张表的默认值都写进配置。
  *
- * ── 行从哪来 ─────────────────────────────────────────
- *   1) 近 12 个月窗口的常规月度批次（deps.batchWindow）
- *   2) 当前查询结果里出现过的批次（deps.observedBatches）—— 独立批次（如「26年8月独立批次」）
- *      不在月度窗口里，但用户确实在结果里看得到，要能给它设时间
- *   3) 已经保存过的批次（放最后，保证历史配置不丢、还能继续改）
+ * ── 行从哪来（2026-09-15 二次调整）──────────────────────
+ *   1) 批次字典（conditions/subscribe 的 batchList，与页面「批次」下拉同源）里
+ *      能解析出年月、且落在近 12 个月窗口内的批次 —— 月度批次（2608批次）和
+ *      独立批次（26年8月独立）都在这里；带「作废」的不要。
+ *      ⚠️ 不再取「当前查询结果里出现过的批次」——那会把 2408批次 这种历史批次也带进弹窗。
+ *   2) 已经保存过的批次（放最后，保证历史配置不丢、还能继续改）。
+ *   字典拿不到时退回纯月度窗口（batchWindowLabels）。
+ *
+ * ── 打开日历的初始月份 ─────────────────────────────────
+ *   功测 = 批次月 −1、上线 = 批次月（2608批次 → 功测 2026年7月、上线 2026年8月），
+ *   通过 createDatePicker 的 fallbackViewDate 传入；已填值的仍以所填值为准。
  *
  * ── 依赖怎么来 ─────────────────────────────────────
  * 页面 own 的状态（state / decorateRow / render）不搬过来，改用注入：
- *   init({ toast, setLoading, batchWindow, observedBatches, refreshPriority })
+ *   init({ toast, setLoading, batchWindow, refreshPriority })
  *
  * ── 落盘路径（不走 ITAMP 后端）────────────────────────
  *   GET/POST local/batch-times（代理端点，写 config/batch-times.json）
@@ -118,23 +124,12 @@
   /**
    * 该批次的「默认」功测 / 上线时间（按批次月推算，只看规则不看已保存配置）。
    * 口径的唯一来源是 `priority.js` 的 defaultDeadlines()（功测 = 批次月 −1 的 15 日、
-   * 上线 = 批次月 15 日），弹窗只负责把它显示出来，不自己算 —— 避免两处规则各算一套。
+   * 上线 = 批次月 15 日），弹窗只负责用它定位日历的初始月份，不自己算。
    */
   function defaultDatesOf(batch) {
     const P = window.Priority;
     if (P && typeof P.defaultDeadlines === 'function') return P.defaultDeadlines(batch);
     return { testDate: '', releaseDate: '' };
-  }
-
-  /** 一个日期格：输入框 + 该批次的默认口径提示（没设过时给用户一个参照，不预填值） */
-  function dateCell(item, idx, field) {
-    const def = defaultDatesOf(item.batch)[field];
-    const tip = def
-      ? `默认 ${def}（按批次月推算：功能测试 = 批次月 −1 的 15 日，上线 = 批次月 15 日）`
-      : '该批次解析不出年月，默认时间无法推算';
-    return `<td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="${field}"
-                   value="${esc(item[field])}" placeholder="选择日期" readonly>
-        <span class="bt-default" title="${esc(tip)}">${def ? '默认 ' + esc(def) : '默认 —'}</span></td>`;
   }
 
   function renderList() {
@@ -144,18 +139,26 @@
 
     tbody.innerHTML = batchTimeData.map((item, idx) => `<tr>
         <td class="batch-label">${esc(item.batch)}</td>
-        ${dateCell(item, idx, 'testDate')}
-        ${dateCell(item, idx, 'releaseDate')}
+        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="testDate"
+                   value="${esc(item.testDate)}" placeholder="选择日期" readonly></td>
+        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="releaseDate"
+                   value="${esc(item.releaseDate)}" placeholder="选择日期" readonly></td>
       </tr>`).join('');
 
     const inputs = Array.from(tbody.querySelectorAll('input.batch-time-date'));
 
     // 日期统一走全站同款 createDatePicker（js/ui/date-picker.js + theme.css 的 .dp-* ）：
     // 精确到日，与筛选区、任务单页同一个控件。
-    // 组件缺失（脚本顺序错 / 静态裁剪）时降级为可直接输入的文本框，功能不丢。
+    // 打开日历时的初始月份按「批次月」定位（功测 = 批次月 −1、上线 = 批次月），
+    // 比如 2608批次：功测直接落在 2026年7月、上线直接落在 2026年8月，不用来回翻。
+    // 输入框已经有值的仍以值为准；批次解析不出年月（或组件缺失）则退回「今天」。
     if (typeof window.createDatePicker === 'function') {
       inputs.forEach((inputEl) => {
-        const dp = window.createDatePicker(inputEl);
+        const item = batchTimeData[Number(inputEl.dataset.idx)];
+        const field = inputEl.dataset.field;
+        const raw = (item && defaultDatesOf(item.batch)[field]) || '';
+        const fb = raw ? (window.Priority && window.Priority.parseYmd ? window.Priority.parseYmd(raw) : null) : null;
+        const dp = window.createDatePicker(inputEl, fb ? { fallbackViewDate: fb } : undefined);
         if (dp) datePickers.push(dp);
       });
     } else {
@@ -173,11 +176,60 @@
     });
   }
 
-  /** 打开弹窗：窗口批次 + 结果里出现的批次 + 已保存的批次，回填已保存的日期 */
-  function open() {
-    const batchWindow = (typeof deps.batchWindow === 'function' ? deps.batchWindow() : []) || [];
-    const observed = (typeof deps.observedBatches === 'function' ? deps.observedBatches() : []) || [];
-    const batches = Array.from(new Set([...batchWindow, ...observed, ...Object.keys(batchTimes)]));
+  /** 近 12 个月窗口的起止（月份索引）。直接用 batchWindowLabels 的首尾反推，
+      保证与「批次筛选 / 优先级窗口」用的是同一份窗口定义。 */
+  function windowBounds() {
+    const labels = (typeof deps.batchWindow === 'function' ? deps.batchWindow() : []) || [];
+    if (!labels.length) return null;
+    const P = window.Priority;
+    if (!P || typeof P.parseBatchYearMonth !== 'function') return null;
+    const first = P.parseBatchYearMonth(labels[0]);
+    const last = P.parseBatchYearMonth(labels[labels.length - 1]);
+    if (!first || !last) return null;
+    return { from: first.year * 12 + first.month - 1, to: last.year * 12 + last.month - 1 };
+  }
+
+  /**
+   * 弹窗的批次行从哪来（2026-09-15 二次调整，替换「当前查询结果里出现过的批次」）：
+   *   1) **批次字典**（conditions/subscribe 的 batchList，与页面「批次」下拉同源）里
+   *      「能解析出年月、且落在近 12 个月窗口内」的批次 —— 月度批次（2608批次）和
+   *      独立批次（26年8月独立）都在这里；带「作废」的不要。
+   *      ⚠️ 不再取「查询结果里出现过的批次」：那会把 2408批次 这种历史批次也带进弹窗。
+   *   2) 已保存过的批次（放最后，保证历史配置不丢 —— 独立批次设过一次就一直都在）。
+   * 字典拿不到时退回纯月度窗口（batchWindowLabels）。
+   * 排序：按批次年月升序（月度与独立批次交错），已保存但解析不出年月的排最后。
+   */
+  async function collectBatches() {
+    const savedKeys = Object.keys(batchTimes);
+
+    let dict = [];
+    try {
+      if (typeof window.loadBatchList === 'function') dict = (await window.loadBatchList()) || [];
+    } catch (_) { dict = []; }   // 字典失败不阻塞弹窗，退回纯窗口
+
+    const bounds = windowBounds();
+    const inWindow = [];
+    if (bounds) {
+      dict.forEach((it) => {
+        const label = String((it && it.label) ?? '').trim();
+        if (!label || label.includes('作废')) return;
+        const ym = window.Priority.parseBatchYearMonth(label);
+        if (!ym) return;   // 「技术支持类-2026年批次」这类只有年份的，推不出月份
+        const idx = ym.year * 12 + ym.month - 1;
+        if (idx >= bounds.from && idx <= bounds.to) inWindow.push({ label, year: ym.year, month: ym.month });
+      });
+      inWindow.sort((a, b) => (a.year * 12 + a.month) - (b.year * 12 + b.month));
+    }
+
+    const labels = inWindow.length
+      ? inWindow.map((x) => x.label)
+      : ((typeof deps.batchWindow === 'function' ? deps.batchWindow() : []) || []);
+    return Array.from(new Set([...labels, ...savedKeys]));
+  }
+
+  /** 打开弹窗：窗口内的字典批次（月度 + 独立）+ 已保存的批次，回填已保存的日期 */
+  async function open() {
+    const batches = await collectBatches();
 
     batchTimeData = batches.map((b) => {
       const saved = batchTimes[b] || {};
