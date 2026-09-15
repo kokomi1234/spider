@@ -455,34 +455,34 @@
           <thead>
             <tr>
               <th class="col-prio is-sorted" id="thPrio"
-                  title="默认按优先级排序：逾期 / 临期的在最上面。点击循环切换 宽松在前 → 恢复后端顺序 → 紧急在前（后端分页，仅排当前页）；规则见 js/ui/priority.js">
+                  title="默认按优先级排序：逾期 / 临期的排在最前。点击可在 宽松在前 → 后端原序 → 紧急在前 之间切换">
                 优先级<span class="sort-ind" id="prioSortInd">↑</span>
               </th>
-              <th class="col-st" title="status">订阅关系基线状态</th>
+              <th class="col-st">订阅关系基线状态</th>
               <!-- 以下三列与优先级 / 基线状态一起左固定（审核进度 + 业务标识 + 技术定位） -->
-              <th class="col-review" title="prodReviewStatus">订阅关系审核流程状态</th>
-              <th title="sysServeName">提供方应用系统服务中文名称</th>
-              <th title="serverCoding">接口编码</th>
+              <th class="col-review">订阅关系审核流程状态</th>
+              <th>提供方应用系统服务中文名称</th>
+              <th>接口编码</th>
               <!-- 可滚动区：提供方身份 -->
-              <th title="sysNo">提供方应用系统编号</th>
-              <th title="assemblyEnName">提供方应用系统英文简称</th>
-              <th title="sysServeNo">提供方应用系统服务编号</th>
-              <th title="sysServeEnName">提供方应用系统服务英文名称</th>
-              <th title="prodBatchList">提供方最新变更批次</th>
-              <th title="deptName">提供方部门名称</th>
+              <th>提供方应用系统编号</th>
+              <th>提供方应用系统英文简称</th>
+              <th>提供方应用系统服务编号</th>
+              <th>提供方应用系统服务英文名称</th>
+              <th>提供方最新变更批次</th>
+              <th>提供方部门名称</th>
               <!-- 可滚动区：调用方身份 -->
-              <th title="callerComponent">调用方系统/分行编号</th>
-              <th title="callerComponentEnName">调用方系统英文简称/分行名称</th>
-              <th title="prodSysServeNo">调用方应用系统服务编号</th>
-              <th title="prodBatch">调用方投产/变更批次</th>
-              <th title="prodTaskNo">调用方任务编号</th>
+              <th>调用方系统/分行编号</th>
+              <th>调用方系统英文简称/分行名称</th>
+              <th>调用方应用系统服务编号</th>
+              <th>调用方投产/变更批次</th>
+              <th>调用方任务编号</th>
               <!-- 可滚动区：实施 / 人员 / 附加 -->
-              <th title="prodImplementationUnit">订阅方产品实施单元</th>
-              <th title="subscriberUserName">订阅人</th>
-              <th title="prodDeptName">调用方部门名称</th>
-              <th title="isBackup">是否做副本</th>
-              <th title="backupInfo">副本使用场景说明</th>
-              <th title="implementationUnit">产品实施单元</th>
+              <th>订阅方产品实施单元</th>
+              <th>订阅人</th>
+              <th>调用方部门名称</th>
+              <th>是否做副本</th>
+              <th>副本使用场景说明</th>
+              <th>产品实施单元</th>
               <th class="col-op">操作</th>
             </tr>
           </thead>
@@ -571,6 +571,7 @@
   <script src="js/data/batch-data.js"></script>
   <script src="js/data/provider-data.js"></script>
   <script src="js/data/department-data.js"></script>
+  <script src="js/ui/popup-position.js"></script>
   <script src="js/ui/searchable-select.js"></script>
   <script src="js/ui/multi-select.js"></script>
   <script src="js/ui/table-resize.js"></script>

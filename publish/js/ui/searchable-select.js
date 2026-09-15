@@ -323,6 +323,11 @@
       updateClearBtnVisibility();
       paintOpen();
       renderDropdown();
+      // 弹窗滚动容器 / 贴近视口底部时，把面板升到 body + fixed 避免被裁（见 js/ui/popup-position.js）。
+      // 必须在面板 display:block 之后调用，offsetHeight 才量得到真实高度。
+      if (window.PopupPosition && window.PopupPosition.place) {
+        window.PopupPosition.place(input, dropdown, { wrapper: container, gap: 4, fallbackHeight: 288 });
+      }
       // 每次打开都从列表最顶端开始；即使上次滚到了底部，也不保留旧滚动位置。
       dropdown.scrollTop = 0;
       activeIdx = -1;
@@ -339,6 +344,10 @@
       input.setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
       paintClosed();
+      // 关闭时把可能升到 body 的面板还回 wrapper，清掉浮动定位残留
+      if (window.PopupPosition && window.PopupPosition.reset) {
+        window.PopupPosition.reset(dropdown, container);
+      }
     }
 
     function toggleDropdown() {
@@ -516,11 +525,30 @@
       closeDropdown();
     });
 
-    // 点击组件外部收起：捕获阶段执行，先于其它元素的 mousedown 逻辑
+    // 点击组件外部收起：捕获阶段执行，先于其它元素的 mousedown 逻辑。
+    // 面板可能被升到 body（浮动模式），已不在 container 内，所以 container 和 dropdown
+    // 都不包含目标时才关，否则点面板内部会被误判为「点外面」而收起。
     function onDocMouseDown(e) {
-      if (!container.contains(e.target)) closeDropdown();
+      if (!container.contains(e.target) && !dropdown.contains(e.target)) closeDropdown();
     }
     document.addEventListener('mousedown', onDocMouseDown, true);
+
+    // 视口尺寸变化 / 容器或页面滚动时，锚点相对视口的位置变了，面板要跟着重定位。
+    // scroll 用捕获阶段才能收到容器内部（overflow:auto）的滚动；列表自身滚动（加载更多）
+    // 要忽略，否则会反复重定位、把用户滚到的位置冲掉。
+    function onWindowResize() {
+      if (isOpen) {
+        window.PopupPosition.place(input, dropdown, { wrapper: container, gap: 4, fallbackHeight: 288 });
+      }
+    }
+    function onDocScroll(e) {
+      if (e && e.target === dropdown) return;
+      if (isOpen) {
+        window.PopupPosition.place(input, dropdown, { wrapper: container, gap: 4, fallbackHeight: 288 });
+      }
+    }
+    window.addEventListener('resize', onWindowResize);
+    document.addEventListener('scroll', onDocScroll, true);
 
     paintClosed();
 
@@ -593,6 +621,15 @@
 
       destroy() {
         document.removeEventListener('mousedown', onDocMouseDown, true);
+        window.removeEventListener('resize', onWindowResize);
+        document.removeEventListener('scroll', onDocScroll, true);
+        // 浮动模式下面板已被 PopupPosition 挂到 document.body，container.remove() 带不走它，
+        // 会留下孤立面板。先把面板收回 container，再整体删除。
+        // 这条路径是生产可达的：订阅弹窗的评委行反复重建时会对每个实例 destroy()
+        // （subscribe-dialog.js 的 resetJudges()/重建行），而它们位于 .sub-body（overflow:auto）内 → 必走浮动分支。
+        if (window.PopupPosition && window.PopupPosition.reset) {
+          window.PopupPosition.reset(dropdown, container);
+        }
         targetEl.style.display = '';
         container.remove();
       },

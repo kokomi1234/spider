@@ -397,6 +397,22 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
 }
 .searchable-select.is-open .searchable-select-dropdown { display: block; }
 
+/* 下方放不下时（弹窗主体这类滚动容器会把面板裁掉）翻到输入框上方。
+   方向由 js/ui/popup-position.js 的 place() 按可用空间判定，只作用于 wrapper。 */
+.searchable-select.is-dropup .searchable-select-dropdown {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* 输入框处在滚动容器里时（弹窗主体），面板被 js/ui/popup-position.js 升到 body 并改成 fixed，
+   彻底避开容器的 overflow 裁剪；坐标按视口算，left/width/top/bottom 由行内样式给。
+   right:auto 必须：面板上原本是 left:0;right:0 撑满宽度，浮动时改走内联 left/width。 */
+.searchable-select-dropdown.is-floating {
+  position: fixed;
+  right: auto;
+  z-index: 1600;
+}
+
 .searchable-select-option {
   display: flex;
   align-items: flex-start;
@@ -802,9 +818,6 @@ table {
 }
 
 thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   background: var(--surface-1);
   color: var(--muted);
   font-size: var(--fs-nano);
@@ -813,6 +826,18 @@ thead th {
   text-align: left;
   padding: 10px 14px;
   border-bottom: 1px solid var(--outline);
+}
+
+/* 表头吸顶只在「自己的表格视口」内生效：全局 thead th 不再吸顶，避免「表格与其它内容共用一个
+   滚动容器」时表头脱离表格本体、浮在同容器其它内容之上（曾让 index.html 的 .sub-body 内 .sub-tbl
+   吸在容器顶、配合 z-index:1 + 不透明底遮挡表单内容）。
+   ⚠️ 批次时间表（.batch-time-table）的吸顶**故意不写在这里**：它由 subscription.html 内的
+   `.batch-time-table thead th` 单独负责（那条还要处理 border-collapse:separate 的边框、并需要
+   z-index:2 盖住滚上来的数据行）。若在此再声明一次，本规则特指度更高会把它的 z-index 压成 1。 */
+.tbl-scroll > table > thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 tbody td {
@@ -1592,6 +1617,20 @@ label.req::after {
   display: none;
 }
 .msel-panel.show { display: block; }
+
+/* 下方放不下时翻到上方（只作用于 wrapper）。方向由 js/ui/popup-position.js 的 place() 判定。 */
+.msel.is-dropup .msel-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* 面板被 js/ui/popup-position.js 升到 body + fixed 逃离容器 overflow 裁剪；
+   right:auto 必须：面板原本 left:0;right:0 撑满宽度，浮动时改走内联 left/width。 */
+.msel-panel.is-floating {
+  position: fixed;
+  right: auto;
+  z-index: 1600;
+}
 .msel-panel .msel-search {
   width: 100%;
   height: 34px;

@@ -79,12 +79,52 @@
       search.value = '';
       renderList();
       search.focus();
+      // 弹窗滚动容器 / 贴近视口底部时，把面板升到 body + fixed 避免被裁（见 js/ui/popup-position.js）
+      if (window.PopupPosition && window.PopupPosition.place) {
+        window.PopupPosition.place(display, panel, { wrapper: host, gap: 4, fallbackHeight: 320 });
+      }
+      // 监听器随开合注册 / 移除，避免多次打开叠加重复绑定
+      if (!listenersBound) {
+        document.addEventListener('mousedown', onDocMouseDown);
+        window.addEventListener('resize', onWindowResize);
+        document.addEventListener('scroll', onDocScroll, true);
+        listenersBound = true;
+      }
     }
     function close() {
       panel.classList.remove('show');
       host.classList.remove('is-open');
+      if (listenersBound) {
+        document.removeEventListener('mousedown', onDocMouseDown);
+        window.removeEventListener('resize', onWindowResize);
+        document.removeEventListener('scroll', onDocScroll, true);
+        listenersBound = false;
+      }
+      // 关闭时把可能升到 body 的面板还回 wrapper，清掉浮动定位残留
+      if (window.PopupPosition && window.PopupPosition.reset) {
+        window.PopupPosition.reset(panel, host);
+      }
     }
     function isOpen() { return panel.classList.contains('show'); }
+
+    // 点击面板外关闭：面板可能被升到 body（浮动模式），已不在 host 内，
+    // 所以 host 和 panel 都不包含目标时才关，否则点面板内部会被误判为「点外面」而收起。
+    function onDocMouseDown(e) {
+      if (!host.contains(e.target) && !panel.contains(e.target)) close();
+    }
+    // 视口变化 / 容器或页面滚动时重定位；面板自身滚动要忽略（e.target === panel）。
+    function onWindowResize() {
+      if (isOpen()) {
+        window.PopupPosition.place(display, panel, { wrapper: host, gap: 4, fallbackHeight: 320 });
+      }
+    }
+    function onDocScroll(e) {
+      if (e && e.target === panel) return;
+      if (isOpen()) {
+        window.PopupPosition.place(display, panel, { wrapper: host, gap: 4, fallbackHeight: 320 });
+      }
+    }
+    let listenersBound = false;
 
     display.addEventListener('click', () => (isOpen() ? close() : open()));
     search.addEventListener('input', renderList);
@@ -119,9 +159,6 @@
       paintLabel();
     });
 
-    // 点击面板外关闭（不改变已选）
-    document.addEventListener('mousedown', (e) => { if (!host.contains(e.target)) close(); });
-
     renderList();
     paintLabel();
 
@@ -133,6 +170,16 @@
       },
       getValues() { return Array.from(selected); },
       clear() { selected.clear(); renderList(); paintLabel(); },
+      /**
+       * 销毁：解绑监听、把可能已浮动到 body 的面板收回 host、再移除自身。
+       * 与 createSearchableSelect.destroy() 对齐 —— 两个组件都要有回收口，
+       * 否则在面板打开时移除 host，面板会孤零零留在 body 里。
+       * 注意：close() 内部负责解绑与 reset，复用它避免两处逻辑不一致。
+       */
+      destroy() {
+        close();
+        host.remove();
+      },
     };
   }
 

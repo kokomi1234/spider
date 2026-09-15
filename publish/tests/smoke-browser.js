@@ -57,10 +57,10 @@ function startServer() {
 }
 
 const PAGES = [
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
-  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker'] },
+  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition'] },
 ];
 
 (async () => {
@@ -184,9 +184,319 @@ const PAGES = [
         }
       }
 
+      if (pg.file === 'index.html') {
+        // 下拉面板定位回归（searchable-select / multi-select 共用 js/ui/popup-position.js）：
+        //   (a) 贴近视口底部 → 面板必须完整落在视口内（翻上，不被裁）；
+        //   (b) 弹窗滚动容器内（.sub-body overflow:auto）→ 面板升到 body + fixed，不被容器裁掉；
+        //   (c) 点面板内部不误关（onDocMouseDown 修复：浮动后面板在 body，container 已不含它）。
+        const popupCheck = await page.evaluate(() => {
+          const out = {};
+          const opts = Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i }));
+
+          // 造一个「贴近视口底部、可滚动」的固定容器，触发浮动 + 翻上
+          function makeBox() {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:20px;bottom:10px;width:220px;height:140px;'
+              + 'overflow:auto;background:#fff;border:1px solid #ccc;z-index:9999';
+            const inner = document.createElement('div');
+            inner.style.cssText = 'height:600px;padding:4px';
+            box.appendChild(inner);
+            document.body.appendChild(box);
+            return { box, inner };
+          }
+
+          // ── (a)+(c) searchable-select ──
+          try {
+            const { box, inner } = makeBox();
+            const sel = document.createElement('select');
+            inner.appendChild(sel);
+            const inst = window.createSearchableSelect(sel, opts);
+            const container = sel.nextElementSibling;     // .searchable-select
+            inst.open();
+            const panel = Array.prototype.slice.call(document.querySelectorAll('.searchable-select-dropdown'))
+              .find((p) => p.classList.contains('is-floating') || getComputedStyle(p).display !== 'none');
+            const pr = panel.getBoundingClientRect();
+            out.searchable = {
+              floating: panel.classList.contains('is-floating'),
+              inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+              hasOption: !!panel.querySelector('.searchable-select-option'),
+              top: Math.round(pr.top), bottom: Math.round(pr.bottom),
+            };
+            // (c) 浮动模式下面板在 body，点面板内部选项不应误关
+            const opt = panel.querySelector('.searchable-select-option');
+            if (opt) opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            out.searchable.stillOpen = container.classList.contains('is-open');
+            inst.destroy();
+            box.remove();
+          } catch (e) { out.searchable = { err: String(e && e.message || e) }; }
+
+          // ── (a)+(c) multi-select（仅当本页加载了 multi-select.js；index 页不引入，改在 task.html 验证）──
+          if (typeof window.createMultiSelect === 'function') {
+            try {
+              const { box, inner } = makeBox();
+              const host = document.createElement('div');
+              host.className = 'msel';
+              inner.appendChild(host);
+              window.createMultiSelect(host, opts, '全部');
+              // createMultiSelect 没暴露 open()，用真实交互（点 display）触发，确保 place() 跑起来
+              host.querySelector('.msel-display').click();
+              const panelM = Array.prototype.slice.call(document.querySelectorAll('.msel-panel'))
+                .find((p) => p.classList.contains('is-floating') || getComputedStyle(p).display !== 'none');
+              const prM = panelM.getBoundingClientRect();
+              out.multi = {
+                floating: panelM.classList.contains('is-floating'),
+                inViewport: prM.top >= 0 && prM.bottom <= window.innerHeight,
+                hasOption: !!panelM.querySelector('.msel-item'),
+                top: Math.round(prM.top), bottom: Math.round(prM.bottom),
+              };
+              const optM = panelM.querySelector('.msel-item');
+              if (optM) optM.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              out.multi.stillOpen = host.classList.contains('is-open');
+              host.remove();
+              box.remove();
+            } catch (e) { out.multi = { err: String(e && e.message || e) }; }
+          } else {
+            out.multi = { skipped: '本页未加载 multi-select.js，改在 task.html 验证' };
+          }
+
+          // ── (b) 弹窗滚动容器内（.sub-body overflow:auto）──
+          try {
+            const overlay = document.getElementById('subscribeOverlay');
+            overlay.classList.add('show');
+            const dialog = overlay.querySelector('.sub-dialog');
+            const beforeMax = dialog.style.maxHeight;
+            dialog.style.maxHeight = (window.innerHeight - 24) + 'px';   // 让 .sub-body 底部贴近视口底部
+            const subBody = overlay.querySelector('.sub-body');
+            const selB = document.createElement('select');
+            subBody.appendChild(selB);                 // 放到内容末尾，才能滚到容器可视区底部
+            const instB = window.createSearchableSelect(selB, opts);
+            const ctl = selB.nextElementSibling;
+            subBody.scrollTop = subBody.scrollHeight;    // 滚到底 → 控件贴近容器可视区底部
+            const sbRect = subBody.getBoundingClientRect();
+            const cRect = ctl.getBoundingClientRect();
+            instB.open();
+            const panelB = Array.prototype.slice.call(document.querySelectorAll('.searchable-select-dropdown'))
+              .find((p) => p.classList.contains('is-floating') || getComputedStyle(p).display !== 'none');
+            const prB = panelB.getBoundingClientRect();
+            const bodyRect = subBody.getBoundingClientRect();
+            const vh = window.innerHeight;
+            const visTop = Math.max(0, prB.top);
+            const visBottom = Math.min(vh, prB.bottom);
+            const ratio = prB.height > 0 ? (visBottom - visTop) / prB.height : 0;
+            out.subBody = {
+              floating: panelB.classList.contains('is-floating'),
+              inBody: panelB.parentElement === document.body,
+              panelBottom: Math.round(prB.bottom),
+              bodyBottom: Math.round(bodyRect.bottom),
+              ratio: Math.round(ratio * 100) / 100,
+              // 浮动面板已脱离容器，不会被 .sub-body 的 overflow 裁掉；这里核对「面板底不超出视口」
+              notClipped: prB.bottom <= vh + 1,
+              ctrlTop: Math.round(cRect.top), ctrlBottom: Math.round(cRect.bottom),
+            };
+            instB.destroy();
+            selB.remove();
+            dialog.style.maxHeight = beforeMax;
+            overlay.classList.remove('show');
+          } catch (e) { out.subBody = { err: String(e && e.message || e) }; }
+
+          return out;
+        });
+        process.stdout.write(`  下拉定位: ${JSON.stringify(popupCheck)}\n`);
+        const fails = [];
+        const s = popupCheck.searchable || {};
+        const m = popupCheck.multi || {};
+        const b = popupCheck.subBody || {};
+        if (s.err || !s.floating || !s.inViewport || !s.hasOption) {
+          fails.push('searchable 面板未浮动/未完整可见/无选项：' + JSON.stringify(s));
+        }
+        if (s.stillOpen !== true) fails.push('searchable 点面板内部被误关：' + JSON.stringify(s));
+        if (m && !m.skipped) {
+          if (m.err || !m.floating || !m.inViewport || !m.hasOption) {
+            fails.push('multi 面板未浮动/未完整可见/无选项：' + JSON.stringify(m));
+          }
+          if (m.stillOpen !== true) fails.push('multi 点面板内部被误关：' + JSON.stringify(m));
+        }
+        if (b.err || !b.floating || b.inBody !== true || b.ratio < 0.9 || !b.notClipped) {
+          fails.push('弹窗容器内下拉被裁/未浮动/可见比例不足：' + JSON.stringify(b));
+        }
+        fails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
+        if (fails.length) anyFail = true;
+
+        // ── 非浮动分支回归（无滚动祖先 → 留在 wrapper、翻上 is-dropup）──
+        // 造一个固定、贴近视口底部、且没有可滚动祖先（无 overflow、无超高内部）的容器，
+        // 面板必须留在 wrapper 内（floating=false）、且翻上（is-dropup）后完整落在视口里 ——
+        // 这正是修复前「只剩 2% 可见」的那个场景，冒烟只验浮动分支会漏掉它。
+        const nfCheck = await page.evaluate(() => {
+          const out = {};
+          const opts = Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i }));
+          function makeBoxNF() {
+            // 注意：没有 overflow、没有超高内部 → scrollParentOf 命中不了 → 非浮动
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:40px;bottom:10px;width:260px;'
+              + 'background:#fff;border:1px solid #ccc;z-index:9999';
+            document.body.appendChild(box);
+            return box;
+          }
+          function ratioOf(pr) {
+            const vh = window.innerHeight;
+            const visTop = Math.max(0, pr.top);
+            const visBottom = Math.min(vh, pr.bottom);
+            return pr.height > 0 ? (visBottom - visTop) / pr.height : 0;
+          }
+          // searchable-select
+          try {
+            const box = makeBoxNF();
+            const sel = document.createElement('select');
+            box.appendChild(sel);
+            const inst = window.createSearchableSelect(sel, opts);
+            const container = sel.nextElementSibling;     // .searchable-select
+            inst.open();
+            const panel = box.querySelector('.searchable-select-dropdown');
+            const pr = panel.getBoundingClientRect();
+            out.searchable = {
+              floating: panel.classList.contains('is-floating'),
+              inBody: panel.parentElement === document.body,
+              wrapperDropup: container.classList.contains('is-dropup'),
+              inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+              ratio: Math.round(ratioOf(pr) * 100) / 100,
+              hasOption: !!panel.querySelector('.searchable-select-option'),
+              top: Math.round(pr.top), bottom: Math.round(pr.bottom),
+            };
+            inst.destroy();
+            box.remove();
+          } catch (e) { out.searchable = { err: String(e && e.message || e) }; }
+          // multi-select（index 页未加载 multi-select.js → skipped）
+          if (typeof window.createMultiSelect === 'function') {
+            try {
+              const box = makeBoxNF();
+              const host = document.createElement('div');
+              host.className = 'msel';
+              box.appendChild(host);
+              window.createMultiSelect(host, opts, '全部');
+              host.querySelector('.msel-display').click();
+              const panelM = host.querySelector('.msel-panel');
+              const prM = panelM.getBoundingClientRect();
+              out.multi = {
+                floating: panelM.classList.contains('is-floating'),
+                inBody: panelM.parentElement === document.body,
+                wrapperDropup: host.classList.contains('is-dropup'),
+                inViewport: prM.top >= 0 && prM.bottom <= window.innerHeight,
+                ratio: Math.round(ratioOf(prM) * 100) / 100,
+                hasOption: !!panelM.querySelector('.msel-item'),
+                top: Math.round(prM.top), bottom: Math.round(prM.bottom),
+              };
+              host.remove();
+              box.remove();
+            } catch (e) { out.multi = { err: String(e && e.message || e) }; }
+          } else {
+            out.multi = { skipped: '本页未加载 multi-select.js，改在 task.html / subscription.html 验证' };
+          }
+          return out;
+        });
+        process.stdout.write(`  下拉定位(非浮动): ${JSON.stringify(nfCheck)}\n`);
+        {
+          const nFails = [];
+          const ns = nfCheck.searchable || {};
+          const nm = nfCheck.multi || {};
+          if (ns.err || ns.floating !== false || ns.inBody !== false || !ns.wrapperDropup
+            || !ns.inViewport || ns.ratio < 0.9 || !ns.hasOption) {
+            nFails.push('非浮动 searchable 未翻上/出视口/可见比例不足：' + JSON.stringify(ns));
+          }
+          if (nm && !nm.skipped) {
+            if (nm.err || nm.floating !== false || nm.inBody !== false || !nm.wrapperDropup
+              || !nm.inViewport || nm.ratio < 0.9 || !nm.hasOption) {
+              nFails.push('非浮动 multi 未翻上/出视口/可见比例不足：' + JSON.stringify(nm));
+            }
+          }
+          nFails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
+          if (nFails.length) anyFail = true;
+        }
+      }
+
       if (pg.file === 'subscription.html') {
         const clickErr = [];
         page.on('pageerror', (e) => clickErr.push(e.message));
+
+        // ── 非浮动分支回归（无滚动祖先 → 留在 wrapper、翻上 is-dropup）──
+        // subscription.html 同样加载了 searchable-select 与 multi-select，两种都验非浮动翻上。
+        const subNfCheck = await page.evaluate(() => {
+          const out = {};
+          const opts = Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i }));
+          function makeBoxNF() {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:40px;bottom:10px;width:260px;'
+              + 'background:#fff;border:1px solid #ccc;z-index:9999';   // 无 overflow、无超高内部 → 非浮动
+            document.body.appendChild(box);
+            return box;
+          }
+          function ratioOf(pr) {
+            const vh = window.innerHeight;
+            const visTop = Math.max(0, pr.top);
+            const visBottom = Math.min(vh, pr.bottom);
+            return pr.height > 0 ? (visBottom - visTop) / pr.height : 0;
+          }
+          // searchable-select
+          try {
+            const box = makeBoxNF();
+            const sel = document.createElement('select');
+            box.appendChild(sel);
+            const inst = window.createSearchableSelect(sel, opts);
+            const container = sel.nextElementSibling;
+            inst.open();
+            const panel = box.querySelector('.searchable-select-dropdown');
+            const pr = panel.getBoundingClientRect();
+            out.searchable = {
+              floating: panel.classList.contains('is-floating'),
+              inBody: panel.parentElement === document.body,
+              wrapperDropup: container.classList.contains('is-dropup'),
+              inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+              ratio: Math.round(ratioOf(pr) * 100) / 100,
+              hasOption: !!panel.querySelector('.searchable-select-option'),
+              top: Math.round(pr.top), bottom: Math.round(pr.bottom),
+            };
+            inst.destroy();
+            box.remove();
+          } catch (e) { out.searchable = { err: String(e && e.message || e) }; }
+          // multi-select
+          try {
+            const box = makeBoxNF();
+            const host = document.createElement('div');
+            host.className = 'msel';
+            box.appendChild(host);
+            window.createMultiSelect(host, opts, '全部');
+            host.querySelector('.msel-display').click();
+            const panelM = host.querySelector('.msel-panel');
+            const prM = panelM.getBoundingClientRect();
+            out.multi = {
+              floating: panelM.classList.contains('is-floating'),
+              inBody: panelM.parentElement === document.body,
+              wrapperDropup: host.classList.contains('is-dropup'),
+              inViewport: prM.top >= 0 && prM.bottom <= window.innerHeight,
+              ratio: Math.round(ratioOf(prM) * 100) / 100,
+              hasOption: !!panelM.querySelector('.msel-item'),
+              top: Math.round(prM.top), bottom: Math.round(prM.bottom),
+            };
+            host.remove();
+            box.remove();
+          } catch (e) { out.multi = { err: String(e && e.message || e) }; }
+          return out;
+        });
+        process.stdout.write(`  下拉定位(subscription-非浮动): ${JSON.stringify(subNfCheck)}\n`);
+        {
+          const nFails = [];
+          const ns = subNfCheck.searchable || {};
+          const nm = subNfCheck.multi || {};
+          if (ns.err || ns.floating !== false || ns.inBody !== false || !ns.wrapperDropup
+            || !ns.inViewport || ns.ratio < 0.9 || !ns.hasOption) {
+            nFails.push('非浮动 searchable 未翻上/出视口/可见比例不足：' + JSON.stringify(ns));
+          }
+          if (nm.err || nm.floating !== false || nm.inBody !== false || !nm.wrapperDropup
+            || !nm.inViewport || nm.ratio < 0.9 || !nm.hasOption) {
+            nFails.push('非浮动 multi 未翻上/出视口/可见比例不足：' + JSON.stringify(nm));
+          }
+          nFails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
+          if (nFails.length) anyFail = true;
+        }
 
         // 表格结构：colgroup 的 <col> 与 thead 的 <th> 个数必须一致，
         // 否则 js/ui/table-resize.js 会直接 return null（列宽拖拽静默失效）。
@@ -385,6 +695,10 @@ const PAGES = [
             out.scrollable = wrap.scrollHeight > wrap.clientHeight;
             out.scrolled = wrap.scrollTop > 0;
             out.thPosition = getComputedStyle(th).position;
+            // 批次表的吸顶由 subscription.html 内的 .batch-time-table thead th 负责（z-index:2 盖住数据行）。
+            // theme.css 的表头规则只能命中 .tbl-scroll，若误把 .batch-time-table-wrap 也写进去，
+            // 特指度更高会把这里压成 1 —— 这条断言就是拦这个回退的。
+            out.thZIndex = getComputedStyle(th).zIndex;
             out.bodyOverflowY = getComputedStyle(body).overflowY;
             out.thOffset = Math.round(thRect.top - wrapRect.top);   // 吸在表格区顶部 ≈ 1px（外框边框）
             out.thBelowHead = thRect.top >= headRect.bottom - 1;    // 没有被顶到弹窗顶部
@@ -449,6 +763,7 @@ const PAGES = [
           const fails = [];
           if (!btScroll.scrollable || !btScroll.scrolled) fails.push('表格区没有形成真实滚动');
           if (btScroll.thPosition !== 'sticky') fails.push('表头不是 sticky');
+          if (btScroll.thZIndex !== '2') fails.push(`批次表表头 z-index 应为 2（盖住滚上来的数据行），实际 ${btScroll.thZIndex}`);
           if (btScroll.bodyOverflowY !== 'hidden') fails.push('弹窗主体仍在滚（应只有表格区一条滚动条）');
           if (Math.abs(btScroll.thOffset) > 2) fails.push(`表头没吸在表格区顶部（偏移 ${btScroll.thOffset}px）`);
           if (!btScroll.thBelowHead) fails.push('表头被顶到了弹窗顶部');
@@ -498,12 +813,282 @@ const PAGES = [
         }
       }
 
+      if (pg.file === 'task.html') {
+        // 下拉面板定位回归（task.html 同时加载了 searchable-select 与 multi-select）：
+        //   (a) 贴近视口底部 → 面板必须完整落在视口内（翻上，不被裁）；
+        //   (c) 点面板内部不误关（浮动后面板在 body，container 已不含它）。
+        const taskPopup = await page.evaluate(() => {
+          const out = {};
+          const opts = Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i }));
+          function makeBox() {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:20px;bottom:10px;width:220px;height:140px;'
+              + 'overflow:auto;background:#fff;border:1px solid #ccc;z-index:9999';
+            const inner = document.createElement('div');
+            inner.style.cssText = 'height:600px;padding:4px';
+            box.appendChild(inner);
+            document.body.appendChild(box);
+            return { box, inner };
+          }
+          // searchable-select
+          try {
+            const { box, inner } = makeBox();
+            const sel = document.createElement('select');
+            inner.appendChild(sel);
+            const inst = window.createSearchableSelect(sel, opts);
+            const container = sel.nextElementSibling;
+            inst.open();
+            const panel = Array.prototype.slice.call(document.querySelectorAll('.searchable-select-dropdown'))
+              .find((p) => p.classList.contains('is-floating') || getComputedStyle(p).display !== 'none');
+            const pr = panel.getBoundingClientRect();
+            out.searchable = {
+              floating: panel.classList.contains('is-floating'),
+              inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+              hasOption: !!panel.querySelector('.searchable-select-option'),
+            };
+            const opt = panel.querySelector('.searchable-select-option');
+            if (opt) opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            out.searchable.stillOpen = container.classList.contains('is-open');
+            inst.destroy();
+            box.remove();
+          } catch (e) { out.searchable = { err: String(e && e.message || e) }; }
+          // multi-select
+          try {
+            const { box, inner } = makeBox();
+            const host = document.createElement('div');
+            host.className = 'msel';
+            inner.appendChild(host);
+            window.createMultiSelect(host, opts, '全部');
+            host.querySelector('.msel-display').click();
+            const panelM = Array.prototype.slice.call(document.querySelectorAll('.msel-panel'))
+              .find((p) => p.classList.contains('is-floating') || getComputedStyle(p).display !== 'none');
+            const prM = panelM.getBoundingClientRect();
+            out.multi = {
+              floating: panelM.classList.contains('is-floating'),
+              inViewport: prM.top >= 0 && prM.bottom <= window.innerHeight,
+              hasOption: !!panelM.querySelector('.msel-item'),
+            };
+            const optM = panelM.querySelector('.msel-item');
+            if (optM) optM.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            out.multi.stillOpen = host.classList.contains('is-open');
+            host.remove();
+            box.remove();
+          } catch (e) { out.multi = { err: String(e && e.message || e) }; }
+          return out;
+        });
+        process.stdout.write(`  下拉定位(task): ${JSON.stringify(taskPopup)}\n`);
+        const fails = [];
+        const s2 = taskPopup.searchable || {};
+        const m2 = taskPopup.multi || {};
+        if (s2.err || !s2.floating || !s2.inViewport || !s2.hasOption) fails.push('searchable 面板未浮动/未完整可见/无选项：' + JSON.stringify(s2));
+        if (s2.stillOpen !== true) fails.push('searchable 点面板内部被误关：' + JSON.stringify(s2));
+        if (m2.err || !m2.floating || !m2.inViewport || !m2.hasOption) fails.push('multi 面板未浮动/未完整可见/无选项：' + JSON.stringify(m2));
+        if (m2.stillOpen !== true) fails.push('multi 点面板内部被误关：' + JSON.stringify(m2));
+        fails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
+        if (fails.length) anyFail = true;
+
+        // ── 非浮动分支回归（无滚动祖先 → 留在 wrapper、翻上 is-dropup）──
+        // task.html 同时加载了 searchable-select 与 multi-select，两种都验非浮动翻上。
+        const taskNfCheck = await page.evaluate(() => {
+          const out = {};
+          const opts = Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i }));
+          function makeBoxNF() {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:40px;bottom:10px;width:260px;'
+              + 'background:#fff;border:1px solid #ccc;z-index:9999';   // 无 overflow、无超高内部 → 非浮动
+            document.body.appendChild(box);
+            return box;
+          }
+          function ratioOf(pr) {
+            const vh = window.innerHeight;
+            const visTop = Math.max(0, pr.top);
+            const visBottom = Math.min(vh, pr.bottom);
+            return pr.height > 0 ? (visBottom - visTop) / pr.height : 0;
+          }
+          // searchable-select
+          try {
+            const box = makeBoxNF();
+            const sel = document.createElement('select');
+            box.appendChild(sel);
+            const inst = window.createSearchableSelect(sel, opts);
+            const container = sel.nextElementSibling;
+            inst.open();
+            const panel = box.querySelector('.searchable-select-dropdown');
+            const pr = panel.getBoundingClientRect();
+            out.searchable = {
+              floating: panel.classList.contains('is-floating'),
+              inBody: panel.parentElement === document.body,
+              wrapperDropup: container.classList.contains('is-dropup'),
+              inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+              ratio: Math.round(ratioOf(pr) * 100) / 100,
+              hasOption: !!panel.querySelector('.searchable-select-option'),
+              top: Math.round(pr.top), bottom: Math.round(pr.bottom),
+            };
+            inst.destroy();
+            box.remove();
+          } catch (e) { out.searchable = { err: String(e && e.message || e) }; }
+          // multi-select
+          try {
+            const box = makeBoxNF();
+            const host = document.createElement('div');
+            host.className = 'msel';
+            box.appendChild(host);
+            window.createMultiSelect(host, opts, '全部');
+            host.querySelector('.msel-display').click();
+            const panelM = host.querySelector('.msel-panel');
+            const prM = panelM.getBoundingClientRect();
+            out.multi = {
+              floating: panelM.classList.contains('is-floating'),
+              inBody: panelM.parentElement === document.body,
+              wrapperDropup: host.classList.contains('is-dropup'),
+              inViewport: prM.top >= 0 && prM.bottom <= window.innerHeight,
+              ratio: Math.round(ratioOf(prM) * 100) / 100,
+              hasOption: !!panelM.querySelector('.msel-item'),
+              top: Math.round(prM.top), bottom: Math.round(prM.bottom),
+            };
+            host.remove();
+            box.remove();
+          } catch (e) { out.multi = { err: String(e && e.message || e) }; }
+          return out;
+        });
+        process.stdout.write(`  下拉定位(task-非浮动): ${JSON.stringify(taskNfCheck)}\n`);
+        {
+          const nFails = [];
+          const ns = taskNfCheck.searchable || {};
+          const nm = taskNfCheck.multi || {};
+          if (ns.err || ns.floating !== false || ns.inBody !== false || !ns.wrapperDropup
+            || !ns.inViewport || ns.ratio < 0.9 || !ns.hasOption) {
+            nFails.push('非浮动 searchable 未翻上/出视口/可见比例不足：' + JSON.stringify(ns));
+          }
+          if (nm.err || nm.floating !== false || nm.inBody !== false || !nm.wrapperDropup
+            || !nm.inViewport || nm.ratio < 0.9 || !nm.hasOption) {
+            nFails.push('非浮动 multi 未翻上/出视口/可见比例不足：' + JSON.stringify(nm));
+          }
+          nFails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
+          if (nFails.length) anyFail = true;
+        }
+      }
+
       if (missing.length || pageErrors.length || bootstrapErrs.length || realErrs.length || uncaught) anyFail = true;
     } catch (e) {
       process.stdout.write(`  !! 加载失败: ${e.message}\n`);
       anyFail = true;
     }
     await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 弹出层定位：非浮动分支 + destroy 回收（2026-09-15 修复的回归保护）
+  // ═══════════════════════════════════════════════════════════════
+  // 为什么单独一段：上面各页的弹出层断言用的容器都带 overflow:auto，会命中
+  // PopupPosition.scrollParentOf() → 只覆盖「浮动」分支。而修复前只有 2% 可见的场景
+  // 恰恰是「锚点没有可滚动祖先」的非浮动分支（面板留在原位，靠 .is-dropup 翻到上方）。
+  // 两条分支都要守，否则等于只保护了一半。
+  {
+    const POPUP_PROBE = `
+      window.__vp = {
+        opts: Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i })),
+        ratio(panel) {
+          const pr = panel.getBoundingClientRect();
+          const t = Math.max(0, pr.top), b = Math.min(window.innerHeight, pr.bottom);
+          return pr.height ? Math.round(Math.max(0, b - t) / pr.height * 100) : 0;
+        },
+        async nonFloat(kind) {
+          const host = document.createElement('div');
+          host.style.cssText = 'position:fixed;left:40px;bottom:10px;width:260px;z-index:99999;';
+          if (kind === 'multi') host.className = 'msel';
+          document.body.appendChild(host);
+          let wrapper = host, anchor, panel;
+          if (kind === 'searchable') {
+            const sel = document.createElement('select');
+            host.appendChild(sel);
+            window.createSearchableSelect(sel, window.__vp.opts);
+            wrapper = host.querySelector('.searchable-select');
+            anchor = wrapper.querySelector('.searchable-select-input');
+            anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            panel = wrapper.querySelector('.searchable-select-dropdown');
+          } else {
+            window.createMultiSelect(host, window.__vp.opts, '全部');
+            anchor = host.querySelector('.msel-display');
+            anchor.click();
+            panel = host.querySelector('.msel-panel');
+          }
+          await new Promise((r) => setTimeout(r, 150));
+          const pr = panel.getBoundingClientRect();
+          const out = {
+            floating: panel.classList.contains('is-floating'),
+            dropup: wrapper.classList.contains('is-dropup'),
+            inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
+            ratio: window.__vp.ratio(panel),
+            hasOption: !!panel.querySelector('.searchable-select-option, .msel-item'),
+            top: Math.round(pr.top), bottom: Math.round(pr.bottom),
+          };
+          host.remove();
+          return out;
+        },
+        async destroyOrphans() {
+          const ov = document.getElementById('subscribeOverlay');
+          ov.classList.add('show');
+          await new Promise((r) => setTimeout(r, 200));
+          const subBody = ov.querySelector('.sub-body');
+          const sel = document.createElement('select');
+          subBody.appendChild(sel);
+          const inst = window.createSearchableSelect(sel, window.__vp.opts);
+          const ctl = sel.nextElementSibling;
+          subBody.scrollTop = subBody.scrollHeight;
+          inst.open();                       // .sub-body 是 overflow:auto → 走浮动分支
+          await new Promise((r) => setTimeout(r, 180));
+          const whileOpen = document.body.querySelectorAll(':scope > .searchable-select-dropdown').length;
+          inst.destroy();
+          await new Promise((r) => setTimeout(r, 100));
+          const after = document.body.querySelectorAll(':scope > .searchable-select-dropdown').length;
+          const ctlGone = !document.body.contains(ctl);
+          ov.classList.remove('show');
+          return { whileOpen, after, ctlGone };
+        },
+      };
+    `;
+
+    for (const pg of PAGES) {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      const fails = [];
+      try {
+        await page.goto(base + pg.file, { waitUntil: 'load', timeout: 15000 });
+        await page.waitForTimeout(1000);
+        await page.evaluate(POPUP_PROBE);
+
+        const s = await page.evaluate(() => window.__vp.nonFloat('searchable'));
+        process.stdout.write(`  下拉定位(非浮动 searchable): ${JSON.stringify(s)}\n`);
+        if (s.floating !== false) fails.push(`没有可滚动祖先却走了浮动分支：${JSON.stringify(s)}`);
+        if (!s.dropup) fails.push('贴视口底部时没翻到上方（wrapper 缺 .is-dropup）');
+        if (!s.inViewport) fails.push(`面板没有完整落在视口内：${JSON.stringify(s)}`);
+        if (s.ratio < 90) fails.push(`面板可见比例不足：${s.ratio}%`);
+        if (!s.hasOption) fails.push('面板里没有渲染出选项');
+
+        const hasMulti = await page.evaluate(() => typeof window.createMultiSelect === 'function');
+        if (hasMulti) {
+          const m = await page.evaluate(() => window.__vp.nonFloat('multi'));
+          process.stdout.write(`  下拉定位(非浮动 multi): ${JSON.stringify(m)}\n`);
+          if (m.floating !== false) fails.push(`multi 没有可滚动祖先却走了浮动分支：${JSON.stringify(m)}`);
+          if (!m.dropup) fails.push('multi 贴视口底部时没翻到上方');
+          if (!m.inViewport || m.ratio < 90) fails.push(`multi 面板未完整可见：${JSON.stringify(m)}`);
+          if (!m.hasOption) fails.push('multi 面板里没有渲染出选项');
+        }
+
+        if (pg.file === 'index.html') {
+          const dz = await page.evaluate(() => window.__vp.destroyOrphans());
+          process.stdout.write(`  destroy 回收(浮动面板): ${JSON.stringify(dz)}\n`);
+          if (dz.whileOpen !== 1) fails.push(`浮动打开时 body 内应有 1 个面板，实际 ${dz.whileOpen}`);
+          if (dz.after !== 0) fails.push(`destroy 后 body 内残留 ${dz.after} 个孤立面板`);
+          if (!dz.ctlGone) fails.push('destroy 后组件容器没有被移除');
+        }
+      } catch (e) {
+        fails.push(`弹层定位段异常：${e.message}`);
+      }
+      fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+      if (fails.length) anyFail = true;
+      await page.close();
+    }
   }
 
   await browser.close();

@@ -220,11 +220,12 @@
     }
 
   function renderTable() {
-    const body = $('#resultBody');
+    // 空结果走 renderEmpty（会隐藏 #pagination），与上面 renderEmpty 的声明意图一致
     if (!state.rows.length) {
-      body.innerHTML = '<tr><td colspan="13" class="empty-hint">没有匹配的任务单</td></tr>';
+      renderEmpty('没有匹配的任务单');
       return;
     }
+    const body = $('#resultBody');
     const start = (state.pageNum - 1) * state.pageSize;
     body.innerHTML = state.rows.map((r, i) => {
       const no = r.taskApplicationTaskNo || '';

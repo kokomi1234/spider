@@ -25,6 +25,7 @@
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
       ['Fmt', () => has(window.Fmt, 'esc')],
       ['toast', () => typeof window.toast === 'function'],
+      ['PopupPosition', () => has(window.PopupPosition, 'place')],
     ],
     subscription: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
@@ -35,11 +36,13 @@
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
       ['createDatePicker', () => typeof window.createDatePicker === 'function'],
       ['toast', () => typeof window.toast === 'function'],
+      ['PopupPosition', () => has(window.PopupPosition, 'place')],
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['toast', () => typeof window.toast === 'function'],
+      ['PopupPosition', () => has(window.PopupPosition, 'place')],
     ],
   };
 
