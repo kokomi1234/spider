@@ -271,15 +271,27 @@ const PAGES = [
           if (!panel) return { err: '面板未打开' };
           const pr = panel.getBoundingClientRect();
           const ir = lastInput.getBoundingClientRect();
+          // 面板宽度要跟「可见的输入框外框」一致（不是内层 input —— 它被右侧箭头挤掉 36px，
+          // 曾经因此让浮动面板比输入框窄一截，两条定位路径表现不一致）
+          const box = lastInput.closest('.dp-input-wrapper') || lastInput;
+          const br = box.getBoundingClientRect();
           return {
             floating: panel.classList.contains('is-floating'),
             visible: pr.top >= -1 && pr.bottom <= window.innerHeight + 1,
             above: pr.bottom <= ir.top + 1,
+            boxW: Math.round(br.width),
+            panelW: Math.round(pr.width),
+            dx: Math.round(pr.left - br.left),
           };
         });
         process.stdout.write(`  日期面板（最后一行）: ${JSON.stringify(datePanel)}\n`);
         if (!datePanel.floating || !datePanel.visible || !datePanel.above) {
           process.stdout.write('    [FAIL] 日历面板仍被弹窗滚动容器裁剪\n');
+          anyFail = true;
+        }
+        if (!datePanel.err
+            && (Math.abs(datePanel.panelW - datePanel.boxW) > 1 || Math.abs(datePanel.dx) > 1)) {
+          process.stdout.write(`    [FAIL] 日历面板与输入框没对齐：面板 ${datePanel.panelW}px@${datePanel.dx >= 0 ? '+' : ''}${datePanel.dx} vs 输入框 ${datePanel.boxW}px\n`);
           anyFail = true;
         }
 

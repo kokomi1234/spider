@@ -602,7 +602,10 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   left: 0;
   right: 0;
   width: 100%;
-  min-width: 0;
+  /* 日历最少要 7 列 × ~26px 才排得开：输入框比这窄时（如任务单页 118px 的日期控件）
+     面板按 min-width 铺开，数字才不会挤成一坨。输入框更宽时（首页 256 / 批次时间弹窗 213）
+     面板仍与输入框等宽 —— 两条定位路径（文档流 / 浮动）都受这条约束。 */
+  min-width: 200px;
   padding: var(--sp1);
   border: 1px solid var(--outline-soft);
   border-radius: var(--r-sm);

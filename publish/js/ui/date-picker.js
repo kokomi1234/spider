@@ -376,7 +376,11 @@
      */
     function layoutPanel() {
       const GAP = 4;                                    // 与 .dp-panel 的 calc(100% + 4px) 保持一致
-      const inputRect = inputEl.getBoundingClientRect();
+      // ⚠️ 量的是「可见的输入框外框」.dp-input-wrapper，不是内层 <input>：
+      // 内层 input 是 flex:1，右侧箭头（.dp-arrow）会挤掉它 36px，height 也少 2px 边框。
+      // 拿内层 input 当基准 → 浮动面板比可见输入框窄 36px、还右偏 1px，
+      // 跟文档流内那条路径（.dp-panel 靠 left:0;right:0 撑满 .dp-wrapper）宽度对不上。
+      const inputRect = inputWrapper.getBoundingClientRect();
       const container = scrollParentOf(inputEl);
 
       panel.style.maxHeight = '';                       // 先清掉上一轮的限制，量的才是真实高度
