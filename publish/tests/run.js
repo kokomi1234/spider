@@ -19,5 +19,6 @@ require('./tool-api.test');
 require('./publish-response.test');
 require('./bootstrap.test');
 require('./toast-queue.test');
+require('./query-feedback.test');
 
 runAll();

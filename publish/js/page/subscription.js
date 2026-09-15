@@ -146,10 +146,10 @@
   const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
   const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
 
-  function setLoading(on) {
-    const el = $('#loadingMask');
-    if (el) el.classList.toggle('show', !!on);
-  }
+  // 加载态 / 失败常驻条 / 错误串压缩：实现统一在 js/ui/query-feedback.js（三页共用）。
+  // 本地只留薄别名（把 state.queried 传进去），调用点不用改。
+  const QF = window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
+  const setLoading = (on) => QF.setLoading(on);
 
   /**
    * 空态文案统一走 js/ui/table-utils.js 的 EMPTY_TEXT（延迟取，避免脚本顺序敏感）。
@@ -663,31 +663,11 @@
    * tool-api 抛出来的是 `HTTP 404 {"code":404,"msg":"...","key":"..."}` 这种，
    * 整段塞进提示条会把真正有用的说明挤没，所以优先抽 msg 字段。
    */
-  function shortError(err) {
-    const s = String(err == null ? '未知错误' : err);
-    const m = /"msg"\s*:\s*"([^"]+)"/.exec(s);
-    if (m) return m[1];
-    return s.length > 90 ? s.slice(0, 90) + '…' : s;
-  }
-
-  /**
-   * 查询失败的显眼提示：失败时表格会保留上一次的结果（方便对照 / 重试），
-   * 但用户容易误以为「点了没反应」，所以在结果区顶部挂一条说明。
-   */
-  function showQueryFail(reason) {
-    const bar = $('#failBar');
-    if (!bar) return;
-    const msg = shortError(reason);
-    $('#failText').textContent = state.queried
-      ? `⚠️ 本次查询失败，下面仍是上一次成功查询的结果（${msg}）`
-      : `⚠️ 查询失败：${msg}`;
-    bar.style.display = '';
-  }
-
-  function hideQueryFail() {
-    const bar = $('#failBar');
-    if (bar) bar.style.display = 'none';
-  }
+  // shortError / showQueryFail / hideQueryFail 的统一实现见 js/ui/query-feedback.js。
+  const shortError = QF.shortError;
+  /** 失败时表格保留上一次结果（方便对照 / 重试），常驻条文案必须明说，否则像「点了没反应」 */
+  const showQueryFail = (reason) => QF.showQueryFail(reason, state.queried);
+  const hideQueryFail = () => QF.hideFail();
 
   /**
    * 窗口查询里**部分批次**失败：结果不完整，必须常驻说明是哪几个批次。
@@ -695,13 +675,8 @@
    * 所以清单放常驻条，toast 只负责"立刻看到有失败"。
    */
   function showPartialFail(batches) {
-    const bar = $('#failBar');
-    if (!bar || !batches || !batches.length) return;
-    const txt = $('#failText');
-    if (txt) {
-      txt.textContent = `⚠️ 窗口内有 ${batches.length} 个批次查询失败（${batches.join('、')}），当前结果不完整`;
-    }
-    bar.style.display = '';
+    if (!batches || !batches.length) return;
+    QF.showFailText(`⚠️ 窗口内有 ${batches.length} 个批次查询失败（${batches.join('、')}），当前结果不完整`);
   }
 
   function statusTag(v) {

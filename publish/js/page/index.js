@@ -22,7 +22,6 @@
   const btnReset       = $('#btnReset');
   const filterToggle   = $('#filterToggle');
   const filterCard     = $('#filterCard');
-  const loadingMask    = $('#loadingMask');
   const resultBody     = $('#resultBody');
   const pagination     = $('#pagination');
   const btnPrev        = $('#btnPrev');
@@ -227,14 +226,10 @@
   }
 
   // ── 工具函数 ────────────────────────────────────────
-  function showLoading()  {
-    loadingMask.classList.add('show');
-    loadingMask.setAttribute('aria-busy', 'true');
-  }
-  function hideLoading()  {
-    loadingMask.classList.remove('show');
-    loadingMask.setAttribute('aria-busy', 'false');
-  }
+  // 加载遮罩的统一实现见 js/ui/query-feedback.js（三页共用），本地保留原名。
+  const QF = window.QueryFeedback || { setLoading() {} };
+  function showLoading()  { QF.setLoading(true); }
+  function hideLoading()  { QF.setLoading(false); }
 
   // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
   const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));

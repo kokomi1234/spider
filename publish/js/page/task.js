@@ -84,34 +84,14 @@
   const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
   const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
 
-  // ── 加载态 / 查询失败提示（与订阅页同款，别各写一套）────────────────
+  // ── 加载态 / 查询失败提示：实现统一在 js/ui/query-feedback.js（三页共用）──
   // 本页原先查询期间只把按钮文字改成「查询中…」，长查询时看起来像卡死、容易被反复点击；
   // 失败也只有 3.5s 就消失的 toast，用户错过之后会把「查询失败」误读成「确实没有数据」。
-  function setLoading(on) {
-    const el = $('#loadingMask');
-    if (!el) return;
-    el.classList.toggle('show', !!on);
-    el.setAttribute('aria-busy', on ? 'true' : 'false');
-  }
-
-  /** 查询失败的常驻提示：区分「首次就失败」与「保留了上一次成功结果」两种语义 */
-  function showQueryFail(reason) {
-    const bar = $('#failBar');
-    if (!bar) return;
-    const msg = String(reason || '未知错误');
-    const txt = $('#failText');
-    if (txt) {
-      txt.textContent = state.queried
-        ? `⚠️ 本次查询失败，下面仍是上一次成功查询的结果（${msg}）`
-        : `⚠️ 查询失败：${msg}`;
-    }
-    bar.style.display = '';
-  }
-
-  function hideQueryFail() {
-    const bar = $('#failBar');
-    if (bar) bar.style.display = 'none';
-  }
+  // 本地只留薄别名，把 state.queried 传进去；调用点不用改。
+  const QF = window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
+  const setLoading = (on) => QF.setLoading(on);
+  const showQueryFail = (reason) => QF.showQueryFail(reason, state.queried);
+  const hideQueryFail = () => QF.hideFail();
 
   /** 去掉时间戳尾部的 00:00:00，只留日期 */
   function shortDate(v) {
