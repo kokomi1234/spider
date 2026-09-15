@@ -1397,9 +1397,6 @@ label.req::after {
 }
 
 .sub-tbl th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   background: var(--surface-1);
   color: var(--muted);
   font-size: var(--fs-nano);
@@ -1411,6 +1408,18 @@ label.req::after {
   border-bottom: 1px solid var(--outline-soft);
   /* 显式给行高（td 也是 1.4）：表头高度才能被 .doc-tbl-wrap 精确算进去 */
   line-height: 1.4;
+}
+
+/* 表头吸顶只在该表「自己的滚动视口」里生效 —— 与上面主题规则同一个道理，别写回全局：
+   · .doc-tbl-wrap 自带 max-height + overflow-y:auto，而且它的高度公式（--doc-head-h）
+     已经把 sticky 表头算进去了 → 表头钉在它自己顶部是对的，必须保留吸顶。
+   · .sub-tbl-wrap（评委信息表）**刻意不设 max-height**，长列表交给弹窗 .sub-body 统一滚动；
+     此时表头若吸顶会钉到 .sub-body 顶部、脱离表格本体并压住上方表单内容
+     （实测 .sub-body 滚到 25% 时表头仍在容器顶、而表格本体已到 -216px）—— 这正是缺陷 B 的原始形态。 */
+.doc-tbl-wrap > .sub-tbl > thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .sub-tbl td {
