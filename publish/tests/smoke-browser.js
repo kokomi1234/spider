@@ -978,54 +978,16 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 弹出层定位：非浮动分支 + destroy 回收（2026-09-15 修复的回归保护）
+  // destroy() 回收浮动面板（2026-09-15 修复的回归保护）
   // ═══════════════════════════════════════════════════════════════
-  // 为什么单独一段：上面各页的弹出层断言用的容器都带 overflow:auto，会命中
-  // PopupPosition.scrollParentOf() → 只覆盖「浮动」分支。而修复前只有 2% 可见的场景
-  // 恰恰是「锚点没有可滚动祖先」的非浮动分支（面板留在原位，靠 .is-dropup 翻到上方）。
-  // 两条分支都要守，否则等于只保护了一半。
+  // 浮动模式下面板被移到 document.body，destroy() 若不先 reset 就会在 body 留下孤立面板。
+  // 该路径生产可达：订阅弹窗的评委行在 .sub-body 内创建 createSearchableSelect，
+  // 重置评委表时逐个 destroy()（subscribe-dialog.js 的 resetJudges() 等）。
+  // 注：非浮动分支的断言已按页写在上面的三页块里（各含 makeBoxNF 那段），此处不重复。
   {
     const POPUP_PROBE = `
       window.__vp = {
         opts: Array.from({ length: 30 }, (_, i) => ({ value: 'v' + i, label: '选项' + i })),
-        ratio(panel) {
-          const pr = panel.getBoundingClientRect();
-          const t = Math.max(0, pr.top), b = Math.min(window.innerHeight, pr.bottom);
-          return pr.height ? Math.round(Math.max(0, b - t) / pr.height * 100) : 0;
-        },
-        async nonFloat(kind) {
-          const host = document.createElement('div');
-          host.style.cssText = 'position:fixed;left:40px;bottom:10px;width:260px;z-index:99999;';
-          if (kind === 'multi') host.className = 'msel';
-          document.body.appendChild(host);
-          let wrapper = host, anchor, panel;
-          if (kind === 'searchable') {
-            const sel = document.createElement('select');
-            host.appendChild(sel);
-            window.createSearchableSelect(sel, window.__vp.opts);
-            wrapper = host.querySelector('.searchable-select');
-            anchor = wrapper.querySelector('.searchable-select-input');
-            anchor.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-            panel = wrapper.querySelector('.searchable-select-dropdown');
-          } else {
-            window.createMultiSelect(host, window.__vp.opts, '全部');
-            anchor = host.querySelector('.msel-display');
-            anchor.click();
-            panel = host.querySelector('.msel-panel');
-          }
-          await new Promise((r) => setTimeout(r, 150));
-          const pr = panel.getBoundingClientRect();
-          const out = {
-            floating: panel.classList.contains('is-floating'),
-            dropup: wrapper.classList.contains('is-dropup'),
-            inViewport: pr.top >= 0 && pr.bottom <= window.innerHeight,
-            ratio: window.__vp.ratio(panel),
-            hasOption: !!panel.querySelector('.searchable-select-option, .msel-item'),
-            top: Math.round(pr.top), bottom: Math.round(pr.bottom),
-          };
-          host.remove();
-          return out;
-        },
         async destroyOrphans() {
           const ov = document.getElementById('subscribeOverlay');
           ov.classList.add('show');
@@ -1049,41 +1011,21 @@ const PAGES = [
       };
     `;
 
-    for (const pg of PAGES) {
+    // 只在 index.html 上跑（订阅弹窗在首页；多选销毁在 task.js 里是长生命周期、不销毁）
+    {
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
       const fails = [];
       try {
-        await page.goto(base + pg.file, { waitUntil: 'load', timeout: 15000 });
+        await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
         await page.waitForTimeout(1000);
         await page.evaluate(POPUP_PROBE);
-
-        const s = await page.evaluate(() => window.__vp.nonFloat('searchable'));
-        process.stdout.write(`  下拉定位(非浮动 searchable): ${JSON.stringify(s)}\n`);
-        if (s.floating !== false) fails.push(`没有可滚动祖先却走了浮动分支：${JSON.stringify(s)}`);
-        if (!s.dropup) fails.push('贴视口底部时没翻到上方（wrapper 缺 .is-dropup）');
-        if (!s.inViewport) fails.push(`面板没有完整落在视口内：${JSON.stringify(s)}`);
-        if (s.ratio < 90) fails.push(`面板可见比例不足：${s.ratio}%`);
-        if (!s.hasOption) fails.push('面板里没有渲染出选项');
-
-        const hasMulti = await page.evaluate(() => typeof window.createMultiSelect === 'function');
-        if (hasMulti) {
-          const m = await page.evaluate(() => window.__vp.nonFloat('multi'));
-          process.stdout.write(`  下拉定位(非浮动 multi): ${JSON.stringify(m)}\n`);
-          if (m.floating !== false) fails.push(`multi 没有可滚动祖先却走了浮动分支：${JSON.stringify(m)}`);
-          if (!m.dropup) fails.push('multi 贴视口底部时没翻到上方');
-          if (!m.inViewport || m.ratio < 90) fails.push(`multi 面板未完整可见：${JSON.stringify(m)}`);
-          if (!m.hasOption) fails.push('multi 面板里没有渲染出选项');
-        }
-
-        if (pg.file === 'index.html') {
-          const dz = await page.evaluate(() => window.__vp.destroyOrphans());
-          process.stdout.write(`  destroy 回收(浮动面板): ${JSON.stringify(dz)}\n`);
-          if (dz.whileOpen !== 1) fails.push(`浮动打开时 body 内应有 1 个面板，实际 ${dz.whileOpen}`);
-          if (dz.after !== 0) fails.push(`destroy 后 body 内残留 ${dz.after} 个孤立面板`);
-          if (!dz.ctlGone) fails.push('destroy 后组件容器没有被移除');
-        }
+        const dz = await page.evaluate(() => window.__vp.destroyOrphans());
+        process.stdout.write(`  destroy 回收(浮动面板): ${JSON.stringify(dz)}\n`);
+        if (dz.whileOpen !== 1) fails.push(`浮动打开时 body 内应有 1 个面板，实际 ${dz.whileOpen}`);
+        if (dz.after !== 0) fails.push(`destroy 后 body 内残留 ${dz.after} 个孤立面板`);
+        if (!dz.ctlGone) fails.push('destroy 后组件容器没有被移除');
       } catch (e) {
-        fails.push(`弹层定位段异常：${e.message}`);
+        fails.push(`destroy 回收段异常：${e.message}`);
       }
       fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
       if (fails.length) anyFail = true;
