@@ -51,34 +51,50 @@
   }
 
   /**
-   * 读取批次时间配置（不走 ITAMP 后端）。三级降级：
+   * 读取批次时间配置（不走 ITAMP 后端）。三个来源按「**有数据的**优先」取，
+   * 而不是「第一个成功就当准」：
    *   1) 代理的本地端点 GET /local/batch-times（可写回文件，开发态首选）
    *   2) 静态文件 config/batch-times.json（手改即可生效；静态部署时走这条）
    *   3) localStorage（无代理、无文件时的兜底）
+   * ⚠️ 静态部署时随包发的 config/batch-times.json 是**空的**：按「第一个成功」取会让它
+   *    永远盖住 localStorage 里用户真正保存过的批次 —— 表现就是「刚保存的行 / 独立批次，
+   *    重开弹窗就没了」。所以这里按顺序读，只有拿到条目才采用。
    */
   async function load() {
-    const pick = (obj) => (obj && typeof obj.batchTimes === 'object' && obj.batchTimes) || {};
-    let loaded = false;
+    const pick = (obj) => (obj && typeof obj.batchTimes === 'object' && obj.batchTimes) || null;
+    const hasKeys = (m) => !!m && Object.keys(m).length > 0;
+
+    let fromFile = null;
     try {
       const r = await fetch('local/batch-times', { headers: { Accept: 'application/json' } });
-      if (r.ok) { batchTimes = pick((await r.json()).data); loaded = true; }
+      if (r.ok) fromFile = pick((await r.json()).data);
     } catch (_) { /* 代理端点不可用，继续降级 */ }
-    if (!loaded) {
+    if (!fromFile) {
       try {
         const r2 = await fetch('config/batch-times.json', { cache: 'no-store' });
-        if (r2.ok) { batchTimes = pick(await r2.json()); loaded = true; }
+        if (r2.ok) fromFile = pick(await r2.json());
       } catch (_) { /* 文件不存在，继续降级 */ }
     }
-    if (!loaded) {
-      try {
-        batchTimes = JSON.parse(localStorage.getItem('itamp.batchTimes') || '{}') || {};
-      } catch (_) { batchTimes = {}; }
-    }
+
+    let fromLocal = null;
+    try { fromLocal = JSON.parse(localStorage.getItem('itamp.batchTimes') || 'null'); } catch (_) { /* 存坏了当没存过 */ }
+
+    // 文件/端点有内容就用它；是空的（静态部署那份空模板）→ 退回 localStorage。
+    // 保存时两边都会写（见 persist），所以正常路径下两者内容一致。
+    batchTimes = (fromFile && typeof fromFile === 'object') ? fromFile : {};
+    if (!hasKeys(batchTimes) && fromLocal && typeof fromLocal === 'object') batchTimes = fromLocal;
+
     if (deps.refreshPriority) deps.refreshPriority();
   }
 
-  /** 保存批次时间：优先写回配置文件（代理端点）；失败落 localStorage。返回 { ok, where|error } */
+  /**
+   * 保存批次时间。**localStorage 先镜像一份**（静态部署下它是唯一存储），
+   * 再尽力写回代理端点 → config/batch-times.json。返回 { ok, where|error }
+   */
   async function persist(map) {
+    // 先落地到 localStorage：即使后面写文件失败，用户填的东西也不会丢
+    try { localStorage.setItem('itamp.batchTimes', JSON.stringify(map)); } catch (_) { /* 隐私模式等，忽略 */ }
+
     try {
       const r = await fetch('local/batch-times', {
         method: 'POST',
@@ -87,20 +103,39 @@
       });
       if (r.ok) return { ok: true, where: 'config/batch-times.json' };
       const j = await r.json().catch(() => ({}));
-      return { ok: false, error: (j && j.msg) || ('HTTP ' + r.status) };
-    } catch (_) { /* 无代理端点 → localStorage 兜底 */ }
-    try {
-      localStorage.setItem('itamp.batchTimes', JSON.stringify(map));
-      return { ok: true, where: 'localStorage' };
-    } catch (e) {
-      return { ok: false, error: e.message || String(e) };
-    }
+      // 端点存在但写失败（权限/磁盘等）：不要谎报「写进了文件」，但数据已在 localStorage 里，
+      // 明确告诉用户落在哪，别让他以为白填了。
+      return { ok: true, where: 'localStorage（配置文件写入失败：' + ((j && j.msg) || ('HTTP ' + r.status)) + '）' };
+    } catch (_) { /* 无代理端点 → 就用 localStorage */ }
+    return { ok: true, where: 'localStorage' };
   }
 
   /** 弹窗内已创建的日期选择器实例。重渲染前必须先 destroy：
       createDatePicker 会在 document 上挂 click / keydown 监听，直接覆盖 innerHTML
       会把监听留在 document 上（旧 input 成了游离节点，越点越卡）。 */
   let datePickers = [];
+
+  /**
+   * 该批次的「默认」功测 / 上线时间（按批次月推算，只看规则不看已保存配置）。
+   * 口径的唯一来源是 `priority.js` 的 defaultDeadlines()（功测 = 批次月 −1 的 15 日、
+   * 上线 = 批次月 15 日），弹窗只负责把它显示出来，不自己算 —— 避免两处规则各算一套。
+   */
+  function defaultDatesOf(batch) {
+    const P = window.Priority;
+    if (P && typeof P.defaultDeadlines === 'function') return P.defaultDeadlines(batch);
+    return { testDate: '', releaseDate: '' };
+  }
+
+  /** 一个日期格：输入框 + 该批次的默认口径提示（没设过时给用户一个参照，不预填值） */
+  function dateCell(item, idx, field) {
+    const def = defaultDatesOf(item.batch)[field];
+    const tip = def
+      ? `默认 ${def}（按批次月推算：功能测试 = 批次月 −1 的 15 日，上线 = 批次月 15 日）`
+      : '该批次解析不出年月，默认时间无法推算';
+    return `<td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="${field}"
+                   value="${esc(item[field])}" placeholder="选择日期" readonly>
+        <span class="bt-default" title="${esc(tip)}">${def ? '默认 ' + esc(def) : '默认 —'}</span></td>`;
+  }
 
   function renderList() {
     const tbody = $('#batchTimeList');
@@ -109,10 +144,8 @@
 
     tbody.innerHTML = batchTimeData.map((item, idx) => `<tr>
         <td class="batch-label">${esc(item.batch)}</td>
-        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="testDate"
-                   value="${esc(item.testDate)}" placeholder="选择日期" readonly></td>
-        <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="releaseDate"
-                   value="${esc(item.releaseDate)}" placeholder="选择日期" readonly></td>
+        ${dateCell(item, idx, 'testDate')}
+        ${dateCell(item, idx, 'releaseDate')}
       </tr>`).join('');
 
     const inputs = Array.from(tbody.querySelectorAll('input.batch-time-date'));

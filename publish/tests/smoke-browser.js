@@ -258,6 +258,55 @@ const PAGES = [
           anyFail = true;
         }
 
+        // 批次时间的「批次 → 功测/上线月份」映射：每行都要显示规则默认值，
+        // 且 2608批次 必须是 功测 07-15 / 上线 08-15（功测 = 批次月 −1，上线 = 批次月）。
+        // 这条守着「映射到错误月份」这类回归 —— 口径唯一来源是 priority.js 的 defaultDeadlines()。
+        const btDefaults = await page.evaluate(() => {
+          const rows = [...document.querySelectorAll('#batchTimeList tr')].map((tr) => ({
+            batch: (tr.children[0] || {}).textContent ? tr.children[0].textContent.trim() : '',
+            defs: [...tr.querySelectorAll('.bt-default')].map((s) => s.textContent.trim()),
+          }));
+          const hit = rows.find((r) => r.batch === '2608批次');
+          return { rows: rows.length, hit: hit || null, missingHint: rows.filter((r) => r.defs.length !== 2).length };
+        });
+        process.stdout.write(`  批次默认口径: ${btDefaults.rows} 行，2608批次 → ${btDefaults.hit ? btDefaults.hit.defs.join(' / ') : '（没找到该行）'}\n`);
+        if (!btDefaults.hit || btDefaults.hit.defs[0].indexOf('2026-07-15') < 0
+            || btDefaults.hit.defs[1].indexOf('2026-08-15') < 0) {
+          process.stdout.write('    [FAIL] 2608批次默认口径应为 功测 2026-07-15 / 上线 2026-08-15\n');
+          anyFail = true;
+        }
+        if (btDefaults.missingHint) {
+          process.stdout.write(`    [FAIL] 有 ${btDefaults.missingHint} 行的日期格没有默认口径提示\n`);
+          anyFail = true;
+        }
+
+        // 保存过的批次不能被「随包发的空 config/batch-times.json」盖掉：
+        // 模拟「上次保存过（只落到了 localStorage），重开页面」——独立批次行与日期都必须还在。
+        const persistCheck = await page.evaluate(async () => {
+          const KEY = 'itamp.batchTimes';
+          const before = localStorage.getItem(KEY);
+          localStorage.setItem(KEY, JSON.stringify({
+            '26年8月独立': { testDate: '2026-07-15', releaseDate: '2026-08-15' },
+          }));
+          try {
+            await window.SubscriptionBatchTimes.load();
+            window.SubscriptionBatchTimes.open();
+            const tr = [...document.querySelectorAll('#batchTimeList tr')]
+              .find((r) => r.children[0].textContent.trim() === '26年8月独立');
+            return {
+              found: !!tr,
+              vals: tr ? [...tr.querySelectorAll('input')].map((i) => i.value) : null,
+            };
+          } finally {
+            if (before === null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, before);
+          }
+        });
+        process.stdout.write(`  保存过的批次重开还在: ${JSON.stringify(persistCheck)}\n`);
+        if (!persistCheck.found || !persistCheck.vals || persistCheck.vals[0] !== '2026-07-15') {
+          process.stdout.write('    [FAIL] 保存过的批次/独立批次被空的 config/batch-times.json 盖掉了\n');
+          anyFail = true;
+        }
+
         // 日期面板不能被弹窗主体的 overflow 裁掉：滚到底点最后一行，
         // 面板应脱离容器（浮动）并抬到输入框上方、完整落在视口内。
         const datePanel = await page.evaluate(() => {

@@ -56,6 +56,43 @@ test('evaluate：功能测试基线 → 批次月的 15 日', () => {
   assert.strictEqual(r.level, 'normal');
 });
 
+// 批次时间弹窗里「每行默认口径」的唯一来源（弹窗只显示、不自己算，避免两处规则各算一套）。
+// 这条用例就是回归「功测/上线对应到错误月份」的守门员。
+test('defaultDeadlines：批次 → 功测（批次月 −1）/ 上线（批次月）', () => {
+  assert.deepStrictEqual(P.defaultDeadlines('2608批次'),
+    { testDate: '2026-07-15', releaseDate: '2026-08-15' }, '2608批次：功测 7 月、上线 8 月');
+  assert.deepStrictEqual(P.defaultDeadlines('2609批次'),
+    { testDate: '2026-08-15', releaseDate: '2026-09-15' });
+  // 独立批次与「NNNN批次」写法同口径
+  assert.deepStrictEqual(P.defaultDeadlines('26年8月独立'),
+    { testDate: '2026-07-15', releaseDate: '2026-08-15' });
+  assert.deepStrictEqual(P.defaultDeadlines('26年11月独立'),
+    { testDate: '2026-10-15', releaseDate: '2026-11-15' });
+});
+
+test('defaultDeadlines：跨年与解析不出的批次', () => {
+  assert.deepStrictEqual(P.defaultDeadlines('2601批次'),
+    { testDate: '2025-12-15', releaseDate: '2026-01-15' }, '功测落到上一年 12 月');
+  assert.deepStrictEqual(P.defaultDeadlines('2701批次'),
+    { testDate: '2026-12-15', releaseDate: '2027-01-15' });
+  assert.deepStrictEqual(P.defaultDeadlines('技术支持类-2026年批次'),
+    { testDate: '', releaseDate: '' }, '解析不出年月的批次给空串，不猜');
+});
+
+test('defaultDeadlines 与 evaluate 用同一套规则（不会各算一套）', () => {
+  const rows = [
+    { prodBatch: '2608批次', status: '开发基线', field: 'testDate' },
+    { prodBatch: '2608批次', status: '功能测试基线', field: 'releaseDate' },
+    { prodBatch: '2611批次', status: '开发基线', field: 'testDate' },
+    { prodBatch: '2701批次', status: '功能测试基线', field: 'releaseDate' },
+  ];
+  rows.forEach(({ prodBatch, status, field }) => {
+    const viaRule = P.evaluate({ prodBatch, status }, NOW).deadline;
+    assert.strictEqual(P.defaultDeadlines(prodBatch)[field], viaRule,
+      `${prodBatch}/${status} 两处算出的默认日必须一致`);
+  });
+});
+
 test('evaluate：终点状态（正式版基线 / 下线）不提醒', () => {
   assert.strictEqual(P.evaluate({ prodBatch: '2609批次', status: '正式版基线' }, NOW).level, 'done');
   assert.strictEqual(P.evaluate({ prodBatch: '2609批次', status: '下线' }, NOW).level, 'done');

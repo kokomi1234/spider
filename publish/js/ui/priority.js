@@ -213,11 +213,33 @@
     return (a._prio ? a._prio.sortKey : 9e6) - (b._prio ? b._prio.sortKey : 9e6);
   }
 
+  /**
+   * 某个批次的「默认」功测 / 上线时间 —— 直接按 MILESTONES 从批次月推算，不看已保存的配置。
+   *   功测 = 批次月 − 1 的 15 日；上线 = 批次月 15 日
+   * 例：2608批次 → 功测 2026-07-15、上线 2026-08-15；2601批次 → 功测 2025-12-15、上线 2026-01-15。
+   *
+   * 用途：批次时间弹窗每行显示默认口径，让「批次 → 功测/上线月份」的映射只有一个来源
+   * （弹窗展示与优先级计算不会各算一套）。解析不出年月的批次（如「技术支持类-2026年批次」）返回空串。
+   *
+   * @param {string} label 批次 label
+   * @returns {{testDate:string, releaseDate:string}} YYYY-MM-DD，解析不出时为空串
+   */
+  function defaultDeadlines(label) {
+    const ym = parseBatchYearMonth(label);
+    const out = { testDate: '', releaseDate: '' };
+    if (!ym) return out;
+    MILESTONES.forEach((m) => {
+      if (!m.dateField) return;
+      out[m.dateField] = dateText(deadlineOf(ym, m.offsetMonth, m.day));
+    });
+    return out;
+  }
+
   if (typeof window !== 'undefined') {
     window.Priority = {
       MILESTONES, LEVELS, DONE_STATUS,
       setBatchTimes, parseYmd,
-      parseBatchYearMonth, deadlineOf, evaluate, decorate, compare,
+      parseBatchYearMonth, deadlineOf, defaultDeadlines, evaluate, decorate, compare,
     };
   }
 })();
