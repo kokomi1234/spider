@@ -252,16 +252,16 @@
       color: var(--muted);
     }
 
-    /* 必填项星号 */
+    /* 必填项星号（走令牌：此前写死 #e53e3e，主题色换了它不跟着变） */
     .required::before {
       content: '*';
-      color: #e53e3e;
+      color: var(--on-red-c);
       margin-right: 4px;
       font-weight: bold;
     }
 
-    /* 详情弹窗 */
-    #detailDialog { max-width: 640px; }
+    /* 详情弹窗：宽度改由 theme.css 的 .dialog--md 统一提供，
+       页面里不再用 ID 选择器覆盖（ID 权重高于 class，会让全局改不动） */
     /* 详情状态行：接口加载中 / 失败回退本地时的提示 */
     .detail-status {
       display: flex;
@@ -527,7 +527,7 @@
 
   <!-- 详情弹窗 -->
   <div class="overlay" id="detailOverlay" role="presentation" data-page-node-id="mNpDiuC6QMQfG655iXYrVs">
-    <div class="dialog" id="detailDialog" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1" data-page-node-id="bGCCegV8JaUJ3xkNGgfhio">
+    <div class="dialog dialog--md" id="detailDialog" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1" data-page-node-id="bGCCegV8JaUJ3xkNGgfhio">
       <!-- 右上角 ✕：与订阅页详情弹窗同款（.sub-close），绝对定位适配本页无 .sub-head 的旧结构 -->
       <button type="button" class="sub-close dlg-close" id="btnDetailCloseX" aria-label="关闭">✕</button>
       <h2 id="detailTitle" data-page-node-id="6nXAIEDcDasHaUz6uGNSIp">服务详情</h2>

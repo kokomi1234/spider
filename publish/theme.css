@@ -67,6 +67,27 @@
   --sp4: 32px;
   --sp5: 48px;
 
+  /* 控件高度：同类控件单一来源（此前 42px / 34px 直接写死在各组件规则里） */
+  --control-h-md: 42px;   /* 表单级控件：输入框、可搜索下拉、多选、日期输入 */
+  --control-h-sm: 34px;   /* 面板/表格内的小控件（如多选面板的搜索框、表格里的控件） */
+
+  /* 层级（z-index）单一来源。原有数值散落各处，同一类弹出面板出现过 50 / 100 / 1000 三种值。
+     语义从低到高：
+       --z-sticky-head  表格吸顶表头，只在本表视口内抬起
+       --z-popup        文档流内的弹出面板（下拉 / 多选 / 日历），处于自身定位祖先的层叠上下文内
+       --z-overlay      弹窗遮罩
+       --z-sub-dialog   子弹窗（叠在遮罩之上，如文档选择）
+       --z-popup-float  浮动到 body 的面板 / 日历：必须高于所有弹窗，否则会被弹窗盖住
+       --z-loading      加载遮罩
+       --z-toast        Toast，永远最上层 */
+  --z-sticky-head: 1;
+  --z-popup: 100;
+  --z-overlay: 1000;
+  --z-sub-dialog: 1050;
+  --z-popup-float: 1600;
+  --z-loading: 2000;
+  --z-toast: 3000;
+
   /* 阴影 */
   --shadow-pop: 0 2px 10px rgba(0, 0, 0, .10);
 }
@@ -272,7 +293,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
 
 .form-group input,
 .form-group select {
-  height: 42px;
+  height: var(--control-h-md);
   padding: 0 12px;
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -315,7 +336,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   background-position: right 12px center;
   background-size: 14px 14px;
   padding-right: 34px;
-  line-height: 42px;
+  line-height: var(--control-h-md);
 }
 
 /* 多选列表框（部门树）：保持平铺可滚动，去掉原生内陷边框 */
@@ -330,7 +351,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
 
 .searchable-select .searchable-select-input {
   width: 100%;
-  height: 42px;
+  height: var(--control-h-md);
   padding: 0 32px 0 12px;
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -393,7 +414,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   border: 1px solid var(--outline-soft);
   border-radius: var(--r-xs);
   box-shadow: var(--shadow-pop);
-  z-index: 50;
+  z-index: var(--z-popup);
 }
 .searchable-select.is-open .searchable-select-dropdown { display: block; }
 
@@ -410,7 +431,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
 .searchable-select-dropdown.is-floating {
   position: fixed;
   right: auto;
-  z-index: 1600;
+  z-index: var(--z-popup-float);
 }
 
 .searchable-select-option {
@@ -556,7 +577,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 42px;
+  height: var(--control-h-md);
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
   background: var(--surface);
@@ -627,7 +648,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   border-radius: var(--r-sm);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
-  z-index: 100;
+  z-index: var(--z-popup);   /* 与下拉/多选面板同一层级令牌 */
   /* 两边都放不下时 date-picker.js 会给面板压一个 max-height，这里要能自己滚 */
   overflow-y: auto;
 }
@@ -656,7 +677,7 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
 .dp-panel.is-floating {
   position: fixed;
   right: auto;
-  z-index: 1600;
+  z-index: var(--z-popup-float);
 }
 
 .dp-header {
@@ -837,7 +858,7 @@ thead th {
 .tbl-scroll > table > thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-sticky-head);
 }
 
 tbody td {
@@ -922,7 +943,7 @@ tbody tr.unsubscribed-row:hover td {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-overlay);
   opacity: 0;
   pointer-events: none;
   transition: opacity .2s ease;
@@ -942,6 +963,13 @@ tbody tr.unsubscribed-row:hover td {
   padding: var(--sp3);
   position: relative;   /* 右上角 ✕（.dlg-close）的定位基准 */
 }
+
+/* 弹窗宽度三档：宽度是「弹窗外观」的一部分，收在这里统一管理。
+   页面里**不要**再用 #id 覆盖 max-width —— ID 权重高于 class，会让全局调整改不动
+   （此前 index 用 #detailDialog 写 640、task 用 #taskDetailDialog 写 860，与默认 520 并存）。 */
+.dialog--sm { max-width: 520px; }   /* 与 .dialog 默认一致，显式声明便于对照 */
+.dialog--md { max-width: 640px; }   /* 服务详情（index） */
+.dialog--lg { max-width: 860px; }   /* 任务单详情（task） */
 
 /* index/task 详情弹窗是无 .sub-head 的旧 .dialog 结构，右上角 ✕ 直接绝对定位；
    外观沿用订阅弹窗的 .sub-close，保证三页弹窗关闭按钮一致 */
@@ -1015,7 +1043,7 @@ tbody tr.unsubscribed-row:hover td {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+  z-index: var(--z-loading);
   opacity: 0;
   pointer-events: none;
   transition: opacity .2s;
@@ -1127,7 +1155,7 @@ tbody tr.unsubscribed-row:hover td {
   padding: 10px 24px;
   border-radius: var(--r-sm);
   font-size: var(--fs-md);
-  z-index: 3000;
+  z-index: var(--z-toast);
   opacity: 0;
   pointer-events: none;
   transition: opacity .2s, transform .2s ease;
@@ -1154,8 +1182,8 @@ tbody tr.unsubscribed-row:hover td {
 /* 层级与全站保持一致，不另起一套：
    页面内容 < .overlay / 订阅弹窗 1000 < 文档子弹窗 1050
             < loading-mask 2000 < toast 3000 */
-.sub-overlay { z-index: 1000; }
-.doc-overlay { z-index: 1050; }
+.sub-overlay { z-index: var(--z-overlay); }
+.doc-overlay { z-index: var(--z-sub-dialog); }
 
 .sub-dialog,
 .doc-dialog {
@@ -1321,7 +1349,7 @@ body.dialog-open { overflow: hidden; }
 }
 
 .sub-input,
-.sub-ctl { height: 42px; }
+.sub-ctl { height: var(--control-h-md); }
 
 .sub-textarea {
   height: auto;
@@ -1359,7 +1387,7 @@ body.dialog-open { overflow: hidden; }
   background-position: right 12px center;
   background-size: 14px 14px;
   padding-right: 34px;
-  line-height: 42px;
+  line-height: var(--control-h-md);
 }
 
 .sub-ctl-group {
@@ -1419,7 +1447,7 @@ label.req::after {
 .doc-tbl-wrap > .sub-tbl > thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-sticky-head);
 }
 
 .sub-tbl td {
@@ -1455,9 +1483,9 @@ label.req::after {
 
 /* 表格里的控件比表单里矮一号，避免行高被撑到 60px+ */
 .sub-tbl .sub-input,
-.sub-tbl .sub-ctl { height: 34px; line-height: 34px; font-size: var(--fs-sm); }
+.sub-tbl .sub-ctl { height: var(--control-h-sm); line-height: var(--control-h-sm); font-size: var(--fs-sm); }
 .sub-tbl .searchable-select .searchable-select-input {
-  height: 34px;
+  height: var(--control-h-sm);
   font-size: var(--fs-sm);
   padding: 0 30px 0 10px;
 }
@@ -1576,7 +1604,7 @@ label.req::after {
 .msel { position: relative; }
 .msel .msel-display {
   width: 100%;
-  height: 42px;
+  height: var(--control-h-md);
   padding: 0 34px 0 12px;   /* 右侧留出箭头位置 */
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -1617,7 +1645,7 @@ label.req::after {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  z-index: 1000;
+  z-index: var(--z-popup);   /* 与 .searchable-select-dropdown 对齐：同类文档流内面板不该一个 50 一个 1000 */
   background: var(--surface);
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -1638,11 +1666,11 @@ label.req::after {
 .msel-panel.is-floating {
   position: fixed;
   right: auto;
-  z-index: 1600;
+  z-index: var(--z-popup-float);
 }
 .msel-panel .msel-search {
   width: 100%;
-  height: 34px;
+  height: var(--control-h-sm);
   padding: 0 10px;
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -1818,6 +1846,10 @@ label.req::after {
 }
 .col-resizer:hover::after,
 .col-resizer.is-active::after { background: var(--primary); }
+/* 「这里能拖」的可发现性：悬停表头**任意位置**就把分隔线淡淡亮出来（--outline），
+   只有直接悬停到把手上才变主色（上面那条）。此前仅 7px 宽的把手自身有反馈，
+   不熟悉的人根本不知道列宽可调（2026-09-15 评估 L-07）。 */
+th:hover > .col-resizer::after { background: var(--outline); }
 body.is-resizing,
 body.is-resizing * { cursor: col-resize !important; user-select: none !important; }
 

@@ -320,7 +320,7 @@
             <select id="f_callerBatch" placeholder="请输入或选择投产批次"></select>
           </div>
           <div class="form-group">
-            <label for="f_providerBatch">提供方变更批次</label>
+            <label for="f_providerBatch">提供方最新变更批次</label>
             <select id="f_providerBatch" placeholder="请输入或选择变更批次"></select>
           </div>
         </div>
@@ -455,7 +455,7 @@
           <thead>
             <tr>
               <th class="col-prio is-sorted" id="thPrio"
-                  title="默认按优先级排序：逾期 / 临期的排在最前。点击可在 宽松在前 → 后端原序 → 紧急在前 之间切换">
+                  title="优先级 = 距里程碑截止日的紧急程度。规则：功能测试基线 = 批次月 −1 的 15 日，正式版基线 = 批次月 15 日；逾期（已过截止日）整行标红，临期（剩余 ≤3 天）仅本格标红。点击可在 宽松在前 → 后端原序 → 紧急在前 之间切换排序">
                 优先级<span class="sort-ind" id="prioSortInd">↑</span>
               </th>
               <th class="col-st">订阅关系基线状态</th>
