@@ -49,12 +49,33 @@
   // ── 批次下拉搜索组件实例 ────────────────────────────
   let batchSelectInstance = null;
 
-  // 暴露给外部模块（如订阅弹窗）读取首页已选批次
-  window._prodBatchInstance = { _inst: null, get value() { return batchSelectInstance ? batchSelectInstance.getValue() : ''; } };
-  Object.defineProperty(window._prodBatchInstance, 'instance', {
+  // 暴露给外部模块（如订阅弹窗）读取首页已选批次。
+  // 项目铁律禁止新增 window._私有桥：正式登记到 window.AppServices（bootstrap.js 里建的注册表）；
+  // window._prodBatchInstance 保留为**同一个对象的别名**做兼容，新代码一律走 AppServices。
+  const prodBatchInstance = { _inst: null, get value() { return batchSelectInstance ? batchSelectInstance.getValue() : ''; } };
+  Object.defineProperty(prodBatchInstance, 'instance', {
     get() { return batchSelectInstance; },
-    set(v) { batchSelectInstance = v; window._prodBatchInstance._inst = v; },
+    set(v) { batchSelectInstance = v; prodBatchInstance._inst = v; },
   });
+  window.AppServices = window.AppServices || {};
+  window.AppServices.prodBatchInstance = prodBatchInstance;
+  window._prodBatchInstance = prodBatchInstance;   // 兼容旧调用点（同一引用，不是副本）
+
+  /**
+   * 批次选项的跨模块读写：正式走 AppServices，window._batchOptions 仅作兼容别名。
+   * 批次列表加载成功时才有，缺失时解析不出 label（见 resolveBatchLabel）。
+   */
+  function setBatchOptions(opts) {
+    const list = opts || [];
+    window.AppServices = window.AppServices || {};
+    window.AppServices.batchOptions = list;
+    window._batchOptions = list;                   // 兼容旧读取点
+    return list;
+  }
+  function getBatchOptions() {
+    const as = window.AppServices;
+    return (as && as.batchOptions) || window._batchOptions || [];
+  }
 
   // ── 提供方系统下拉搜索组件实例 ──────────────────────
   let providerSelectInstance = null;
@@ -79,7 +100,7 @@
     // 如果是批次下拉，同步更新全局引用
     if (el.id === 'f_prodBatch') {
       batchSelectInstance = inst;
-      window._prodBatchInstance._inst = inst;
+      prodBatchInstance._inst = inst;
     }
     return inst;
   }
@@ -262,7 +283,7 @@
 
   /**
    * 批次下拉的 value 是 "2609pc" 这类代码，而请求体与行数据用的都是 label（"2609批次"）。
-   * window._batchOptions 只在批次列表加载成功时才有，缺失时解析不出 label。
+   * 批次选项（AppServices.batchOptions）只在批次列表加载成功时才有，缺失时解析不出 label。
    *
    * 原实现在解析失败时直接 `if (!val) return`，后果是：批次条件既没发给后端、
    * 也没进入前端兜底过滤，而必填校验用的是 getValue() 照样通过 ——
@@ -273,7 +294,7 @@
     if (!batchSelectInstance) return { value: '', label: '', ok: true };
     const val = batchSelectInstance.getValue() || '';
     if (!val) return { value: '', label: '', ok: true };
-    const opt = (window._batchOptions || []).find((o) => o.value === val);
+    const opt = getBatchOptions().find((o) => o.value === val);
     if (opt) return { value: val, label: opt.label, ok: true };
     return { value: val, label: '', ok: false };   // 选了东西但解析不出 label
   }
@@ -1170,7 +1191,8 @@
   window.AppServices.afterSubscribeChanged = afterSubscribeChanged;
   // 旧入口保留，兼容此前在控制台或外部页面调用的集成代码。
   window._afterSubscribeChanged = afterSubscribeChanged;
-  window._viewDetail          = (row) => window.DetailDialog && window.DetailDialog.open(row);
+  // 已移除 window._viewDetail：全仓检索确认没有任何调用点（声明后从未被使用）。
+  // 详情页入口统一走 window.DetailDialog.open(row)。
 
   // 输入法状态：中文输入法的 compositionend 与确认键之间可能存在极短时序窗口。
   // 在这个窗口内，Enter 只能提交候选词，不能触发查询或把焦点跳到必填的提供方系统。
@@ -1248,7 +1270,7 @@
     const b = await D.initBatchList(makeSelect);
     if (b) {
       if (b.instance) batchSelectInstance = b.instance;
-      window._batchOptions = b.options || [];   // collectApiBody 取 label 用
+      setBatchOptions(b.options);   // collectApiBody 取 label 用
     }
 
     const d = await D.initDepartmentList(makeSelect, deptsToOptions);

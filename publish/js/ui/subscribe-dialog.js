@@ -19,7 +19,7 @@
  *
  * ── 数据来源约定（重要）────────────────────────────────
  * 调用方系统        → 复用提供方系统选项 window.loadProviderList()
- * 调用方投产/变更批次 → window._batchOptions（295 条，来自 conditions/subscribe 的 batchList）
+ * 调用方投产/变更批次 → AppServices.batchOptions（295 条，来自 conditions/subscribe 的 batchList）
  * 其余下拉字典       → 见下方 DICT，抓包后只需改这一处
  * 关联文档列表         → POST /itamp-tool/intfcMgmt/docList，通过 window.API.call() 代理转发
  */
@@ -64,7 +64,7 @@
    *
    * source 决定选项来源：
    *   'provider'  → 调用方系统选项（与提供方共用同一次接口响应）
-   *   'batch'     → window._batchOptions（295 条批次，来自 conditions/subscribe）
+   *   'batch'     → AppServices.batchOptions（295 条批次，来自 conditions/subscribe）
    *   'dict'      → DICT[dict]（4 个字典 + yesNo；选项都很少，纯可搜索）
    *   'none'      → 暂无数据源 → 退化为可手输的输入框
    *
@@ -313,9 +313,22 @@
     dragInstances.doc = du.makeDraggable(dom.docDialog, dom.docDialog.querySelector('.sub-head'));
   }
 
+  /**
+   * 跨模块取值：统一优先 `window.AppServices`，回退旧的 `window._私有桥`（仅兼容）。
+   * 项目铁律禁止新增 window._桥；这两个读取点此前直接读旧桥，现改为先查注册表。
+   */
+  function batchOptions() {
+    const as = window.AppServices;
+    return (as && as.batchOptions) || window._batchOptions || [];
+  }
+  function prodBatchInstance() {
+    const as = window.AppServices;
+    return (as && as.prodBatchInstance) || window._prodBatchInstance || null;
+  }
+
   function resolveOptions(f) {
     if (f.source === 'provider') return callerOptions;
-    if (f.source === 'batch') return window._batchOptions || [];
+    if (f.source === 'batch') return batchOptions();
     if (f.source === 'dict') return DICT[f.dict] || [];
     return [];
   }
@@ -487,8 +500,8 @@
     if (taskNo) $('#sub_taskNo').value = taskNo;
 
     // 跟随首页已选的提供方批次：如果用户在首页选了批次，订阅弹窗自动填入
-    if (selectInstances['sub_callerBatch'] && window._prodBatchInstance) {
-      const homeBatch = window._prodBatchInstance.value;
+    if (selectInstances['sub_callerBatch'] && prodBatchInstance()) {
+      const homeBatch = prodBatchInstance().value;
       if (homeBatch) {
         try { selectInstances['sub_callerBatch'].setValue(homeBatch); } catch (_) { /* 忽略 */ }
       }
@@ -1182,7 +1195,7 @@
     });
     // 一条文档都没有时别让下拉空着，退回全局批次字典
     if (!map.size) {
-      (window._batchOptions || []).forEach((o) => {
+      batchOptions().forEach((o) => {
         if (o && o.value != null && String(o.value) !== '') map.set(String(o.value), o.label || String(o.value));
       });
     }
@@ -1194,7 +1207,7 @@
   function batchLabel(raw) {
     const code = String(raw || '').trim();
     if (!code) return '';
-    const hit = (window._batchOptions || []).find((o) => String(o.value) === code);
+    const hit = batchOptions().find((o) => String(o.value) === code);
     if (hit && hit.label) return hit.label;
     return displayBatch(code);
   }
