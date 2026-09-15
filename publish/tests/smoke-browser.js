@@ -1024,6 +1024,10 @@ const PAGES = [
         if (dz.whileOpen !== 1) fails.push(`浮动打开时 body 内应有 1 个面板，实际 ${dz.whileOpen}`);
         if (dz.after !== 0) fails.push(`destroy 后 body 内残留 ${dz.after} 个孤立面板`);
         if (!dz.ctlGone) fails.push('destroy 后组件容器没有被移除');
+
+        // toast 的队列行为（U-07）**不在这里断言**：本页无后端时会持续异步弹提示，
+        // 队列排空时间不可控，靠真实定时器断言极易偶发失败。
+        // 改为在 tests/toast-queue.test.js 里用假 DOM + 假时钟做确定性单测。
       } catch (e) {
         fails.push(`destroy 回收段异常：${e.message}`);
       }

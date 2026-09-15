@@ -18,5 +18,6 @@ require('./data-parsers.test');
 require('./tool-api.test');
 require('./publish-response.test');
 require('./bootstrap.test');
+require('./toast-queue.test');
 
 runAll();
