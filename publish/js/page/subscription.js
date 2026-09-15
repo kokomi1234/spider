@@ -33,10 +33,10 @@
   const DEFAULT_CALLER = '';
 
   /** 表格列：[字段 key, 中文列名, 是否等宽字体]，顺序必须与 HTML 的 colgroup / thead 完全一致。
-      前 5 列是左固定列（sticky，横向滚动时不丢）：
-        优先级（算出来的，一眼看该先处理哪条）+ 订阅关系基线状态 +
-        订阅关系审核流程状态 + 提供方应用系统服务中文名称 + 接口编码。
+      前 3 列是左固定列（sticky，横向滚动时不丢）：优先级（算出来的，一眼看该先处理哪条）+
+      订阅关系基线状态 + 订阅关系审核流程状态（服务中文名 / 接口编码已取消固定，见 FIXED_COL_CLASS）。
       其余为可横向滚动的数据列，按「提供方身份 → 调用方身份 → 实施 / 人员 / 附加」分组。
+      列宽不在这里，在 subscription.html 的 colgroup（按真实数据的文本宽度定，注释里有依据）。
       ⚠️ 列增删都要同步改 subscription.html 的 colgroup / thead 与 renderEmpty() 的 colspan。 */
   const COLUMNS = [
     ['_prioText',              '优先级',                       false],   // 左固定 1
@@ -726,8 +726,10 @@
           const tag = k === 'status' ? statusTag(raw) : reviewStatusTag(raw);
           return `<td class="${fixed}copy-cell" ${copyAttr} title="点击复制">${tag}</td>`;
         }
-        return `<td class="${fixed}${mono ? 'cell-code ' : ''}copy-cell" ${copyAttr}`
-          + ` title="点击复制: ${esc(text)}">${esc(text)}</td>`;
+        // 数据格统一套一层 .cell-clamp：列宽不够时折到 2 行再省略，而不是一上来就截断。
+        // 用内层 span 而不是给 td 加类，是因为 -webkit-line-clamp 会改 display，加在 td 上会毁掉表格布局。
+        return `<td class="${fixed}cell-wrap ${mono ? 'cell-code ' : ''}copy-cell" ${copyAttr}`
+          + ` title="点击复制: ${esc(text)}"><span class="cell-clamp">${esc(text)}</span></td>`;
       }).join('');
       return `<tr class="${overdue.trim()}" data-index="${index}">
         ${cells}
@@ -1128,14 +1130,14 @@
     syncSortIndicator();   // 默认就是「紧急在前」，把箭头摆对
 
     // 22 个数据列 + 操作列；表头挂拖拽把手：拖右边框改列宽，双击恢复默认，宽度记在本地。
-    // 左固定区那 5 列不给把手 —— 它们的 left 偏移写死在 subscription.html，拖了会和 sticky 对不上。
+    // 左固定区那 3 列不给把手 —— 它们的 left 偏移写死在 subscription.html，拖了会和 sticky 对不上。
     if (typeof window.createTableResizer === 'function') {
       window.createTableResizer(document.querySelector('.subq-table'), {
         minWidth: 60,
         skipFirst: false,                    // 第一列（优先级）已在 skipIndices 里，不需要额外跳过
         skipIndices: [0, 1, 2],                    // 优先级 / 基线状态 / 审核流程状态（服务中文名、接口编码不再固定）
-        // v3：列序重排（三列前置固定）+ 复选框列移除后旧存档宽度已对不上，换 key 防错位
-        storageKey: 'itamp.subq.colWidths.v3',
+        // v4：列宽按真实数据重排（3850 → 2926px），旧存档宽度与新列序/新语义对不上，换 key 防错位
+        storageKey: 'itamp.subq.colWidths.v4',
       });
     }
 

@@ -88,3 +88,26 @@ test('左固定列在 <th> 上也带同一套类名，且 JS 侧登记齐全', (
     assert.ok(js.includes(`'${cls}'`), `subscription.js 的固定列映射里缺少 ${cls}`);
   });
 });
+
+// ── 长内容折 2 行（2026-09-15）──────────────────────────────────────────
+// 列宽改窄之后，长字段必须能折行，否则又回到「一律省略号」。这条守着三条不可分割的约定：
+//   ① td.cell-wrap 放开换行；② .cell-clamp 限 2 行；③ JS 渲染时同时给出这两个（含内层 span）。
+test('长内容单元格：CSS 与渲染代码必须成套出现', () => {
+  const { html, js, style } = parsePage();
+
+  assert.match(style, /\.subq-table\s+td\.cell-wrap\s*\{[^}]*white-space:\s*normal/,
+    '缺少 .subq-table td.cell-wrap（该规则负责放开换行）');
+  assert.match(style, /\.subq-table\s+\.cell-clamp\s*\{[^}]*display:\s*-webkit-box/,
+    '缺少 .subq-table .cell-clamp（限 2 行靠 -webkit-line-clamp + display:-webkit-box）');
+  assert.match(style, /\.subq-table\s+\.cell-clamp\s*\{[^}]*line-clamp:\s*2/,
+    '.cell-clamp 必须是 2 行截断');
+  // 表头要能折行，否则长表头会把短内容列撑宽（就是本轮要治的病）
+  assert.match(style, /\.subq-table\s+thead\s+th\s*\{[^}]*white-space:\s*normal/,
+    '表头必须允许折行：列宽按内容定，不能再让表头字数撑宽整列');
+
+  assert.ok(js.includes('cell-wrap'), 'subscription.js 渲染时没有给数据格加 cell-wrap');
+  assert.ok(js.includes('<span class="cell-clamp">'),
+    '数据格的内容要套一层 <span class="cell-clamp">（-webkit-line-clamp 加在 <td> 上会破坏表格布局）');
+  assert.ok(!/class="[^"]*cell-clamp[^"]*"/.test(html.replace(/<style>[\s\S]*?<\/style>/, '')),
+    'cell-clamp 只能加在内层 span 上，不要写成 <td class="cell-clamp">');
+});

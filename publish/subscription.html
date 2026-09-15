@@ -11,14 +11,22 @@
     /* 结果条数说明（与首页 #resultCount 同款） */
     .result-count { font-size: var(--fs-xs); color: var(--muted); margin-right: var(--sp1); }
 
-    /* 结果表格：22 个数据列 + 操作列，列宽集中在 colgroup（列宽之和 = min-width = 3850px）。
+    /* 结果表格：22 个数据列 + 操作列，列宽集中在 colgroup（列宽之和 = min-width = 3046px）。
        table-layout: fixed + min-width 让横向滚动条出现时表头列宽不塌。
        ⚠️ colgroup 的 <col> 个数必须与 thead 的 <th> 个数一致：js/ui/table-resize.js
-       用「两者长度相等」判断结构是否可拖拽，差一个就静默不绑定把手。 */
+       用「两者长度相等」判断结构是否可拖拽，差一个就静默不绑定把手。
+
+       ── 列宽是怎么定的（2026-09-15 重排）───────────────────────
+       拿缓存里 17933 行真实数据在浏览器里按本表字体量出每列文本像素宽，再按「内容」定宽：
+         · 内容窄的列（是否做副本 / 订阅人 / 各编号列）：宽 = 内容一行所需，表头太长就折两行，
+           不再让表头字数去撑宽整列（原来一堆 200px 的列，内容其实只有 40~90px）。
+         · 内容长的列（服务中文名 / 接口编码 / 服务英文名 / 部门名 / 任务编号）：宽按 2 行能装下
+           p95~p99 的内容来定，单元格允许折到 2 行（见下面的 td.cell-wrap / .cell-clamp）。
+       总宽 3850 → 3046px，横向滚动少了 1/5，而每列能看到的内容反而更多。 */
     .subq-table {
       table-layout: fixed;
       width: 100%;
-      min-width: 3850px;
+      min-width: 3046px;
       border-collapse: separate;
       border-spacing: 0;
     }
@@ -36,7 +44,10 @@
       font-size: var(--fs-nano);
       font-weight: 600;
       letter-spacing: .02em;
-      white-space: nowrap;
+      /* 表头允许折到 2 行：列宽按内容定，长表头自己折行去适配列宽，
+         而不是反过来让表头字数把整列撑宽（那会让「是否做副本」这种短列白占 180px） */
+      white-space: normal;
+      line-height: 1.25;
       position: sticky;
       top: 0;
       z-index: 1;
@@ -49,9 +60,25 @@
     .subq-table tbody tr:last-child td { border-bottom: none; }
     .subq-table tbody tr:hover td { background: var(--surface-1); }
 
-    /* 左固定区：优先级(130) + 基线状态(130) + 审核流程状态(140)，共 400px。
+    /* ── 长内容折到 2 行（2026-09-15）─────────────────────────
+       table-layout: fixed 下 td 只显示一行，长值（服务中文名最长 877px、接口编码 709px）
+       原来一律被省略号截掉。现在：数据格由 JS 加 .cell-wrap 放开换行，内容再套一层
+       .cell-clamp 限 2 行 —— 仍然超过 2 行的极端值才截断，鼠标悬停有完整 title、点击可复制。
+       ⚠️ -webkit-line-clamp 只对块容器生效，直接加在 <td> 上会把 display 改成 -webkit-box、
+          破坏表格布局，所以必须用内层 span（与首页 .result-table 的 .cell-clamp 同款做法）。 */
+    .subq-table td.cell-wrap { white-space: normal; }
+    .subq-table .cell-clamp {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      /* 长 URL / 长 Java 包名没有空格，得允许在任意位置断行 */
+      overflow-wrap: anywhere;
+    }
+
+    /* 左固定区：优先级(104) + 基线状态(118) + 审核流程状态(96)，共 318px。
        这几个是「一眼必看 + 高频筛选」的字段，横向滚动时不能丢。
-       ※ 提供方应用系统服务中文名称(200) / 接口编码(160) 不再固定 ——
+       ※ 提供方应用系统服务中文名称 / 接口编码 不再固定 ——
          用户反馈固定列过多会让横向滚动时可见信息太少。
        left 偏移 = 前面所有固定列宽度之和，改 colgroup 宽度必须同步改这里。 */
     .subq-table th.col-prio,
@@ -65,8 +92,8 @@
       background: var(--surface);
     }
     .subq-table th.col-prio,   .subq-table td.col-prio   { left: 0; }        /* 固定区起点 */
-    .subq-table th.col-st,     .subq-table td.col-st     { left: 130px; }    /* = 优先级 130 */
-    .subq-table th.col-review, .subq-table td.col-review { left: 260px; }    /* = + 基线状态 130 */
+    .subq-table th.col-st,     .subq-table td.col-st     { left: 104px; }    /* = 优先级 104 */
+    .subq-table th.col-review, .subq-table td.col-review { left: 222px; }    /* = + 基线状态 118 */
     .subq-table thead th.col-prio,
     .subq-table thead th.col-st,
     .subq-table thead th.col-review { z-index: 3; background: var(--surface-1); }
@@ -85,7 +112,7 @@
     .subq-table thead th.col-op { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-op { background: var(--surface-1); }
 
-    /* 空态：表格总宽 3850px，若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
+    /* 空态：表格总宽 3046px（远超视口），若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
        所以这里左对齐（贴着第一列显示） */
     .subq-table td[colspan] {
       text-align: left;
@@ -365,18 +392,32 @@
       <div class="tbl-scroll">
         <table class="subq-table">
           <colgroup>
-            <col class="col-prio" style="width:130px">
-            <col class="col-st" style="width:130px">
-            <col class="col-review" style="width:140px">
-            <col style="width:200px">
-            <col style="width:160px">
-            <col style="width:180px"><col style="width:200px"><col style="width:200px">
-            <col style="width:200px"><col style="width:160px"><col style="width:180px">
-            <col style="width:200px"><col style="width:200px"><col style="width:220px">
-            <col style="width:160px"><col style="width:180px"><col style="width:180px">
-            <col style="width:150px"><col style="width:180px"><col style="width:80px">
-            <col style="width:140px"><col style="width:140px">
-            <col class="col-op" style="width:140px">
+            <!-- 宽度一律按「内容」定（依据：缓存 17933 行真实数据在浏览器里量出的文本宽度分布），
+                 不按表头字数撑宽；表头太长由它自己折两行去适配。列宽合计 = 上方 min-width。
+                 左固定 3 列的宽度改了就同步改 td.col-st / td.col-review 的 left。 -->
+            <col class="col-prio" style="width:104px">   <!-- 优先级：色块最长「逾期 123 天」 -->
+            <col class="col-st" style="width:118px">     <!-- 基线状态：色块最长「功能测试基线」 -->
+            <col class="col-review" style="width:96px">  <!-- 审核流程状态：色块最长「审核完成」 -->
+            <col style="width:240px">   <!-- 提供方应用系统服务中文名称：长文本，折 2 行 -->
+            <col style="width:220px">   <!-- 接口编码：长文本(URL/类名)，折 2 行 -->
+            <col style="width:80px">    <!-- 提供方应用系统编号 -->
+            <col style="width:120px">   <!-- 提供方应用系统英文简称 -->
+            <col style="width:128px">   <!-- 提供方应用系统服务编号 -->
+            <col style="width:240px">   <!-- 提供方应用系统服务英文名称：长文本，折 2 行 -->
+            <col style="width:104px">   <!-- 提供方最新变更批次 -->
+            <col style="width:240px">   <!-- 提供方部门名称：部门名常见 15 字（216px），给到一行装得下 -->
+            <col style="width:100px">   <!-- 调用方系统/分行编号 -->
+            <col style="width:130px">   <!-- 调用方系统英文简称/分行名称 -->
+            <col style="width:128px">   <!-- 调用方应用系统服务编号 -->
+            <col style="width:104px">   <!-- 调用方投产/变更批次 -->
+            <col style="width:128px">   <!-- 调用方任务编号 -->
+            <col style="width:80px">    <!-- 订阅方产品实施单元 -->
+            <col style="width:64px">    <!-- 订阅人 -->
+            <col style="width:240px">   <!-- 调用方部门名称：同提供方，常见值一行装下 -->
+            <col style="width:56px">    <!-- 是否做副本 -->
+            <col style="width:120px">   <!-- 副本使用场景说明 -->
+            <col style="width:110px">   <!-- 产品实施单元 -->
+            <col class="col-op" style="width:96px">      <!-- 操作：「查 看」按钮 -->
           </colgroup>
           <thead>
             <tr>

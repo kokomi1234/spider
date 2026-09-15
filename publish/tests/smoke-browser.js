@@ -197,7 +197,7 @@ const PAGES = [
             cols: t.querySelectorAll('colgroup > col').length,
             ths: t.querySelectorAll('thead > tr > th').length,
             handles: t.querySelectorAll('thead .col-resizer').length,
-            // 仍固定的「审核流程状态」列 sticky left 应等于前面两列宽之和（130 + 130 = 260px）
+            // 仍固定的「审核流程状态」列 sticky left 应等于前面两列宽之和（104 + 118 = 222px）
             reviewLeft: review ? getComputedStyle(review).left : 'n/a',
           };
         });
@@ -210,8 +210,8 @@ const PAGES = [
           process.stdout.write('    [FAIL] 表头没有挂上列宽拖拽把手\n');
           anyFail = true;
         }
-        if (table.reviewLeft !== '260px') {
-          process.stdout.write(`    [FAIL] 审核流程状态列 sticky left 应为 260px，实际 ${table.reviewLeft}\n`);
+        if (table.reviewLeft !== '222px') {
+          process.stdout.write(`    [FAIL] 审核流程状态列 sticky left 应为 222px，实际 ${table.reviewLeft}\n`);
           anyFail = true;
         }
 
