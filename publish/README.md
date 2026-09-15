@@ -153,6 +153,7 @@ publish/
 | `PROXY_OFFLINE` | 不设置 | 设为 `1` → 纯离线回放，完全不访问网络 |
 | `PROXY_RECORD` | 开启 | 设为 `0` → 关闭录制 |
 | `PROXY_CACHE_DIR` | `./cache` | 缓存目录 |
+| `PROXY_API_CACHE_TTL` | `300000` | API 内存缓存 TTL（毫秒），`0` 关闭。目前只缓存订阅条件字典 `/conditions/subscribe`（后端 3~4s）：命中响应带 `X-Cache: HIT`，订阅写接口（setSubcription 等）会使它立即失效 |
 
 ```bash
 PROXY_PORT=4000 PROXY_TOKEN=xxxx-xxxx node proxy.js

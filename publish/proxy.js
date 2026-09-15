@@ -32,6 +32,9 @@
  *   PROXY_TARGET    后端基地址，默认 http://itamp.bocsys.cn
  *   PROXY_TOKEN     认证令牌（后端 token 约 12 小时过期，见 output/ITAMP接口总���.md）
  *   PROXY_OFFLINE   设为 1 → 纯离线回放，完全不访问网络（默认自动：先真实后缓存）
+ *   PROXY_API_CACHE_TTL  API 内存缓存 TTL 毫秒（默认 300000=5 分钟，0 关闭）。
+ *                        目前只缓存订阅条件字典 /conditions/subscribe（后端 3~4s、93KB，
+ *                        每次刷新页面都要拉）；订阅写接口会使它立即失效
  *   PROXY_RECORD    设为 0 → 关闭录制
  *   PROXY_CACHE_DIR 缓存目录，默认 ./cache
  *
@@ -90,6 +93,29 @@ for (const [name, envKey] of [
 }
 
 const OFFLINE = process.env.PROXY_OFFLINE === '1';   // 纯离线回放
+
+// ── API 内存缓存（读接口加速）─────────────────────────────────
+// conditions/subscribe 后端要 3~4s（93KB），而每次刷新页面都要拉一次
+// （前端 api-client 只在单个页面会话内记忆化）。这里在代理层加带 TTL 的内存缓存：
+//   · 只缓存 API_CACHE_PATHS 里的读接口；key 复用 cacheKey()（已剔除防缓存随机数 n、
+//     请求体归一化）—— 所以每次请求带的不同 ?n= 也能命中
+//   · TTL 默认 5 分钟，PROXY_API_CACHE_TTL=0 关闭；命中响应带 X-Cache: HIT
+//   · 订阅相关写接口（setSubcription / subscribe / unsubscribe / subscriptionReview）
+//     请求一到就立即失效缓存 —— 保证写完再查拿的是最新数据
+const API_CACHE_TTL = (() => {
+  const n = Number(process.env.PROXY_API_CACHE_TTL);
+  return Number.isFinite(n) && n >= 0 ? n : 5 * 60 * 1000;
+})();
+const API_CACHE_PATHS = [
+  '/itamp-tool/intfcMgmt/conditions/subscribe',
+];
+const API_WRITE_PATHS = [
+  '/itamp-tool/publish/setSubcription',
+  '/itamp-tool/publish/subscribe',
+  '/itamp-tool/publish/unsubscribe',
+  '/itamp-tool/publish/subscriptionReview',
+];
+const apiCache = new Map();   // cacheKey -> { status, headers, body, at }
 const RECORD = process.env.PROXY_RECORD !== '0';     // 是否录制
 // 宽松匹配：精确 key 未命中时，退而按「method + path」回放同接口最近一条记录。
 // 前端改了请求体（加字段、改 pageSize）后，旧缓存的 key 就再也命中不了，
@@ -331,6 +357,55 @@ function findLooseMatch(method, reqUrl) {
   return { entry, key: best.key, meta: best.meta };
 }
 
+// ── API 内存缓存：判断 / 读取 / 回写 / 失效 ────────────────────
+function pathOf(reqUrl) {
+  try { return new URL(reqUrl, 'http://dummy').pathname; } catch (_) { return String(reqUrl || ''); }
+}
+function isApiCachePath(reqUrl) {
+  if (!API_CACHE_TTL) return false;
+  const p = pathOf(reqUrl);
+  return API_CACHE_PATHS.some((s) => p === s);
+}
+function isApiWritePath(reqUrl) {
+  const p = pathOf(reqUrl);
+  return API_WRITE_PATHS.some((s) => p === s);
+}
+function getApiCache(key) {
+  const hit = apiCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > API_CACHE_TTL) { apiCache.delete(key); return null; }   // 过期即清理
+  return hit;
+}
+function respondApiCache(res, hit) {
+  const ageSec = Math.round((Date.now() - hit.at) / 1000);
+  const headers = { ...(hit.headers || {}), ...CORS };
+  delete headers['content-length'];
+  delete headers['transfer-encoding'];
+  delete headers['content-encoding'];
+  delete headers['connection'];
+  headers['X-Cache'] = 'HIT';
+  headers['X-Api-Cache-Age'] = String(ageSec);
+  res.writeHead(hit.status || 200, headers);
+  res.end(hit.body);
+  console.log(`   ⚡ API 内存缓存命中（${ageSec}s 前的响应，X-Cache: HIT）`);
+}
+function storeApiCache(key, entry) {
+  if (!API_CACHE_TTL) return;
+  apiCache.set(key, {
+    status: entry.status || 200,
+    headers: entry.headers || {},
+    body: entry.body || '',
+    at: Date.now(),
+  });
+}
+
+function invalidateApiCache(reason) {
+  if (!apiCache.size) return;
+  const n = apiCache.size;
+  apiCache.clear();
+  console.log(`   ♻️  已失效 API 内存缓存 ${n} 条（${reason}）`);
+}
+
 // ── 回放 ──────────────────────────────────────────────────────
 function replay(res, entry, reason, loose) {
   const headers = { ...(entry.headers || {}), ...CORS };
@@ -408,8 +483,15 @@ function forward(req, res, bodyBuf, key, meta) {
       const headers = { ...proxyRes.headers, ...CORS };
       delete headers['content-length'];
       delete headers['transfer-encoding'];
+      if (isApiCachePath(req.url)) headers['X-Cache'] = 'MISS';
       res.writeHead(proxyRes.statusCode, headers);
       res.end(body);
+
+      // API 内存缓存：字典响应存一份（带 TTL），下回同参数请求直接命中
+      if (isApiCachePath(req.url) && proxyRes.statusCode === 200) {
+        storeApiCache(key, { status: proxyRes.statusCode, headers: proxyRes.headers, body: body.toString('utf8') });
+        console.log('   ⚡ 已存入 API 内存缓存（下次同参数请求 X-Cache: HIT）');
+      }
 
       // 只录 200：token 过期返回的 401 / 后端 500 不能被录进去，
       // 否则离线回放拿到的就是错误响应
@@ -497,6 +579,7 @@ const server = http.createServer((req, res) => {
       record: RECORD,
       cacheDir: CACHE_DIR,
       cacheCount: Object.keys(readIndex()).length,
+      apiCache: { ttlMs: API_CACHE_TTL, size: apiCache.size, paths: API_CACHE_PATHS },
     });
     return;
   }
@@ -605,15 +688,30 @@ function handle(req, res, bodyBuf) {
 
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
 
+  // API 内存缓存：命中直接返回（放在离线回放之前 —— 它服务的就是「重复请求」这个场景）
+  if (isApiCachePath(req.url)) {
+    const hit = getApiCache(key);
+    if (hit) return respondApiCache(res, hit);
+  }
+  // 订阅相关写接口：请求一到就失效字典缓存。
+  // 放在转发前而不是「成功后」，是为了不依赖响应路径；写失败导致的代价只是多发一次字典请求。
+  if (isApiWritePath(req.url)) invalidateApiCache('写接口 ' + pathOf(req.url));
+
   // 纯离线模式：只读本地缓存，完全不访问网络
   if (OFFLINE) {
     const hit = readCache(key);
-    if (hit) return replay(res, hit, 'PROXY_OFFLINE=1');
+    if (hit) {
+      if (isApiCachePath(req.url)) storeApiCache(key, hit);   // 下一回同参数直接走内存缓存
+      return replay(res, hit, 'PROXY_OFFLINE=1');
+    }
 
     // 精确未命中 → 尝试宽松匹配（同 method + 同 path 的最近一条）
     if (LOOSE) {
       const loose = findLooseMatch(req.method, req.url);
-      if (loose) return replay(res, loose.entry, 'PROXY_OFFLINE=1 宽松匹配', true);
+      if (loose) {
+        if (isApiCachePath(req.url)) storeApiCache(key, loose.entry);
+        return replay(res, loose.entry, 'PROXY_OFFLINE=1 宽松匹配', true);
+      }
     }
 
     return sendJson(res, 404, {
@@ -663,6 +761,7 @@ server.listen(PORT, () => {
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   模式：${OFFLINE ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
   console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
+  console.log(`   API 内存缓存：${API_CACHE_TTL ? `开启（TTL ${API_CACHE_TTL}ms，${API_CACHE_PATHS.join('、')}）` : '关闭（PROXY_API_CACHE_TTL=0）'}`);
   console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
   if (!OFFLINE) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
