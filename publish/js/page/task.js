@@ -73,18 +73,45 @@
   let reviewerRoleSelect = null;// 评委角色 searchable-select 实例（禁用，仅保持统一外观）
   let datePickers = {};         // id -> date-picker 实例
   let multiSelects = {};        // key -> multi-select 实例
-  let loadingTimer = null;
 
   // ═══════════════════════════════════════════════════
   // 小工具
   // ═══════════════════════════════════════════════════
 
   // 公共实现见 js/ui/toast.js（三页共用）。
-  // 注意：以前这里复用 loadingTimer 做 toast 定时器，会把「加载中」的定时器顶掉，已随统一实现修掉。
   const toast = window.toast || (() => {});
   // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
   const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
   const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
+
+  // ── 加载态 / 查询失败提示（与订阅页同款，别各写一套）────────────────
+  // 本页原先查询期间只把按钮文字改成「查询中…」，长查询时看起来像卡死、容易被反复点击；
+  // 失败也只有 3.5s 就消失的 toast，用户错过之后会把「查询失败」误读成「确实没有数据」。
+  function setLoading(on) {
+    const el = $('#loadingMask');
+    if (!el) return;
+    el.classList.toggle('show', !!on);
+    el.setAttribute('aria-busy', on ? 'true' : 'false');
+  }
+
+  /** 查询失败的常驻提示：区分「首次就失败」与「保留了上一次成功结果」两种语义 */
+  function showQueryFail(reason) {
+    const bar = $('#failBar');
+    if (!bar) return;
+    const msg = String(reason || '未知错误');
+    const txt = $('#failText');
+    if (txt) {
+      txt.textContent = state.queried
+        ? `⚠️ 本次查询失败，下面仍是上一次成功查询的结果（${msg}）`
+        : `⚠️ 查询失败：${msg}`;
+    }
+    bar.style.display = '';
+  }
+
+  function hideQueryFail() {
+    const bar = $('#failBar');
+    if (bar) bar.style.display = 'none';
+  }
 
   /** 去掉时间戳尾部的 00:00:00，只留日期 */
   function shortDate(v) {
@@ -171,12 +198,14 @@
 
     const btn = $('#btnQuery');
     if (btn) { btn.disabled = true; btn.textContent = '查询中…'; }
+    setLoading(true);
 
     try {
       const res = await window.TaskApi.fetchTaskList(state.cond, state.pageNum, state.pageSize);
       if (seq !== state.reqSeq) return;          // 已被更新的请求取代，整段丢弃
       if (!res.ok) {
         toast(`⚠️ 查询失败：${res.error || '未知错误'}`, 3500);
+        showQueryFail(res.error || '未知错误');    // toast 会消失，常驻条不会
         // 失败不清空已有结果，方便对照 / 重试；但所有「页码 / 条数」显示都要退回上一次成功的状态，
         // 否则旧表格会配着一个已经前进过的页码，看起来像「查到了但没变化」。
         if (state.queried) {
@@ -184,7 +213,7 @@
           renderPagination();
           renderStats();
         } else {
-          renderEmpty('查询失败，请检查代理或网络');
+          renderEmpty('查询失败，请检查网络或稍后重试');
         }
         return;
       }
@@ -192,15 +221,20 @@
       state.rows = res.rows;
       state.queried = true;
       lastOkPageNum = state.pageNum;
+      hideQueryFail();
       render();
       if (!res.rows.length) toast('查询完成，没有匹配的任务单', 2200);
     } catch (e) {
       if (seq !== state.reqSeq) return;
       toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
+      showQueryFail(e && e.message ? e.message : e);
       console.error('[task] query 异常', e);
     } finally {
       // 只有最新那次请求有权恢复按钮状态，否则连点时按钮会提前解禁
-      if (seq === state.reqSeq && btn) { btn.disabled = false; btn.textContent = '查 询'; }
+      if (seq === state.reqSeq) {
+        setLoading(false);
+        if (btn) { btn.disabled = false; btn.textContent = '查 询'; }
+      }
     }
   }
 
@@ -350,6 +384,9 @@
     $('#btnQuery').addEventListener('click', () => query(1));
     $('#btnReset').addEventListener('click', resetForm);
     $('#btnExportCsv').addEventListener('click', exportCsv);
+    // 失败常驻条上的「重试」：重跑当前页码（首次失败时 pageNum 仍为 1）
+    const retryBtn = $('#btnRetryQuery');
+    if (retryBtn) retryBtn.addEventListener('click', () => query(state.pageNum || 1));
 
     // 筛选卡片折叠
     const card = $('#filterCard');

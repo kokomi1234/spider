@@ -356,6 +356,13 @@
         </div>
       </div>
 
+      <!-- 查询失败提示条：失败时表格会保留上一次结果，这里常驻说明清楚，
+           避免用户把「查询失败」误读成「确实没有数据」（与订阅页同款结构） -->
+      <div class="retry-bar fail-bar" id="failBar" role="status" aria-live="polite" style="display:none;">
+        <span class="retry-text" id="failText"></span>
+        <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">重 试</button>
+      </div>
+
       <div class="tbl-scroll" data-page-node-id="JRgH1QoMA0prksPqkBGWCq">
         <table class="task-table" data-page-node-id="Ps8lqh37LZFEXw7lFa5f8w">
           <colgroup data-page-node-id="99d0NFpbYYAhjur5FralK4">
@@ -419,6 +426,13 @@
         <button class="outlined btn-sm" id="btnTaskDetailClose" type="button" data-page-node-id="jjQ9CK0rPY56e58ajysHxa">关 闭</button>
       </div>
     </div>
+  </div>
+
+  <!-- Loading 遮罩：role=status + aria-live 让屏幕阅读器能播报加载状态
+       （与 index/subscription 同款；此前本页查询期间只有按钮变字，长查询看起来像卡死） -->
+  <div class="loading-mask" id="loadingMask" role="status" aria-live="polite" aria-busy="false">
+    <div class="spinner"></div>
+    <span class="sr-only">正在查询，请稍候</span>
   </div>
 
   <!-- Toast -->
