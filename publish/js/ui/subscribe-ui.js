@@ -10,7 +10,8 @@
 (() => {
   'use strict';
 
-  const debugLog = window.debugLog || (() => {});
+  // 调用时才取 window.debugLog（顶层捕获会在 debug.js 排后时静默变成空操作）
+  const debugLog = (...a) => (window.debugLog || (() => {}))(...a);
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);

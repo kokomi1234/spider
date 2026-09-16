@@ -79,19 +79,21 @@
   // ═══════════════════════════════════════════════════
 
   // 公共实现见 js/ui/toast.js（三页共用）。
-  const toast = window.toast || (() => {});
+  // 以下别名一律**调用时才取** window.*：顶层捕获会让本页「顺序敏感」——依赖的模块
+  // 一旦排到本文件之后，提示 / 转义 / 数字格式化会永久退化成兜底实现，且不报错。
+  const toast = (...a) => (window.toast || (() => {}))(...a);
   // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
-  const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
-  const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
+  const num = (v) => ((window.Fmt && window.Fmt.num) || ((x) => String(x ?? '—')))(v);
 
   // ── 加载态 / 查询失败提示：实现统一在 js/ui/query-feedback.js（三页共用）──
   // 本页原先查询期间只把按钮文字改成「查询中…」，长查询时看起来像卡死、容易被反复点击；
   // 失败也只有 3.5s 就消失的 toast，用户错过之后会把「查询失败」误读成「确实没有数据」。
   // 本地只留薄别名，把 state.queried 传进去；调用点不用改。
-  const QF = window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
-  const setLoading = (on) => QF.setLoading(on);
-  const showQueryFail = (reason) => QF.showQueryFail(reason, state.queried);
-  const hideQueryFail = () => QF.hideFail();
+  const QF = () => window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
+  const setLoading = (on) => QF().setLoading(on);
+  const showQueryFail = (reason) => QF().showQueryFail(reason, state.queried);
+  const hideQueryFail = () => QF().hideFail();
 
   /** 去掉时间戳尾部的 00:00:00，只留日期 */
   function shortDate(v) {

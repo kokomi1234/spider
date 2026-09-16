@@ -14,8 +14,10 @@
 (function () {
   'use strict';
 
-  const log = window.debugLog || (() => {});
-  const notify = window.toast || (() => {});
+  // 跨模块依赖一律**调用时再取**：若在 IIFE 顶层捕获（const notify = window.toast），
+  // 一旦 toast.js / debug.js 排到本文件之后，提示与日志会永久退化成空操作且不报错。
+  const log = (...a) => (window.debugLog || (() => {}))(...a);
+  const notify = (...a) => (window.toast || (() => {}))(...a);
   const $ = (sel) => document.querySelector(sel);
 
   /** 加载失败时的常用批次兜底（与原来写死在页面里的那份一致） */

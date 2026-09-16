@@ -21,7 +21,8 @@
 (function () {
   'use strict';
 
-  const debugLog = window.debugLog || (() => {});
+  // 调用时才取 window.debugLog（顶层捕获会在 debug.js 排后时静默变成空操作）
+  const debugLog = (...a) => (window.debugLog || (() => {}))(...a);
 
   const $ = (sel) => document.querySelector(sel);
 
@@ -67,13 +68,15 @@
 
   // 公共实现见 js/ui/toast.js / js/core/format.js（三页共用）。
   // 本地只留同名别名，调用点不用改。
-  const toast = window.toast || (() => {});
-  const num = (window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—'));
+  // 一律**调用时才取** window.*：顶层捕获会让本页「顺序敏感」——依赖模块一旦排到本文件
+  // 之后，提示 / 数字格式化会永久退化成兜底实现且不报错（回归见 tests/module-order.test.js）。
+  const toast = (...a) => (window.toast || (() => {}))(...a);
+  const num = (v) => ((window.Fmt && window.Fmt.num) || ((x) => String(x ?? '—')))(v);
 
   // 加载态 / 失败常驻条 / 错误串压缩：实现统一在 js/ui/query-feedback.js（三页共用）。
   // 本地只留薄别名（把 state.queried 传进去），调用点不用改。
-  const QF = window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
-  const setLoading = (on) => QF.setLoading(on);
+  const QF = () => window.QueryFeedback || { setLoading() {}, showQueryFail() {}, showFailText() {}, hideFail() {}, shortError: String };
+  const setLoading = (on) => QF().setLoading(on);
 
   /**
    * 空态文案统一走 js/ui/table-utils.js 的 EMPTY_TEXT（延迟取，避免脚本顺序敏感）。
@@ -423,10 +426,10 @@
    * 整段塞进提示条会把真正有用的说明挤没，所以优先抽 msg 字段。
    */
   // shortError / showQueryFail / hideQueryFail 的统一实现见 js/ui/query-feedback.js。
-  const shortError = QF.shortError;
+  const shortError = (e) => QF().shortError(e);
   /** 失败时表格保留上一次结果（方便对照 / 重试），常驻条文案必须明说，否则像「点了没反应」 */
-  const showQueryFail = (reason) => QF.showQueryFail(reason, state.queried);
-  const hideQueryFail = () => QF.hideFail();
+  const showQueryFail = (reason) => QF().showQueryFail(reason, state.queried);
+  const hideQueryFail = () => QF().hideFail();
 
   /**
    * 窗口查询里**部分批次**失败：结果不完整，必须常驻说明是哪几个批次。
@@ -435,7 +438,7 @@
    */
   function showPartialFail(batches) {
     if (!batches || !batches.length) return;
-    QF.showFailText(`⚠️ 窗口内有 ${batches.length} 个批次查询失败（${batches.join('、')}），当前结果不完整`);
+    QF().showFailText(`⚠️ 窗口内有 ${batches.length} 个批次查询失败（${batches.join('、')}），当前结果不完整`);
   }
 
   // statusTag / reviewStatusTag / prioCell 的 HTML 生成已下沉到 SubscriptionView
@@ -613,10 +616,18 @@
     if (state.queried) render();
   }
 
-  if (window.SubscriptionBatchTimes) {
+  // 批次时间弹窗的接线。**不在加载时一次性判断**：若 subscription-batch-times.js 排到
+  // 本文件之后，原来那个 `if (window.SubscriptionBatchTimes)` 会静默跳过 init，
+  // 弹窗从此「点了没反应」。改成幂等函数：加载时试一次，boot() 时再试一次
+  //（boot 在 DOMContentLoaded 跑，那时脚本一定齐了）。
+  let batchTimesInited = false;
+  function initBatchTimes() {
+    if (batchTimesInited || !window.SubscriptionBatchTimes) return;
+    batchTimesInited = true;
     // 弹窗的行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立，见 subscription-batch-times.js）
     window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
   }
+  initBatchTimes();
 
   // 薄封装：bindEvents / boot 里的调用点保持不变
   const openBatchTimeDialog = () => window.SubscriptionBatchTimes.open();
@@ -776,6 +787,7 @@
 
     setQuickCaller('', false);   // 默认不限定调用方（全部），用户可点快捷按钮或下拉选具体系统
     loadDicts();
+    initBatchTimes();            // 兜底再试一次（脚本顺序被打乱时，加载期那次会落空）
     loadBatchTimes();            // 批次时间本地配置（弹窗打开时用它预填）
   }
 

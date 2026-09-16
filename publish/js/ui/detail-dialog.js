@@ -12,7 +12,8 @@
 (function () {
   'use strict';
 
-  const esc = (window.Fmt && window.Fmt.esc) || ((v) => String(v ?? ''));
+  // esc 调用时才取 window.Fmt（顶层捕获会在 format.js 排后时永久退化成弱转义）
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
 
   const overlay = document.getElementById('detailOverlay');
   const titleEl = document.getElementById('detailTitle');

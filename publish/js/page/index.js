@@ -24,8 +24,8 @@
   const SUBSCRIBE_STORAGE_KEY = 'subscribed_services';
 
   // 调试日志：公共实现见 js/core/debug.js（默认不输出，?debug=1 或
-  // window.__APP_DEBUG__ = true 才打印）
-  const debugLog = window.debugLog || (() => {});
+  // window.__APP_DEBUG__ = true 才打印）。调用时才取，避免加载顺序敏感。
+  const debugLog = (...a) => (window.debugLog || (() => {}))(...a);
 
   // ── DOM 引用 ────────────────────────────────────────
   // 只留本文件自己要用的事件源；渲染用的元素由 publish-view.js 按 id 自取。
@@ -121,20 +121,26 @@
   }
 
   // ── 纯逻辑 / 视图 / 编排 / 响应解析（均先于本文件加载）──
+  // 这几处**有意保留加载期捕获**：本文件是三页里最后一个 <script>，命名空间必然就位；
+  // 若被挪到前面，下面 FIELDS 立即解引用会当场抛 TypeError —— 属「有声失败」，
+  // 不是静默降级（静默降级的那几处已改成调用时取值）。再配合 bootstrap.js 的 PRESETS 校验。
   const PublishModel    = window.PublishModel;
   const PublishView     = window.PublishView;
   const PublishQuery    = window.PublishQuery;
   const FIELDS          = PublishModel.FIELDS;
-  const PublishResponse = window.PublishResponse || {};
+  // 旧版本在此额外捕获了一份 PublishResponse，实际全文件已无引用（响应解析已下沉到
+  // publish-query.js / publish-response.js），直接删掉，少一处加载期捕获。
 
   // ── 工具函数 ────────────────────────────────────────
   // 加载遮罩的统一实现见 js/ui/query-feedback.js（三页共用），本地保留原名。
-  const QF = window.QueryFeedback || { setLoading() {} };
-  function showLoading()  { QF.setLoading(true); }
-  function hideLoading()  { QF.setLoading(false); }
+  // 调用时才取 window.*：顶层捕获会让本页「顺序敏感」——依赖模块一旦排到本文件之后，
+  // 加载遮罩与新提示都会静默退化成空实现（回归见 tests/module-order.test.js）。
+  const QF = () => window.QueryFeedback || { setLoading() {} };
+  function showLoading()  { QF().setLoading(true); }
+  function hideLoading()  { QF().setLoading(false); }
 
   // Toast 公共实现见 js/ui/toast.js（三页共用；本地保留 showToast 这个名字）
-  const showToast = window.toast || (() => {});
+  const showToast = (...a) => (window.toast || (() => {}))(...a);
 
   // 暴露给其他模块使用（统一登记到 AppServices）
   window.AppServices = window.AppServices || {};

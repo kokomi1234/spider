@@ -19,7 +19,8 @@
 (function () {
   'use strict';
 
-  const debugLog = window.debugLog || (() => {});
+  // 调用时才取 window.debugLog（顶层捕获会在 debug.js 排后时静默变成空操作）
+  const debugLog = (...a) => (window.debugLog || (() => {}))(...a);
 
   // 请求已收敛到 api-client.js 的 window.API.fetchSubscribePayload()：
   // 该接口与批次列表是同一个，整个页面只发一次 HTTP，这里只做解析。

@@ -56,14 +56,29 @@
 
   // 协议层（endpoint → 请求 → 业务码校验 → 统一错误文案）收在 js/core/api-client.js，
   // tool / service / task / user 四个接口模块共用一份实现，不再各写一遍。
-  const REQ = (window.API && typeof window.API.createRequester === 'function')
-    ? window.API.createRequester({ endpoints: ENDPOINTS, methods: METHODS })
-    : null;
+  // 请求器**延迟创建**（首次调用时才取 window.API.createRequester）。
+  // 为什么不在 IIFE 顶层就建：那样本模块就变成「顺序敏感」——api-client.js 一旦排到
+  // 本文件之后，请求层会永久降级成下面那个抛错的兜底，不报错、只静默失败。
+  // 延迟后脚本顺序怎么排都不影响（回归见 tests/module-order.test.js）。
+  let REQ = null;
+  function requester() {
+    if (!REQ && window.API && typeof window.API.createRequester === 'function') {
+      REQ = window.API.createRequester({ endpoints: ENDPOINTS, methods: METHODS });
+    }
+    return REQ;
+  }
   /** 端点是否已配置（未配置 = 该能力关闭，调用方走本地兜底，不发请求） */
-  const isEnabled = REQ ? REQ.isEnabled : (name) => Boolean(ENDPOINTS[name]);
-  const request = REQ ? REQ.request : (name) => {
-    throw new Error(`请求层未就绪：请确认 core/api-client.js 在本模块之前加载（缺少 createRequester，请求 ${name}）`);
-  };
+  function isEnabled(name) {
+    const req = requester();
+    return req ? req.isEnabled(name) : Boolean(ENDPOINTS[name]);
+  }
+  function request(name, body, query) {
+    const req = requester();
+    if (!req) {
+      throw new Error(`请求层未就绪：core/api-client.js 未加载（缺少 createRequester，请求 ${name}）`);
+    }
+    return req.request(name, body, query);
+  }
 
   // ── 任务单列表 ────────────────────────────────────────────
 
