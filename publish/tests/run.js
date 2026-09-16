@@ -13,6 +13,7 @@ require('./subscription-batch-times.test');
 require('./subscription-table.test');
 require('./date-rules.test');
 require('./request-layer.test');
+require('./api-client.test');
 require('./service-api.test');
 require('./data-parsers.test');
 require('./tool-api.test');

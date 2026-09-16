@@ -28,6 +28,10 @@
    * @param {object} [opts.body]   请求体对象，自动 JSON.stringify
    * @param {object} [opts.query]   query 参数对象，自动拼成 ?a=b&c=d（空值忽略）
    * @param {object} [opts.headers] 额外请求头
+   * @param {AbortSignal} [opts.signal] 调用方的中止信号（如「被新查询取代」）。
+   *        传了它照样有 opts.timeout 兜底：两个信号是「或」的关系，谁先触发谁生效
+   * @param {number} [opts.timeout] 超时毫秒数，默认 20000；<= 0 表示不限时
+   * @param {number} [opts.retry] 失败后重试次数，默认 0（调用方主动中止的不重试）
    * @returns {Promise<Response>} 原样返回 fetch 的 Response，调用方自行判 resp.ok / resp.json()
    */
   const DEFAULT_TIMEOUT = 20000; // ms，与代理层 PROXY_TIMEOUT 对齐，避免网络异常时无限等待
@@ -45,12 +49,26 @@
       if (qs) url += (url.includes('?') ? '&' : '?') + qs;
     }
 
-    // 超时：调用方已传 signal 则尊重它；否则用默认超时兜底（AbortController）
+    // 超时：调用方**传不传 signal 都要有时限兜底**。
+    // 原来只在「没传 signal」时才挂超时，而查询路径全都传了 signal（它的用途是
+    // 「被新查询/重置取代时中止」），于是后端一旦挂起，这次请求就永远不返回 ——
+    // 全屏 loading 一直转，用户唯一出路是自己再点一次查询。
+    // 做法：自建 controller 挂默认超时，再把调用方的 signal 接进来，谁先 abort 谁生效。
     let abortController = null;
     let timer = null;
-    if (!signal && timeout > 0 && typeof AbortController !== 'undefined') {
+    let onCallerAbort = null;
+    if (timeout > 0 && typeof AbortController !== 'undefined') {
       abortController = new AbortController();
       timer = setTimeout(() => abortController.abort(), timeout);
+      if (signal && typeof signal.addEventListener === 'function') {
+        if (signal.aborted) {
+          // 调用方在这之前就中止过了：直接把这次请求也作废
+          abortController.abort();
+        } else {
+          onCallerAbort = () => abortController.abort();
+          signal.addEventListener('abort', onCallerAbort);
+        }
+      }
     }
 
     const fetchOpts = {
@@ -60,20 +78,28 @@
         ...(TOKEN ? { 'token': TOKEN } : {}),
         ...headers,
       },
-      ...(signal ? { signal } : (abortController ? { signal: abortController.signal } : {})),
+      ...(abortController ? { signal: abortController.signal } : (signal ? { signal } : {})),
     };
     if (body !== undefined) fetchOpts.body = JSON.stringify(body);
 
     try {
       return await fetch(url, fetchOpts);
     } catch (e) {
-      // 超时 / 网络错误：可选重试一次（默认不重试，避免意外放大请求量）
-      if (retry > 0) return call(path, { ...opts, retry: retry - 1 });
+      // 调用方主动中止（发起新查询 / 重置表单）时不算失败：照实抛 AbortError，
+      // 别谎报成「超时」—— 查询层靠 err.name === 'AbortError' / signal.aborted 判定中止。
+      const callerAborted = !!(signal && signal.aborted);
+      // 超时 / 网络错误：可选重试一次（默认不重试，避免意外放大请求量）；
+      // 调用方已经取消的请求没有重试的意义。
+      if (retry > 0 && !callerAborted) return call(path, { ...opts, retry: retry - 1 });
+      if (callerAborted && e && e.name === 'AbortError') throw e;
       const isAbort = e && (e.name === 'AbortError' || (abortController && abortController.signal.aborted));
       if (isAbort) throw new Error(`请求超时（${timeout}ms 未响应）：${path}`);
       throw e;
     } finally {
       if (timer) clearTimeout(timer);
+      if (onCallerAbort && signal && typeof signal.removeEventListener === 'function') {
+        signal.removeEventListener('abort', onCallerAbort);
+      }
     }
   }
 
