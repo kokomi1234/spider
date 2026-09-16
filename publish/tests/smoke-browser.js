@@ -1390,6 +1390,211 @@ const PAGES = [
     await page.close();
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 对齐与命中区（2026-09-16 第二批优化）
+  // ═══════════════════════════════════════════════════════════════
+  // 覆盖：表头跟着内容居中、操作列按钮命中区、下拉 ✕/▼ 与弹窗 ✕、折叠 chevron。
+  // 伪元素扩出来的命中区不能只用 getBoundingClientRect（那还是原尺寸），
+  // 所以这里用 elementFromPoint 从元素中心向外 14px 打点，命中的必须是该元素本身。
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(() => {
+        const cs = (el, pseudo) => getComputedStyle(el, pseudo);
+        const box = (el) => {
+          const b = el.getBoundingClientRect();
+          return { w: Math.round(b.width * 10) / 10, h: Math.round(b.height * 10) / 10 };
+        };
+        /** 从元素中心向外 d 像素打点，四个方向都必须命中该元素（含其伪元素） */
+        const probeHit = (el, d) => {
+          if (!el) return 'MISSING';
+          el.scrollIntoView({ block: 'center' });
+          const b = el.getBoundingClientRect();
+          const cx = b.left + b.width / 2;
+          const cy = b.top + b.height / 2;
+          const owns = (x, y) => {
+            const hit = document.elementFromPoint(x, y);
+            return !!hit && (hit === el || el.contains(hit));
+          };
+          return {
+            left: owns(cx - d, cy), right: owns(cx + d, cy),
+            up: owns(cx, cy - d), down: owns(cx, cy + d),
+          };
+        };
+        const out = {};
+
+        // ── 表头跟着内容居中 ──
+        out.thCentered = {};
+        ['col-status', 'col-check', 'col-sub', 'col-op'].forEach((cls) => {
+          const th = document.querySelector(`.result-table thead th.${cls}`);
+          out.thCentered[cls] = th ? cs(th).textAlign : 'MISSING';
+        });
+        const thName = document.querySelector('.result-table thead th.col-name');
+        out.thNameAlign = thName ? cs(thName).textAlign : 'MISSING';
+
+        // ── 操作列「详情 / 订阅」命中区与间距 ──
+        const probe = document.createElement('div');
+        probe.className = 'result-table';
+        probe.innerHTML = '<div class="col-op"><div class="action-row">'
+          + '<button class="text-btn btn-xs" type="button">详情</button>'
+          + '<button class="text-btn btn-xs" type="button">订阅</button></div></div>';
+        document.body.appendChild(probe);
+        const pb = probe.querySelectorAll('.text-btn');
+        out.opBtn = box(pb[0]);
+        out.opGap = Math.round((pb[1].getBoundingClientRect().left - pb[0].getBoundingClientRect().right) * 10) / 10;
+        probe.remove();
+
+        // ── 下拉箭头：伪元素扩命中区（CSS 契约 + 行为打点）──
+        const arrow = document.querySelector('.searchable-select-arrow');
+        out.arrowBox = arrow ? box(arrow) : 'MISSING';
+        out.arrowBefore = arrow ? cs(arrow, '::before').content : 'MISSING';
+        out.arrowHit = probeHit(arrow, 14);
+
+        // ── 折叠 chevron：外观 24px，命中区 32px ──
+        const chev = document.querySelector('.chevron');
+        out.chevron = chev ? box(chev) : 'MISSING';
+        out.chevronHit = probeHit(chev, 14);
+
+        // ── 弹窗 ✕：32×32（弹窗未打开，只量尺寸）──
+        const closeBtn = document.querySelector('.sub-close');
+        out.subClose = closeBtn ? box(closeBtn) : 'MISSING';
+        return out;
+      });
+      process.stdout.write(`  对齐与命中区: ${JSON.stringify(r)}\n`);
+      const centered = r.thCentered || {};
+      ['col-status', 'col-check', 'col-sub', 'col-op'].forEach((cls) => {
+        if (centered[cls] !== 'center') fails.push(`表头 .${cls} 应居中，实际 ${centered[cls]}`);
+      });
+      if (r.thNameAlign !== 'left') fails.push(`非居中列表头 .col-name 应保持左对齐，实际 ${r.thNameAlign}`);
+      if (!(r.opBtn && r.opBtn.h >= 32)) fails.push(`操作列按钮高度应 ≥32，实际 ${r.opBtn && r.opBtn.h}`);
+      if (r.opGap < 8) fails.push(`操作列按钮间距应 ≥8px，实际 ${r.opGap}`);
+      if (r.arrowBefore !== '""') fails.push(`下拉箭头应有 ::before 扩命中区，实际 content=${r.arrowBefore}`);
+      const ah = r.arrowHit || {};
+      if (!ah.left || !ah.right || !ah.up || !ah.down) {
+        fails.push(`下拉箭头命中区应覆盖中心 ±14px，实际 ${JSON.stringify(ah)}（外观 ${JSON.stringify(r.arrowBox)}）`);
+      }
+      const ch = r.chevronHit || {};
+      if (!ch.left || !ch.down) fails.push(`折叠 chevron 命中区应覆盖中心 ±14px，实际 ${JSON.stringify(ch)}`);
+      if (!(r.chevron && r.chevron.w <= 25)) fails.push(`chevron 外观应保持约 24px，实际 ${JSON.stringify(r.chevron)}`);
+      if (!(r.subClose && r.subClose.w >= 32 && r.subClose.h >= 32)) {
+        fails.push(`弹窗 ✕ 命中区应 ≥32×32，实际 ${JSON.stringify(r.subClose)}`);
+      }
+    } catch (e) {
+      fails.push(`对齐与命中区段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 空态提示 / 防重复提交（2026-09-16 第二批优化）
+  // ═══════════════════════════════════════════════════════════════
+  // ① 评委空态提示：文案不带乱码，且加了评委后要隐藏（原来 JS 零引用、永不隐藏）
+  // ② 提交评委：连点只能发一次请求（原来没有 in-flight 锁，会重复写审核数据）
+  // ③ 文档弹窗分页栏：每页条数下拉必须被约束成 108px（原来被撑到 804px）
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    let reviewCalls = 0;
+    try {
+      // 延迟评委提交接口的响应，用来观察「连点是不是只发一次」
+      await page.route('**/subscriptionReview*', async (route) => {
+        reviewCalls += 1;
+        await new Promise((r2) => setTimeout(r2, 900));
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok' }) });
+      });
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(async () => {
+        const out = {};
+        const tick = (ms) => new Promise((r2) => setTimeout(r2, ms));
+        const box = (el) => {
+          if (!el) return null;
+          const b = el.getBoundingClientRect();
+          return { w: Math.round(b.width * 10) / 10, h: Math.round(b.height * 10) / 10 };
+        };
+        await window.SubscribeDialog.open({
+          serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197',
+          publishId: 'P-SMOKE-1', provideComponentName: '冒烟探针', taskNo: 'SMOKE-2',
+        });
+        await tick(400);
+
+        // ① 评委空态提示：双向验证 —— 有评委行时隐藏、全部删掉后重新出现
+        //    （弹窗打开时会预置 2 行「调用方/服务方产品负责人」，所以初始就是有行的状态）
+        const hint = document.getElementById('judgeEmptyHint');
+        const rowCount = () => document.querySelectorAll('#judgeTableBody tr.judge-row').length;
+        out.hintText = hint ? hint.textContent : 'MISSING';
+        out.rowsOnOpen = rowCount();
+        out.hintHiddenWithRows = hint ? hint.hidden : 'MISSING';
+        // 全选 → 删除，把行清空
+        const checkAll = document.getElementById('judgeCheckAll');
+        checkAll.checked = true;
+        checkAll.dispatchEvent(new Event('change', { bubbles: true }));
+        document.getElementById('btnRemoveJudge').click();
+        await tick(60);
+        out.rowsAfterDeleteAll = rowCount();
+        out.hintHiddenWhenEmpty = hint ? hint.hidden : 'MISSING';
+        // 再加回来
+        document.getElementById('btnAddJudge').click();
+        await tick(60);
+        out.hintHiddenAfterAdd = hint ? hint.hidden : 'MISSING';
+        // 给新增的行填个名字，否则提交校验会以「请先添加评委信息」拦下，测不到锁
+        const nameInput = document.querySelector('#judgeTableBody tr.judge-row .judge-name');
+        if (nameInput) { nameInput.value = '冒烟探针'; nameInput.dispatchEvent(new Event('input', { bubbles: true })); }
+
+        // ② 连点提交
+        const btn = document.getElementById('btnSubmitJudges');
+        btn.click();
+        btn.click();
+        await tick(120);
+        out.submitLabel = btn.textContent;
+        out.submitDisabled = btn.disabled;
+        await tick(1100);
+        out.submitLabelAfter = btn.textContent;
+        out.submitDisabledAfter = btn.disabled;
+
+        // ③ 文档子弹窗分页栏
+        document.getElementById('btnSelectDoc').click();
+        await tick(700);
+        const docSel = document.getElementById('docPageSize');
+        const wrap = docSel ? docSel.nextElementSibling : null;
+        out.docPageSizeWrap = wrap ? box(wrap) : 'MISSING';
+        out.docPageSizeInput = wrap ? box(wrap.querySelector('.searchable-select-input')) : 'MISSING';
+        out.docPagerPrev = box(document.getElementById('btnDocPrev'));
+        window.DocPicker.close();
+        window.SubscribeDialog.close();
+        return out;
+      });
+      process.stdout.write(`  空态/防重复提交/文档分页: ${JSON.stringify({ ...r, reviewCalls })}\n`);
+      if (/chu/.test(String(r.hintText))) fails.push(`评委空态提示仍含乱码：${r.hintText}`);
+      if (!(r.rowsOnOpen > 0)) fails.push(`弹窗打开时应有预置评委行，实际 ${r.rowsOnOpen} 行`);
+      if (r.hintHiddenWithRows !== true) fails.push('有评委行时空态提示应隐藏');
+      if (r.rowsAfterDeleteAll !== 0) fails.push(`全选删除后应 0 行，实际 ${r.rowsAfterDeleteAll} 行`);
+      if (r.hintHiddenWhenEmpty !== false) fails.push('评委行清空后空态提示应重新出现');
+      if (r.hintHiddenAfterAdd !== true) fails.push('再加回一条评委后空态提示应再次隐藏');
+      if (r.submitDisabled !== true || r.submitLabel !== '提交中…') {
+        fails.push(`提交期间按钮应禁用并显示「提交中…」，实际 disabled=${r.submitDisabled} label=${r.submitLabel}`);
+      }
+      if (r.submitDisabledAfter !== false) fails.push('提交结束后按钮应恢复可用');
+      if (reviewCalls !== 1) fails.push(`连点两次只应发 1 个评委提交请求，实际 ${reviewCalls} 个`);
+      if (!(r.docPageSizeWrap && r.docPageSizeWrap.w <= 130)) {
+        fails.push(`文档弹窗「每页条数」应被约束到约 108px，实际 ${JSON.stringify(r.docPageSizeWrap)}`);
+      }
+      if (!(r.docPageSizeInput && r.docPageSizeInput.h === 30)) {
+        fails.push(`文档弹窗「每页条数」应与同行控件同高 30px，实际 ${JSON.stringify(r.docPageSizeInput)}`);
+      }
+    } catch (e) {
+      fails.push(`空态/防重复提交段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
   await browser.close();
   server.close();
   process.stdout.write(`\n==== 结果: ${anyFail ? '有 FAIL' : 'ALL PASS (静态加载/接线无报错)'} ====\n`);
