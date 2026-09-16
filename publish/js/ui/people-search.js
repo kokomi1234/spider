@@ -46,8 +46,11 @@
 
   function rowHtml(u, idx) {
     const status = u.userStatus ? (STATUS_TEXT[u.userStatus] || `状态${u.userStatus}`) : '';
+    // tabindex + aria-expanded：行点击会就地展开详情，键盘用户得能 Tab 进来并知道展开状态。
+    // 不给 role="button" —— 那会把 <tr> 的行语义整个抹掉，aria-expanded 已足够表达
+    // 「这一行可以展开 / 当前展开了没有」（清单 B9）。
     return `
-      <tr class="ps-row" data-user-id="${esc(u.userId)}">
+      <tr class="ps-row" data-user-id="${esc(u.userId)}" tabindex="0" aria-expanded="false">
         <td class="ps-idx">${idx}</td>
         <td class="ps-no">${esc(u.userId) || '—'}</td>
         <td>${esc(u.userName) || '—'}</td>
@@ -67,7 +70,7 @@
         </thead>
         <tbody>${list.map(rowHtml).join('')}</tbody>
       </table>
-      <div class="ps-hint">点击行查看详情</div>`;
+      <div class="ps-hint">点击行或按回车查看详情</div>`;
   }
 
   async function doSearch() {
@@ -92,6 +95,15 @@
     renderList(r.list);
   }
 
+  /** 把「哪一行展开了」同步到 aria-expanded（读屏用户靠它判断详情是否已展开） */
+  function syncRowExpanded(activeTr) {
+    const box = $('psResult');
+    if (!box || !box.querySelectorAll) return;
+    box.querySelectorAll('tr.ps-row').forEach((r) => {
+      r.setAttribute('aria-expanded', r === activeTr ? 'true' : 'false');
+    });
+  }
+
   /** 行点击 → 拉详情 → 行下展开 */
   async function toggleDetail(tr) {
     const userId = tr && tr.dataset.userId;
@@ -102,7 +114,7 @@
     if (old) {
       const oldId = old.dataset.forUserId;
       old.remove();
-      if (oldId === userId) { expandedId = null; return; }
+      if (oldId === userId) { expandedId = null; syncRowExpanded(null); return; }
     }
 
     const tbody = tr.parentElement;
@@ -112,6 +124,7 @@
     detailRow.innerHTML = '<td colspan="6" class="ps-detail">详情加载中…</td>';
     tbody.insertBefore(detailRow, tr.nextSibling);
     expandedId = userId;
+    syncRowExpanded(tr);
 
     const r = await window.UserApi.fetchUserDetail(userId);
     if (expandedId !== userId) return;   // 已切到别的行
@@ -130,7 +143,7 @@
     ].filter(([, v]) => v);
     cell.innerHTML = items.length
       ? items.map(([k, v]) => `<span class="ps-kv"><b>${esc(k)}</b>：${esc(v)}</span>`).join('')
-      : (r.local ? '接口未启用，无详情' : '未查到详情');
+      : (r.local ? '暂无详情' : '未查到详情');
   }
 
   function init() {
@@ -156,6 +169,16 @@
       box.addEventListener('click', (e) => {
         const tr = e.target.closest('tr.ps-row');
         if (tr) toggleDetail(tr);
+      });
+      // 键盘等价操作（清单 B9）：行本身可 Tab 聚焦，Enter / 空格＝点击该行。
+      // 只在焦点落在 <tr> 自身时才处理，免得行内将来加输入控件时被抢走回车。
+      box.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const tr = e.target && e.target.closest ? e.target.closest('tr.ps-row') : null;
+        if (!tr || e.target !== tr) return;
+        e.preventDefault();
+        e.stopPropagation();
+        toggleDetail(tr);
       });
     }
   }

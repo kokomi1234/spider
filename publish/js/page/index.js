@@ -514,7 +514,10 @@
     }
 
     if (e.key !== 'Enter' || !el || el.tagName !== 'INPUT') return;
-    if (el.closest('.searchable-select')) return;
+    // 自带键盘行为的控件先让它们自己消化回车：日期选择器（Enter = 展开面板）、
+    // 可搜索下拉 / 多选（Enter = 展开、选中）。它们的 keydown 只 preventDefault、
+    // 不 stopPropagation，不排除的话会在展开面板的同时顺带发起一次全量查询。
+    if (el.closest('.searchable-select, .dp-wrapper, .msel')) return;
     // 输入法组合态 / compositionend 后的短暂窗口，Enter 只用于确认中文候选词。
     if (imeComposing || e.isComposing || e.keyCode === 229 || Date.now() - imeEndedAt < 300) {
       e.preventDefault();

@@ -86,7 +86,7 @@
   const BULK_PAGE_SIZE = 50;
   /** 整批拉取的条数上限，避免一条查询把几万行拉进内存 */
   const BULK_MAX = 5000;
-  /** 结果不超过这个条数时，排序走「整批拉回来 + 前端分页」，逾期/临期才是全局排在最前 */
+  /** 结果不超过这个条数时，排序走「整批拉回来 + 前端分页」，逾期/紧急才是全局排在最前 */
   const CLIENT_SORT_MAX = 1000;
   /** 窗口扇出的并发上限：12 个批次分 2 波（6×2），墙钟时间≈最慢单个批次，避免一次性打爆 */
   const WINDOW_CONCURRENCY = 12;
@@ -181,15 +181,21 @@
   // 分页数学
   // ═══════════════════════════════════════════════════
 
-  /** 页码条：首页 + 当前页 ±2 + 末页，中间用省略号 */
+  /**
+   * 页码条：首页 + 当前页 ±2 + 末页，中间用省略号。
+   * 当前页带 `aria-current="page"`：只靠 .is-current 的视觉样式，读屏用户听不出
+   * 自己在第几页（清单 A9）。样式仍只认 .is-current，两者互不影响。
+   */
   function buildPageNumbers(pages, cur) {
     const set = new Set([1, pages, cur, cur - 1, cur + 1, cur - 2, cur + 2]);
     const nums = [...set].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
     let out = '';
     let prev = 0;
     nums.forEach((n) => {
+      const isCur = n === cur;
       if (prev && n - prev > 1) out += '<li class="page-ellipsis">…</li>';
-      out += `<li><button type="button" data-page="${n}" class="${n === cur ? 'is-current' : ''}">${n}</button></li>`;
+      out += `<li><button type="button" data-page="${n}" class="${isCur ? 'is-current' : ''}"`
+        + `${isCur ? ' aria-current="page"' : ''}>${n}</button></li>`;
       prev = n;
     });
     return out;
@@ -446,7 +452,9 @@
     const hint = p.next
       ? `${row.prodBatch || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}${src}`
       : (p.level === 'done' ? '已到正式版基线 / 已下线' : '批次或基线状态无法判断');
-    // 临期（剩余 ≥0 且 ≤3 天）：优先级这一格变红，但整行不变红（与「逾期整行标红」区分）
+    // 剩余 ≥0 且 ≤3 天：优先级这一格加粗标红（整行不变红，与「逾期整行标红」区分）。
+    // 它**不是独立等级**：等级词只有 LEVELS 那四档（逾期 / 紧急（≤7天）/ 临近（≤30天）/ 正常），
+    // is-near 只是「紧急」档内部针对最后 3 天的一层视觉强调（清单 C6）。
     const near = p.days !== null && p.days >= 0 && p.days <= 3;
     return { level: p.level, text: p.text, near, hint };
   }

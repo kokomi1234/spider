@@ -59,10 +59,13 @@ test('parseApiError：401/403/500/网络失败各有对应文案', () => {
   assert.ok(/网络连接失败/.test(PR.parseApiError({ status: 0 }, { message: 'Failed to fetch' })));
 });
 
-test('parseApiError：404 必须指向「缓存未命中」，不能误导成接口地址不存在', () => {
+test('parseApiError：404 给「没查到 + 下一步」，且不暴露部署细节', () => {
   const msg = PR.parseApiError({ status: 404 }, {});
-  assert.ok(/缓存中没有这条记录/.test(msg), '离线模式下 404 多为缓存未命中');
+  assert.ok(/没有查到/.test(msg), '要明说「没查到」，否则用户会以为查到的是空结果');
+  assert.ok(/重试|调整筛选/.test(msg), '要给出下一步动作');
   assert.ok(!/接口地址不存在/.test(msg), '旧文案会把人往错误方向带');
+  // 清单 C2：404 这句是直接上屏给业务用户的，不能出现缓存 / 代理 / 控制台这些内部概念
+  assert.ok(!/缓存|代理|控制台|Network|F12/.test(msg), '不得在业务提示里暴露部署细节');
 });
 
 test('validateFilters：合法条件无错误，越界条件报错', () => {

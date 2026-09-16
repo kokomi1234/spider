@@ -259,7 +259,7 @@ test('buildPageNumbers：首页 + 当前页 ±2 + 末页，中间省略号', () 
   const one = M.buildPageNumbers(1, 1);
   assert.strictEqual(btnCount(one), 1);
   assert.strictEqual(dots(one), 0);
-  assert.ok(one.indexOf('data-page="1" class="is-current">1') > -1);
+  assert.ok(one.indexOf('data-page="1" class="is-current" aria-current="page">1') > -1);
 
   // 页数少：全列
   assert.strictEqual(btnCount(M.buildPageNumbers(3, 2)), 3);
@@ -275,9 +275,10 @@ test('buildPageNumbers：首页 + 当前页 ±2 + 末页，中间省略号', () 
   const mid = M.buildPageNumbers(10, 5);
   assert.strictEqual(btnCount(mid), 7);
   assert.strictEqual(dots(mid), 2);
-  assert.ok(mid.indexOf('data-page="5" class="is-current">5') > -1);
-  // 当前页以外的按钮不带 is-current
+  assert.ok(mid.indexOf('data-page="5" class="is-current" aria-current="page">5') > -1);
+  // 当前页以外的按钮不带 is-current，也不带 aria-current（清单 A9：只该标当前页）
   assert.strictEqual(mid.split('is-current').length - 1, 1);
+  assert.strictEqual(mid.split('aria-current="page"').length - 1, 1);
 
   // 末页：倒数三页 + 首页
   assert.strictEqual(btnCount(M.buildPageNumbers(10, 10)), 4);
@@ -470,7 +471,7 @@ test('batchWindow：委托 batchWindowLabels，模块缺失时返回空窗口', 
 // 优先级单元格数据
 // ═══════════════════════════════════════════════════
 
-test('prioParts：色块文案 + 临期 days 0..3 判定', () => {
+test('prioParts：色块文案 + 剩余 ≤3 天（is-near）判定', () => {
   const MP = freshWithPriority().SubscriptionModel;
   // 有下一里程碑：hint 里写清批次、截止日与目标状态
   const near = MP.prioParts({
@@ -484,7 +485,7 @@ test('prioParts：色块文案 + 临期 days 0..3 判定', () => {
     hint: '2609批次：应于 2026-09-15 前转为正式版基线',
   });
 
-  // 边界：0 和 3 天仍然临期，-1（逾期）和 4 天不临期
+  // 边界：0 和 3 天仍然加 is-near，-1（逾期）和 4 天不加
   const daysOf = (days) => ({
     prodBatch: 'B', _prio: { level: 'x', days, text: 't', next: '', deadline: '' },
   });

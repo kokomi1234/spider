@@ -130,8 +130,26 @@
 
     /* ── 投产优先级 ──────────────────────────────────────
        规则在 js/ui/priority.js：批次月-1 个月的 15 日转功能测试基线，
-       批次月 15 日转正式版基线；逾期整行标红，临期(≤3天)仅优先级变红。 */
+       批次月 15 日转正式版基线；等级词固定为 逾期 / 紧急(≤7天) / 临近(≤30天) / 正常，
+       逾期整行标红，剩余 ≤3 天时仅优先级本格加粗标红。 */
     .subq-table th.col-prio { cursor: pointer; user-select: none; }
+    /* 排序入口做成真 <button>（清单 B9）：键盘原生可 Tab 聚焦、Enter/空格即触发，
+       不必在 th 上挂 tabindex + 手写 keydown，也保住了表头的 columnheader 语义。
+       外观上让它就是表头文字本身，不引入第二套按钮样式。 */
+    .th-sort-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      background: none;
+      font: inherit;
+      color: inherit;
+      letter-spacing: inherit;
+      cursor: pointer;
+    }
+    .th-sort-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: var(--r-xs); }
     .subq-table th.col-prio:hover { color: var(--on-surface); }
     .sort-ind { opacity: .45; font-size: var(--fs-nano); margin-left: 2px; }
     .subq-table th.is-sorted .sort-ind { opacity: 1; color: var(--primary); }
@@ -150,7 +168,8 @@
     .prio-tag.is-normal   { background: var(--surface-1); color: var(--muted); }
     .prio-tag.is-done     { background: var(--green-c); color: var(--on-green-c); }
     .prio-tag.is-unknown  { background: var(--surface-1); color: var(--faint); }
-    /* 临期（剩余 ≤3 天）：优先级这一格变红，但整行不变红（与「逾期整行标红」区分开） */
+    /* 剩余 ≤3 天：优先级这一格加粗标红，但整行不变红（与「逾期整行标红」区分开）。
+       它不是独立等级 —— 等级词只有 逾期 / 紧急（≤7天）/ 临近（≤30天）/ 正常 四档（清单 C6） */
     .prio-tag.is-near { color: var(--on-red-c); font-weight: 700; }
 
     /* 逾期整行标红：放在 hover / 固定列规则之后，靠同权重后置覆盖 */
@@ -209,6 +228,16 @@
     }
     .copy-cell:active::after {
       opacity: 1;
+    }
+    /* 键盘漫游焦点（清单 B9）：与 :hover 同一套提示，另加一圈焦点环 ——
+       键盘用户看不到鼠标悬停，没有焦点环就不知道自己「落在」哪一格。 */
+    .copy-cell:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: -2px;
+      background: var(--primary-c) !important;
+    }
+    .copy-cell:focus::after {
+      opacity: 0.6;
     }
     /* 详情弹窗的 dd 元素也支持复制 */
     .kv-grid dd.copy-cell {
@@ -454,9 +483,9 @@
           </colgroup>
           <thead>
             <tr>
-              <th class="col-prio is-sorted" id="thPrio"
-                  title="优先级 = 距里程碑截止日的紧急程度。规则：功能测试基线 = 批次月 −1 的 15 日，正式版基线 = 批次月 15 日；逾期（已过截止日）整行标红，临期（剩余 ≤3 天）仅本格标红。点击可在 宽松在前 → 后端原序 → 紧急在前 之间切换排序">
-                优先级<span class="sort-ind" id="prioSortInd">↑</span>
+              <th class="col-prio is-sorted" id="thPrio" aria-sort="ascending"
+                  title="优先级 = 距里程碑截止日的紧急程度。四档：逾期（已过截止日，整行标红）/ 紧急（剩余 ≤7 天）/ 临近（剩余 ≤30 天）/ 正常。规则：功能测试基线 = 批次月 −1 的 15 日，正式版基线 = 批次月 15 日；剩余 ≤3 天时优先级本格加粗标红。点击可在 宽松在前 → 默认顺序 → 紧急在前 之间切换排序">
+                <button type="button" class="th-sort-btn" id="btnSortPrio">优先级<span class="sort-ind" id="prioSortInd">↑</span></button>
               </th>
               <th class="col-st">订阅关系基线状态</th>
               <!-- 以下三列与优先级 / 基线状态一起左固定（审核进度 + 业务标识 + 技术定位） -->
@@ -492,9 +521,10 @@
         </table>
       </div>
 
-      <!-- 分页 -->
-      <div class="pagination" id="pagination" style="display:none;">
-        <span class="page-total" id="pageTotal">共 0 条</span>
+      <!-- 分页：语义上是「导航」，用 <nav> + aria-label 让读屏能念出这是一组分页控件（清单 A9） -->
+      <nav class="pagination" id="pagination" aria-label="分页" style="display:none;">
+        <!-- role=status + aria-live：与同页 #resultCount 同口径，条数变化后读屏能念出来 -->
+        <span class="page-total" id="pageTotal" role="status" aria-live="polite">共 0 条</span>
         <select id="pageSizeSelect" class="page-size-select" title="每页条数">
           <option value="10">10 条/页</option>
           <option value="50">50 条/页</option>
@@ -503,8 +533,9 @@
         <button class="outlined btn-xs" id="btnPrev">‹ 上一页</button>
         <ul class="page-numbers" id="pageNumbers"></ul>
         <button class="outlined btn-xs" id="btnNext">下一页 ›</button>
-        <span class="page-jump">前往 <input type="number" id="pageJumpInput" min="1" value="1" aria-label="跳转到页码"> 页</span>
-      </div>
+        <!-- 跳页文案统一为「跳至 … 页」（原来这里是「前往」，与首页 / task 页不一致） -->
+        <span class="page-jump">跳至 <input type="number" id="pageJumpInput" min="1" value="1" aria-label="跳转到页码"> 页</span>
+      </nav>
     </div>
   </div>
 

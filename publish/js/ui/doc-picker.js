@@ -433,8 +433,8 @@
             .filter(Boolean).join(' ');
           return `<tr class="${cls}" data-id="${esc(n.id)}" data-is-member="${n.member}"` +
             (n.member ? '' : ' title="非成员文档，不可勾选"') + `>
-            <td class="c-chk"><input type="checkbox" class="doc-check" data-id="${esc(n.id)}"` +
-            (n.member ? '' : ' disabled') + (docSelected.has(n.id) ? ' checked' : '') + `></td>
+            <td class="c-chk"><label class="chk-hit"><input type="checkbox" class="doc-check" data-id="${esc(n.id)}"` +
+            (n.member ? '' : ' disabled') + (docSelected.has(n.id) ? ' checked' : '') + `></label></td>
             <td>${esc(n.docNo)}</td>
             <td title="${esc(n.docName)}">${esc(n.docName)}</td>
             <td title="${esc(n.batchNum)}">${esc(M.displayBatch(n.batchNum))}</td>

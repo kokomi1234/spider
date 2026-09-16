@@ -53,12 +53,21 @@
   /** 终点状态：不用再催 */
   const DONE_STATUS = ['正式版基线', '下线'];
 
-  /** 等级阈值（剩余天数，越小越紧急） */
+  /**
+   * 等级阈值（剩余天数，越小越紧急）。
+   *
+   * ⚠️ 这四档的**文案就是页面上唯一一套等级词**（清单 C6）：
+   *   逾期 / 紧急（≤7天）/ 临近（≤30天）/ 正常
+   * 此前页面上并存「紧急 / 临近 / 临期」三个近义时间词，用户分不清
+   * 「临近」和「临期」是不是同一档。`临期` 那个词已废弃，不再用于等级表述；
+   * 剩余 ≤3 天的红色强调是 is-near（见 subscription-model.js 的 prioParts），
+   * 只是「紧急」这一档内部的视觉强调，**不是第五个等级**。
+   */
   const LEVELS = [
-    { key: 'overdue',  label: '逾期',   max: -1 },              // days < 0
-    { key: 'critical', label: '紧急',   max: 7 },
-    { key: 'soon',     label: '临近',   max: 30 },
-    { key: 'normal',   label: '正常',   max: Infinity },
+    { key: 'overdue',  label: '逾期',          max: -1 },              // days < 0
+    { key: 'critical', label: '紧急（≤7天）',  max: 7 },
+    { key: 'soon',     label: '临近（≤30天）', max: 30 },
+    { key: 'normal',   label: '正常',          max: Infinity },
   ];
 
   const DAY = 24 * 60 * 60 * 1000;

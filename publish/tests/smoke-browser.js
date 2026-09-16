@@ -557,7 +557,7 @@ const PAGES = [
           anyFail = true;
         }
 
-        // 「临期(≤3天)仅优先级变红」：注入一个 is-near 的 tag，确认字色为红（整行不变红由 CSS 只作用于 .prio-tag 保证）
+        // 「剩余 ≤3 天仅优先级变红」：注入一个 is-near 的 tag，确认字色为红（整行不变红由 CSS 只作用于 .prio-tag 保证）
         const nearCss = await page.evaluate(() => {
           const el = document.createElement('span');
           el.className = 'prio-tag is-near';
@@ -567,11 +567,11 @@ const PAGES = [
           el.remove();
           return c;
         });
-        process.stdout.write(`  临期优先级样式: color=${nearCss}\n`);
+        process.stdout.write(`  ≤3天优先级样式: color=${nearCss}\n`);
         const nm = /rgb\((\d+), (\d+), (\d+)\)/.exec(nearCss);
         const isRed = nm && Number(nm[1]) > 80 && Number(nm[2]) < 80 && Number(nm[3]) < 80;
         if (!isRed) {
-          process.stdout.write(`    [FAIL] 临期优先级字色 ${nearCss} 不是红色\n`);
+          process.stdout.write(`    [FAIL] ≤3天优先级字色 ${nearCss} 不是红色\n`);
           anyFail = true;
         }
 
@@ -1589,6 +1589,429 @@ const PAGES = [
       }
     } catch (e) {
       fails.push(`空态/防重复提交段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 第三批优化（2026-09-16 晚）：复选框命中区 / 分页条语义 / 下拉 title
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(() => {
+        const box = (el) => {
+          const b = el.getBoundingClientRect();
+          return { w: Math.round(b.width * 10) / 10, h: Math.round(b.height * 10) / 10 };
+        };
+        const out = {};
+
+        // ── B3 复选框命中区：真结构 = .sub-tbl 里 <td class="c-chk"><label class="chk-hit"><input>
+        const probe = document.createElement('table');
+        probe.className = 'sub-tbl';
+        probe.innerHTML = '<tbody><tr>'
+          + '<td class="c-chk"><label class="chk-hit"><input type="checkbox" checked></label></td>'
+          + '<td>普通数据格</td></tr></tbody>';
+        document.body.appendChild(probe);
+        const cbEl = probe.querySelector('input[type="checkbox"]');
+        const lab = probe.querySelector('.chk-hit');
+        out.cbBox = box(cbEl);
+        out.cbHit = box(lab);
+        // 命中区不能只看 getBoundingClientRect，要真打点：从标签中心 ±12px 必须命中它或方框本身
+        const lb = lab.getBoundingClientRect();
+        const cx = lb.left + lb.width / 2;
+        const cy = lb.top + lb.height / 2;
+        const owns = (x, y) => {
+          const hit = document.elementFromPoint(x, y);
+          return !!hit && (hit === cbEl || lab.contains(hit));
+        };
+        out.cbProbe = { left: owns(cx - 12, cy), right: owns(cx + 12, cy), up: owns(cx, cy - 12), down: owns(cx, cy + 12) };
+        // 行高不能被撑高：.doc-tbl-wrap「正好 10 行」的 max-height 是按行高算出来的
+        out.cbRowH = box(lab).h;
+        probe.remove();
+        // 页面上静态的「全选」表头也必须是同一套结构（评委表 + 文档表各一处）
+        out.headCbCount = document.querySelectorAll('th.c-chk > label.chk-hit > input[type="checkbox"]').length;
+
+        // ── A9 分页条语义 ──
+        const bar = document.getElementById('pagination');
+        const info = document.getElementById('pageInfo');
+        out.barTag = bar ? bar.tagName : 'MISSING';
+        out.barLabel = bar ? bar.getAttribute('aria-label') : 'MISSING';
+        out.infoRole = info ? info.getAttribute('role') : 'MISSING';
+        out.infoLive = info ? info.getAttribute('aria-live') : 'MISSING';
+        out.infoInsideBar = !!(bar && info && bar.contains(info));
+        out.infoLiveMatchesCount = (function () {
+          const rc = document.getElementById('resultCount');
+          return !!rc && rc.getAttribute('aria-live') === (info && info.getAttribute('aria-live'));
+        }());
+
+        // ── C10 可搜索下拉：选中值同步写进 title（否则窄下拉里的超长值只能看到省略号）──
+        const wrap = document.createElement('div');
+        const sel = document.createElement('select');
+        wrap.appendChild(sel);
+        document.body.appendChild(wrap);
+        const inst = window.createSearchableSelect(sel, [{ value: 'v1', label: '一个特别长的选项名称用于验证省略号后的完整值' }]);
+        inst.setValue('v1');
+        out.selTitle = wrap.querySelector('.searchable-select-input').title;
+        inst.destroy();
+        wrap.remove();
+        return out;
+      });
+      process.stdout.write(`  复选框/分页语义/下拉title: ${JSON.stringify(r)}\n`);
+      if (!(r.cbBox && r.cbBox.w === 18 && r.cbBox.h === 18)) {
+        fails.push(`复选框应为 18×18，实际 ${JSON.stringify(r.cbBox)}`);
+      }
+      const cp = r.cbProbe || {};
+      if (!cp.left || !cp.right || !cp.up || !cp.down) {
+        fails.push(`复选框命中区未覆盖整格（中心 ±12px 必须命中），实际 ${JSON.stringify(cp)}`);
+      }
+      if (!(r.cbHit && r.cbHit.h <= 40)) {
+        fails.push(`命中区不应撑高行高（应 ≈ 行高 39px），实际 ${JSON.stringify(r.cbHit)}`);
+      }
+      if (r.headCbCount < 2) {
+        fails.push(`「全选」表头应有两处同套结构（评委表 / 文档表），实际 ${r.headCbCount} 处`);
+      }
+      if (r.barTag !== 'NAV' || !r.barLabel) fails.push(`分页条应为 <nav aria-label>，实际 ${r.barTag}/${r.barLabel}`);
+      if (r.infoRole !== 'status' || r.infoLive !== 'polite') {
+        fails.push(`#pageInfo 应有 role=status + aria-live=polite，实际 ${r.infoRole}/${r.infoLive}`);
+      }
+      if (!r.infoInsideBar) fails.push('#pageInfo 应在分页条内');
+      if (!r.infoLiveMatchesCount) fails.push('#pageInfo 的 aria-live 应与 #resultCount 同口径');
+      if (!r.selTitle || !r.selTitle.includes('特别长')) {
+        fails.push(`可搜索下拉选中后应把完整 label 写进 title，实际 ${JSON.stringify(r.selTitle)}`);
+      }
+    } catch (e) {
+      fails.push(`第三批（尺寸/语义）段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 第三批优化：多选控件键盘 / task 页重置与回车 / 人员行键盘
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'task.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(async () => {
+        const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+        const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        const out = {};
+        const calls = [];
+        const api = window.TaskApi;
+        const origList = api && api.fetchTaskList;
+        if (api) api.fetchTaskList = async (cond, p) => { calls.push({ no: cond && cond.taskApplicationTaskNo, page: p }); return { ok: true, rows: [], total: 0 }; };
+        try {
+          // ① 普通输入框回车 → 发起查询（task 页原来完全没有这条处理）
+          const inp = document.getElementById('t_taskNo');
+          inp.value = 'T-1';
+          inp.focus();
+          key(inp, 'Enter');
+          await tick(100);
+          out.afterInputEnter = calls.length;
+
+          // ② 页面上真实的多选控件（#msel_batch）：回车只开面板，不得顺带查一次
+          const host = document.getElementById('msel_batch');
+          const disp = host.querySelector('.msel-display');
+          const panel = host.querySelector('.msel-panel');
+          disp.focus();
+          key(disp, 'Enter');
+          await tick(50);
+          out.mselOpened = panel.classList.contains('show');
+          out.mselExpanded = disp.getAttribute('aria-expanded');
+          out.callsAfterMselEnter = calls.length;
+
+          // ③ 往 #filterCard 里塞一个「有选项」的多选控件，验证完整的键盘路径。
+          //    放进筛选卡是有意的：它的回车会冒泡到页面的「筛选区回车即查询」，
+          //    控件没 stopPropagation 的话这里就会多发一次查询。
+          const probe = document.createElement('div');
+          probe.className = 'msel';
+          document.getElementById('filterCard').appendChild(probe);
+          const probeInst = window.createMultiSelect(probe, [
+            { value: 'a', label: '选项A' }, { value: 'b', label: '选项B' }, { value: 'c', label: '选项C' },
+          ], '全部探针');
+          const pDisp = probe.querySelector('.msel-display');
+          const pPanel = probe.querySelector('.msel-panel');
+          pDisp.focus();
+          key(pDisp, 'Enter');
+          await tick(40);
+          out.probeOpened = pPanel.classList.contains('show');
+          key(pDisp, 'ArrowDown');
+          await tick(40);
+          out.focusInList = !!(document.activeElement && document.activeElement.closest
+            && document.activeElement.closest('.msel-item'));
+          key(document.activeElement, 'Enter');           // 回车勾选当前项
+          await tick(40);
+          out.checkedByEnter = probeInst.getValues().join(',');
+          out.callsAfterListEnter = calls.length;
+          key(document.activeElement, 'Escape');          // Esc 收起 + 焦点归还
+          await tick(40);
+          out.probeClosed = !pPanel.classList.contains('show');
+          out.focusBackToDisplay = document.activeElement === pDisp;
+          out.expandedAfterEsc = pDisp.getAttribute('aria-expanded');
+          probeInst.destroy();
+          probe.remove();
+
+          // ④ C7 重置：清空筛选 + 回到初始空态 + toast（原来只清控件、旧结果留着）。
+          //    toast 用桩收，避免被上一步「查询完成…」的队列挡住看不见。
+          const toasts = [];
+          const origToast = window.toast;
+          window.toast = (m) => { toasts.push(String(m)); };
+          const body = document.getElementById('resultBody');
+          const bar = document.getElementById('pagination');
+          const stats = document.getElementById('statsRow');
+          const rc = document.getElementById('resultCount');
+          body.innerHTML = '<tr data-index="0"><td class="col-index">1</td><td colspan="12">X</td></tr>';
+          bar.style.display = '';
+          stats.style.display = '';
+          rc.textContent = '共 1 条 · 本页 1 条';
+          document.getElementById('btnReset').click();
+          await tick(150);
+          window.toast = origToast;
+          out.resetInput = document.getElementById('t_taskNo').value;
+          out.resetRows = body.querySelectorAll('tr').length;
+          out.resetEmptyCls = (body.querySelector('td') || {}).className || '';
+          out.resetBar = bar.style.display;
+          out.resetStats = stats.style.display;
+          out.resetCount = rc.textContent;
+          out.resetToast = toasts.join(' | ');
+
+          // ⑥ B9 人员查询行：可 Tab 聚焦 + aria-expanded 随展开切换
+          const uApi = window.UserApi;
+          const origList2 = uApi && uApi.fetchUserList;
+          const origDetail = uApi && uApi.fetchUserDetail;
+          if (uApi) {
+            uApi.fetchUserList = async () => ({
+              ok: true,
+              list: [{ userId: 'U1', userName: '张三', orgName: '软件中心', teamName: '开发一部', userStatus: '1' }],
+            });
+            uApi.fetchUserDetail = async () => ({ ok: true, user: { userId: 'U1', userName: '张三' } });
+          }
+          document.getElementById('psKeyword').value = '张三';
+          document.getElementById('psSearchBtn').click();
+          await tick(150);
+          const psRow = document.querySelector('tr.ps-row');
+          out.psTabIndex = psRow ? psRow.getAttribute('tabindex') : 'MISSING';
+          out.psExpandedInit = psRow ? psRow.getAttribute('aria-expanded') : 'MISSING';
+          if (psRow) { key(psRow, 'Enter'); await tick(120); }
+          out.psExpandedAfterEnter = document.querySelector('tr.ps-row')
+            ? document.querySelector('tr.ps-row').getAttribute('aria-expanded') : 'MISSING';
+          out.psDetailRow = !!document.getElementById('psDetailRow');
+          if (uApi) { uApi.fetchUserList = origList2; uApi.fetchUserDetail = origDetail; }
+        } finally {
+          if (api && origList) api.fetchTaskList = origList;
+        }
+        return out;
+      });
+      process.stdout.write(`  多选键盘/重置/人员行: ${JSON.stringify(r)}\n`);
+      if (r.afterInputEnter !== 1) fails.push(`筛选输入框回车应发起 1 次查询，实际 ${r.afterInputEnter}`);
+      if (r.mselOpened !== true) fails.push('多选控件按回车应打开面板');
+      if (r.mselExpanded !== 'true') fails.push(`面板打开时 aria-expanded 应为 true，实际 ${r.mselExpanded}`);
+      if (r.callsAfterMselEnter !== r.afterInputEnter) {
+        fails.push(`多选面板按回车不得顺带查询（${r.afterInputEnter} → ${r.callsAfterMselEnter}）`);
+      }
+      if (r.focusInList !== true) fails.push('多选面板里按 ↓ 应把焦点移进选项');
+      if (r.probeOpened !== true) fails.push('筛选卡内的多选控件按回车应打开面板');
+      if (r.checkedByEnter !== 'a') fails.push(`面板里按回车应勾选当前项，实际勾中 ${JSON.stringify(r.checkedByEnter)}`);
+      if (r.callsAfterListEnter !== r.afterInputEnter) {
+        fails.push(`列表里按回车不得顺带查询（${r.afterInputEnter} → ${r.callsAfterListEnter}）`);
+      }
+      if (r.probeClosed !== true || r.focusBackToDisplay !== true) {
+        fails.push(`Esc 应收起面板并把焦点还给显示框（closed=${r.probeClosed} back=${r.focusBackToDisplay}）`);
+      }
+      if (r.expandedAfterEsc !== 'false') fails.push(`收起后 aria-expanded 应为 false，实际 ${r.expandedAfterEsc}`);
+      if (r.resetInput !== '') fails.push(`重置应清空筛选输入框，实际 ${JSON.stringify(r.resetInput)}`);
+      if (r.resetRows !== 1 || !String(r.resetEmptyCls).includes('empty-hint')) {
+        fails.push(`重置后结果应回到初始空态，实际 rows=${r.resetRows} cls=${r.resetEmptyCls}`);
+      }
+      if (r.resetBar !== 'none' || r.resetStats !== 'none') {
+        fails.push(`重置后分页条/统计行都应隐藏，实际 bar=${r.resetBar} stats=${r.resetStats}`);
+      }
+      if (r.resetCount !== '') fails.push(`重置后计数应清空，实际 ${JSON.stringify(r.resetCount)}`);
+      if (!String(r.resetToast).includes('重置')) fails.push(`重置应给可见反馈，实际 toast=${JSON.stringify(r.resetToast)}`);
+      if (r.psTabIndex !== '0') fails.push(`人员查询行应可 Tab 聚焦，实际 tabindex=${r.psTabIndex}`);
+      if (r.psExpandedInit !== 'false' || r.psExpandedAfterEnter !== 'true') {
+        fails.push(`人员行 aria-expanded 应 0 → 1，实际 ${r.psExpandedInit} → ${r.psExpandedAfterEnter}`);
+      }
+      if (r.psDetailRow !== true) fails.push('人员行按回车应展开详情');
+    } catch (e) {
+      fails.push(`第三批（键盘/重置）段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 第三批优化：排序入口是真按钮 + 复制单元格键盘漫游
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(() => {
+        const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+        const out = {};
+        // ① 排序入口（B9）：换成真 <button> 后 Tab 能到、Enter/空格原生可触发；aria-sort 跟着走
+        const btn = document.getElementById('btnSortPrio');
+        const th = document.getElementById('thPrio');
+        out.btnTag = btn ? btn.tagName : 'MISSING';
+        out.sortInit = th ? th.getAttribute('aria-sort') : 'MISSING';
+        if (btn) {
+          btn.focus();
+          out.btnFocusable = document.activeElement === btn;
+          btn.click();
+          out.sortAfter1 = th.getAttribute('aria-sort');
+          btn.click();
+          out.sortAfter2 = th.getAttribute('aria-sort');
+          btn.click();                      // 第三档回到起始态，别把页面留在别的排序上
+          out.sortBack = th.getAttribute('aria-sort');
+        }
+
+        // ② 复制单元格漫游（B9）：真 DOM 渲染两行，验证只有一格进 Tab 顺序
+        const tb = document.createElement('tbody');
+        document.body.appendChild(tb);
+        const M = window.SubscriptionModel;
+        const rows = [0, 1].map((i) => {
+          const row = { sysServeNo: 'S' + i };
+          M.COLUMNS.forEach(([k]) => { row[k] = 'v' + k + i; });
+          return M.decorateRow(row, new Date(2026, 8, 16));
+        });
+        let copied = 0;
+        window.SubscriptionView.renderTable(tb, rows, {
+          onJump() {},
+          onCopy(t) { copied += 1; out.lastCopy = t; },
+        });
+        const cells = Array.prototype.slice.call(tb.querySelectorAll('td.copy-cell'));
+        const tabbable = () => cells.filter((c) => c.tabIndex === 0).length;
+        out.cellCount = cells.length;
+        out.tabbableBefore = tabbable();
+        const first = cells.find((c) => c.tabIndex === 0);
+        if (first) {
+          first.focus();
+          out.firstFocusable = document.activeElement === first;
+          key(first, 'Enter');
+          out.copiedOnEnter = copied;
+          key(first, 'ArrowRight');
+          out.tabbableAfterRight = tabbable();
+          out.activeIsCell = !!(document.activeElement && document.activeElement.closest
+            && document.activeElement.closest('td.copy-cell'));
+          key(document.activeElement, ' ');
+          out.copiedAfterSpace = copied;
+        }
+        tb.remove();
+        return out;
+      });
+      process.stdout.write(`  排序按钮/复制漫游: ${JSON.stringify(r)}\n`);
+      if (r.btnTag !== 'BUTTON') fails.push(`排序入口应是真 <button>（键盘可达），实际 ${r.btnTag}`);
+      if (r.btnFocusable !== true) fails.push('排序按钮应可聚焦');
+      if (r.sortInit !== 'ascending') fails.push(`默认排序应为 ascending，实际 ${r.sortInit}`);
+      if (r.sortAfter1 !== 'descending' || r.sortAfter2 !== 'none') {
+        fails.push(`排序三态应 ascending → descending → none，实际 ${r.sortAfter1} → ${r.sortAfter2}`);
+      }
+      if (r.sortBack !== 'ascending') fails.push(`再点一次应回到 ascending，实际 ${r.sortBack}`);
+      if (r.cellCount !== 42) fails.push(`两行应有 42 个可复制格（21 列 × 2），实际 ${r.cellCount}`);
+      if (r.tabbableBefore !== 1) {
+        fails.push(`整表只应有 1 个 Tab 停靠点（否则 Tab 要穿 220 格），实际 ${r.tabbableBefore}`);
+      }
+      if (r.firstFocusable !== true) fails.push('漫游格应可聚焦');
+      if (r.copiedOnEnter !== 1) fails.push(`当前格按回车应复制，实际复制 ${r.copiedOnEnter} 次`);
+      if (r.tabbableAfterRight !== 1 || r.activeIsCell !== true) {
+        fails.push(`→ 应把漫游位移到下一格，实际 tabbable=${r.tabbableAfterRight} active=${r.activeIsCell}`);
+      }
+      if (r.copiedAfterSpace !== 2) fails.push(`空格也应复制，实际累计 ${r.copiedAfterSpace} 次`);
+    } catch (e) {
+      fails.push(`第三批（排序/复制）段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 第三批优化：订阅弹窗脏检查（B5）
+  // ═══════════════════════════════════════════════════════════════
+  // 四条关闭路径（✕ / 取 消 / 点遮罩 / Esc）原来都会把 28 字段长表单一次性丢掉且无提示。
+  // 现在：没改过 → 直接关；改过 → 先确认，确认框里取消则弹窗与内容都保留。
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const r = await page.evaluate(async () => {
+        const tick = (ms) => new Promise((res) => setTimeout(res, ms));
+        const overlay = document.getElementById('subscribeOverlay');
+        const isOpen = () => !!overlay && overlay.classList.contains('show');
+        const row = { serverCoding: 'TST-CODING', sysServeName: '脏检查测试服务' };
+        const out = {};
+
+        // ① 打开后没改任何东西 → 取 消 应直接关闭，不该弹确认框
+        await window.SubscribeDialog.open(row);
+        await tick(220);
+        out.opened = isOpen();
+        document.getElementById('btnSubCancel').click();
+        await tick(260);
+        out.closedClean = !isOpen();
+        out.confirmOnClean = !!document.querySelector('.dlg-util-overlay');
+
+        // ② 改一个字段再取消 → 必须出现确认框，且主弹窗仍开着
+        await window.SubscribeDialog.open(row);
+        await tick(220);
+        document.getElementById('sub_taskNo').value = 'T-脏检查';
+        document.getElementById('btnSubCancel').click();
+        await tick(260);
+        const box = document.querySelector('.dlg-util-overlay');
+        out.stillOpenOnDirty = isOpen();
+        out.confirmShown = !!box;
+        out.confirmText = box ? box.textContent.replace(/\s+/g, ' ').trim() : '';
+
+        // ③ 在确认框里点「取 消」→ 弹窗与已填内容都保留（不是「点了没反应」）
+        const btns = box ? box.querySelectorAll('.sub-foot button') : [];
+        if (btns[0]) btns[0].click();
+        await tick(260);
+        out.stillOpenAfterAbort = isOpen();
+        out.taskNoKept = document.getElementById('sub_taskNo').value;
+        out.boxGoneAfterAbort = !document.querySelector('.dlg-util-overlay');
+
+        // ④ 再来一次并确认放弃 → 这次才关
+        document.getElementById('btnSubCancel').click();
+        await tick(260);
+        const box2 = document.querySelector('.dlg-util-overlay');
+        const okBtn = box2 ? box2.querySelector('.sub-foot .filled') : null;
+        out.confirmTwice = !!box2;
+        if (okBtn) okBtn.click();
+        await tick(320);
+        out.closedAfterConfirm = !isOpen();
+        return out;
+      });
+      process.stdout.write(`  订阅弹窗脏检查: ${JSON.stringify(r)}\n`);
+      if (r.opened !== true) fails.push('订阅弹窗未打开，脏检查无法验证');
+      if (r.closedClean !== true) fails.push('没改过表单时「取 消」应直接关闭');
+      if (r.confirmOnClean) fails.push('没改过表单不该弹放弃确认框');
+      if (r.stillOpenOnDirty !== true) fails.push('改过表单后点「取 消」应先拦下来，不能直接丢内容');
+      if (r.confirmShown !== true) fails.push('改过表单后关闭应弹放弃确认框');
+      if (!/放弃|关闭/.test(String(r.confirmText))) {
+        fails.push(`确认框文案要说清后果，实际 ${JSON.stringify(r.confirmText)}`);
+      }
+      if (r.stillOpenAfterAbort !== true) fails.push('确认框里选「取 消」后主弹窗应仍然打开');
+      if (r.taskNoKept !== 'T-脏检查') fails.push(`放弃确认后已填内容必须保留，实际 ${JSON.stringify(r.taskNoKept)}`);
+      if (r.boxGoneAfterAbort !== true) fails.push('确认框选「取 消」后自身应关闭');
+      if (r.confirmTwice !== true) fails.push('再次关闭仍应弹确认框');
+      if (r.closedAfterConfirm !== true) fails.push('确认放弃后主弹窗应关闭');
+    } catch (e) {
+      fails.push(`第三批（脏检查）段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;

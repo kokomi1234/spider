@@ -46,6 +46,8 @@
   let judgeSeq = 0;            // 评委行自增 id
   let docPickedDetails = [];   // 已勾选文档的完整明细（提交时要用到真实报文里的 6 个字段）
   let judgeUserCache = null;   // 已搜用户缓存（实现见 subscribe-model.js，状态归本模块）
+  let formBaseline = '';       // 打开时（resetForm 之后）的表单签名，用于脏检查（清单 B5）
+  let closing = false;         // 脏检查确认框在途：防连点弹出多个确认框
 
   // ── 小工具 ───────────────────────────────────────────
   function toast(msg, duration = 2500, type = 'info') {
@@ -228,8 +230,9 @@
 
   // ── 事件绑定 ─────────────────────────────────────────
   function bindEvents() {
-    dom.btnClose.addEventListener('click', close);
-    dom.btnCancel.addEventListener('click', close);
+    // 一律用薄包装调用 close()：直接绑 close 会把 click 事件当成 opts 传进去
+    dom.btnClose.addEventListener('click', () => close());
+    dom.btnCancel.addEventListener('click', () => close());
     dom.btnConfirm.addEventListener('click', confirmSubscribe);
     dom.overlay.addEventListener('click', (e) => { if (e.target === dom.overlay) close(); });
 
@@ -270,6 +273,44 @@
   }
 
   // ── 打开 / 关闭 ──────────────────────────────────────
+
+  /**
+   * 表单「脏」签名（清单 B5）。
+   *
+   * 判定口径：**看得见的填写内容**变了就算脏 —— 手输文本（TEXT_FIELDS）+ 文本域（备注）+
+   * 所有可搜索下拉的选中值 + 手输文本（typedValues）+ TPS 默认值 + 关联文档 + 评委行。
+   * 评委行把「行内容」整体入签名：默认固定两行预置角色，所以行数变化或任一行填了
+   * 工号 / 姓名 / 部门都会让签名偏离基线，不用单独判「行数是否等于 2」。
+   *
+   * 用签名比对而不是逐字段写 if，是为了将来加字段时**自动**纳入判断，不会再漏一处。
+   */
+  function formSignature() {
+    const texts = M.TEXT_FIELDS.map((id) => {
+      const el = $('#' + id);
+      return el ? String(el.value || '').trim() : '';
+    });
+    const sels = Object.keys(selectInstances).sort()
+      .map((id) => id + '=' + String(selectInstances[id].getValue() || ''));
+    const typed = Object.keys(typedValues).sort().map((k) => k + '=' + typedValues[k]);
+    return JSON.stringify([
+      texts, sels, typed, collectJudges(),
+      dom.remark ? dom.remark.value : '',
+      dom.relDoc ? dom.relDoc.value : '',
+      dom.relDocIds ? dom.relDocIds.value : '',
+      dom.tpsPeak ? dom.tpsPeak.value : '',
+    ]);
+  }
+
+  /** 表单是否已被改动过（与本次打开时的基线比） */
+  function isFormDirty() {
+    if (!M || !dom) return false;
+    try {
+      return formSignature() !== formBaseline;
+    } catch (e) {
+      return false;     // 判不出来时按「没改过」处理，宁可漏拦也别把弹窗卡死
+    }
+  }
+
   async function open(row) {
     if (!row) return;
     await boot();
@@ -290,8 +331,39 @@
     if (dom.dialog) dom.dialog.focus();
   }
 
-  function close() {
+  /**
+   * 关闭弹窗。四条路径（✕ / 取 消 / 点遮罩 / Esc）都走这里。
+   *
+   * 脏检查（清单 B5）：28 个字段的长表单填了几分钟，误点取消 / 点到遮罩 / 顺手按 Esc
+   * 会一次性清空且毫无提示。所以**有填写内容时先确认**；确认订阅成功那种程序化关闭
+   * 传 `{ force: true }` 绕开。
+   * @param {{force?:boolean}} [opts]
+   */
+  function close(opts) {
     if (!dom || !dom.overlay) return;
+    const force = !!(opts && opts.force);
+
+    if (!force && isFormDirty()) {
+      const DU = window.DialogUtils;
+      if (!DU || typeof DU.confirmBox !== 'function') {
+        // 确认框组件缺失时不给用户「关不掉」的假象，退回原来的直接关闭
+        console.warn('[SubscribeDialog] DialogUtils.confirmBox 不可用，跳过放弃确认');
+      } else {
+        if (closing) return;              // 连点：只弹一个确认框
+        closing = true;
+        DU.confirmBox({
+          title: '放弃已填写的内容？',
+          message: '表单里已有填写的内容，关闭后不会保留。',
+          okText: '放弃并关闭',
+          danger: true,
+        }).then((ok) => {
+          closing = false;
+          if (ok) close({ force: true });
+        }).catch(() => { closing = false; });
+        return;
+      }
+    }
+
     openSeq += 1;               // 关窗即作废：在途的订阅/评委请求回来时不再回写界面
     // 关最外层时子弹窗可能还开着 → 顺手一起关，然后一次性解锁
     if (window.DocPicker.isOpen()) window.DocPicker.close();
@@ -301,6 +373,7 @@
     if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
     returnFocus = null;
     currentRow = null;
+    formBaseline = '';
   }
 
   /** 每次打开都回到干净状态，并按当前行预填已知字段 */
@@ -343,6 +416,9 @@
         try { selectInstances['sub_callerBatch'].setValue(homeBatch); } catch (_) { /* 忽略 */ }
       }
     }
+
+    // 预填做完才算「打开时的基线」：之后用户改动的任何一处都能被 isFormDirty 认出来（清单 B5）
+    formBaseline = formSignature();
   }
 
   // ── 确认订阅 ─────────────────────────────────────────
@@ -456,7 +532,7 @@
 
     if (window.SubscribeManager) window.SubscribeManager.add(serverCoding);
     toast(`✅ 已订阅: ${serverCoding}`, 2200, 'success');
-    close();
+    close({ force: true });      // 订阅已成功，不再走「放弃填写内容？」的脏检查
 
     // 让列表页自己刷新（订阅状态 / 统计 / 分页），避免模块反向依赖 index.js 内部函数
     const after = window.AppServices && window.AppServices.afterSubscribeChanged;
@@ -700,7 +776,7 @@
       return;
     }
     if (!r.list.length) {
-      toast('接口未返回评委数据', 2500, 'warn');
+      toast('没有查到该服务已有的评委信息', 2500, 'warn');
       return;
     }
     dropJudgeRows(dom.judgeBody.querySelectorAll('tr.judge-row'));   // 清空现有行再填充
@@ -770,7 +846,7 @@
         return;
       }
       if (r.local) {
-        toast('接口未启用，评委信息仅保留在表单中', 2500, 'warn');
+        toast('该功能暂未开放，评委信息仅保留在表单中', 2500, 'warn');
         return;
       }
       toast('✅ 评委信息已提交', 2200, 'success');

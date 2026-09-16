@@ -139,6 +139,9 @@
       const display = lbl || freeText;
       input.value = display;
       input.placeholder = basePlaceholder;
+      // 超长值在窄下拉里只剩省略号（清单 C10）：把完整值写进 title，
+      // 鼠标悬停即可看到全文，不必先展开面板再找。
+      input.title = display;
       input.classList.toggle('has-value', !!display);
       updateClearBtnVisibility();
     }
@@ -147,6 +150,7 @@
     function paintOpen() {
       input.value = query;
       input.placeholder = selectedLabel() || basePlaceholder;
+      input.title = selectedLabel() || query;
       input.classList.remove('has-value');
     }
 

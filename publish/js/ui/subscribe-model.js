@@ -314,9 +314,11 @@
   /**
    * 评委行的 HTML 模板（纯字符串，无 DOM 依赖）。
    * 与拆分前逐字符一致：`<tr>` 上下文里纯空白文本节点会被解析器忽略，不影响结果。
+   * 勾选框外面包了一层 <label class="chk-hit">：把整个单元格变成命中区（清单 B3），
+   * 方框本体 18×18 的样式在 theme.css 的 .sub-tbl 一节，这里只负责结构。
    */
   const JUDGE_ROW_TEMPLATE = `
-      <td class="c-chk"><input type="checkbox" class="judge-check" aria-label="选择该行"></td>
+      <td class="c-chk"><label class="chk-hit"><input type="checkbox" class="judge-check" aria-label="选择该行"></label></td>
       <td class="c-idx judge-idx">—</td>
       <td><select class="judge-role sub-ctl"></select></td>
       <td><select class="judge-no sub-ctl" placeholder="请输入工号"></select></td>

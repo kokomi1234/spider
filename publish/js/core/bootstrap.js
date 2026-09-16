@@ -125,7 +125,7 @@
     lastErrorToastAt = now;
 
     if (typeof window.toast === 'function') {
-      window.toast('⚠️ 页面发生错误，详情见控制台（F12）', 4000, 'error');
+      window.toast('⚠️ 页面出现异常，请刷新重试', 4000, 'error');
     }
   }
 

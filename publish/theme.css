@@ -995,7 +995,7 @@ tbody tr.unsubscribed-row:hover td {
   max-width: 520px;
   width: 90%;
   padding: var(--sp3);
-  position: relative;   /* 右上角 ✕（.dlg-close）的定位基准 */
+  position: relative;   /* 右上角 ✕（.sub-close）的定位基准 */
 }
 
 /* 弹窗宽度三档：宽度是「弹窗外观」的一部分，收在这里统一管理。
@@ -1328,8 +1328,9 @@ body.dialog-open { overflow: hidden; }
 .sub-foot {
   display: flex;
   justify-content: flex-end;
-  /* 16px：底部是「取 消 / 确 认」，两者只隔 8px 时容易把确认点成取消，
-     而取消会直接丢掉整份长表单（脏检查还没做，见 TODO） */
+  /* 16px：底部是「取 消 / 确 认」，两者只隔 8px 时容易把确认点成取消。
+     取消若直接丢掉整份长表单代价极高，所以既拉开间距，又在 close() 里加了脏检查
+     （有填写内容时先确认，见 js/ui/subscribe-dialog.js 的 isFormDirty）。 */
   gap: var(--sp2);
   padding: var(--sp2) var(--sp3);
   border-top: 1px solid var(--outline-soft);
@@ -1525,15 +1526,27 @@ label.req::after {
 .sub-tbl tbody tr.is-picked:hover td { background: color-mix(in srgb, var(--primary-c) 90%, var(--on-surface)); }
 .sub-tbl tbody tr.is-nonmember td { color: var(--faint); }
 
-.sub-tbl .c-chk { width: 44px; }
+.sub-tbl .c-chk { width: 44px; padding: 0; }
 .sub-tbl .c-idx { width: 56px; }
 
-/* 全局没有 checkbox 规则，这里统一成主色 + 16px，避免浏览器默认的 13px 灰盒子。
-   margin 必须清零：浏览器给 checkbox 的默认外边距会把行高顶高 2px，
-   .doc-tbl-wrap「正好 10 行」的 max-height 是按纯文字行高算的，一多就提前出滚动条。 */
+/* 复选框命中区（清单 B3）：原来只有 16×16 的方框本身可点 —— 而「删除评委」是按勾选行
+   执行的，没勾上会漏删、勾错行会删错人。做法是把整个 .c-chk 单元格都变成可点区域：
+     · 方框本体 16 → 18px（仍在行高内，不会把 .doc-tbl-wrap「正好 10 行」的高度算跑偏）
+     · 外面包一层 <label class="chk-hit">，命中区 = 整格（44px 宽 × 行高）
+     · 单元格原本的 10px 上下 padding 移到 label 上，行高保持不变
+   margin 必须清零：浏览器给 checkbox 的默认外边距会把行高顶高 2px。 */
+.sub-tbl .chk-hit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--doc-row-h, 39px);   /* 文档表取它自己的行高；评委表用兜底 39px */
+  cursor: pointer;
+}
+.sub-tbl th.c-chk .chk-hit { padding: 10px 0; }
+
 .sub-tbl input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   margin: 0;
   vertical-align: middle;
   accent-color: var(--primary);

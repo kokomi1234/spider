@@ -23,6 +23,8 @@ const M = win.SubscriptionModel;
 function stubBody(jumps = [], copies = []) {
   return {
     innerHTML: '',
+    dataset: {},                       // 键盘漫游的「只绑一次」标记挂在这里
+    addEventListener() {},
     _jumps: jumps,
     _copies: copies,
     querySelectorAll(sel) {
@@ -38,6 +40,13 @@ function stubEl(dataset) {
   const handlers = {};
   return {
     dataset,
+    tabIndex: -1,
+    parentElement: null,
+    classList: {
+      isCopyFocus: false,
+      toggle(cls, on) { if (cls === 'is-copy-focus') this.isCopyFocus = !!on; },
+    },
+    focus() { this.focused = true; },
     addEventListener(type, fn) { handlers[type] = fn; },
     fire(type, ev) { if (handlers[type]) handlers[type](ev); },
   };
@@ -103,11 +112,11 @@ test('prioCell：优先级单元格 = 色块 + 天数 + title 说明', () => {
     _prio: { level: 'critical', days: 2, text: '剩 2 天', next: '正式版基线', deadline: '2026-09-15' },
   });
   assert.strictEqual(html.indexOf('<td class="col-prio"'), 0);
-  assert.ok(html.indexOf('class="prio-tag is-critical is-near"') > -1);   // 临期 → 加 is-near
+  assert.ok(html.indexOf('class="prio-tag is-critical is-near"') > -1);   // 剩余 ≤3 天 → 加 is-near
   assert.ok(html.indexOf('>剩 2 天</span>') > -1);
   assert.ok(html.indexOf('title="2609批次：应于 2026-09-15 前转为正式版基线"') > -1);
 
-  // 非临期（4 天）不加 is-near；已完成状态 = done 色块
+  // 非最后 3 天（4 天）不加 is-near；已完成状态 = done 色块
   const far = V.prioCell({ prodBatch: 'B', _prio: { level: 'normal', days: 4, text: '剩 4 天', next: '正式版基线', deadline: '2026-09-15' } });
   assert.strictEqual(far.indexOf('is-near'), -1);
   assert.ok(far.indexOf('class="prio-tag is-normal"') > -1);
@@ -245,7 +254,7 @@ test('renderPagination：页码条 / 上下页禁用 / 跳页框同步', () => {
   assert.strictEqual(els.bar.style.display, '');
   assert.ok(els.pageNumbers.innerHTML.indexOf('data-page="1"') > -1);
   assert.ok(els.pageNumbers.innerHTML.indexOf('data-page="3"') > -1);
-  assert.ok(els.pageNumbers.innerHTML.indexOf('data-page="2" class="is-current">2') > -1);
+  assert.ok(els.pageNumbers.innerHTML.indexOf('data-page="2" class="is-current" aria-current="page">2') > -1);
   // 第 2 页：上一页可点、下一页可点
   assert.strictEqual(els.btnPrev.disabled, false);
   assert.strictEqual(els.btnNext.disabled, false);
@@ -268,6 +277,58 @@ test('renderPagination：页码条 / 上下页禁用 / 跳页框同步', () => {
   V.renderPagination(zero, { pageNum: 1, total: 11, pages: 0, queried: true, onGoto: () => {} });
   assert.strictEqual(zero.btnPrev.disabled, true);
   assert.strictEqual(zero.btnNext.disabled, true);
+});
+
+/**
+ * 分页条元素替身（可注入 document，用来验证焦点归还 —— A9）。
+ * 注意 subscription-view.js 里的 `document` 是 harness 用 new Function 注入的**形参**，
+ * 直接改 global.document 对它无效，必须重新 loadScript 时通过 globals 传进去。
+ */
+function stubPaginationElsWithDoc(pageNumbers, doc) {
+  const win2 = loadScript('js/core/format.js');
+  loadScript('js/page/subscription-model.js', {}, win2);
+  loadScript('js/page/subscription-view.js', { document: doc }, win2);
+  return {
+    V: win2.SubscriptionView,
+    els: {
+      bar: { style: {} },
+      pageTotal: { textContent: '' },
+      pageNumbers,
+      btnPrev: { disabled: false },
+      btnNext: { disabled: false },
+      pageJumpInput: { max: '', value: '' },
+    },
+  };
+}
+
+test('renderPagination：页码条重建后把焦点还给当前页（A9 键盘可达）', () => {
+  // 页码条是整体重建的，被点的那颗按钮随 DOM 一起销毁。若焦点原本落在页码条里，
+  // 重建后必须主动把焦点交给新的当前页按钮，否则会掉回 <body>（键盘用户要从头 Tab）。
+  const focused = { id: 'old-page-btn' };
+  const curBtn = { focused: false, focus() { this.focused = true; } };
+  const { V: V2, els } = stubPaginationElsWithDoc({
+    innerHTML: '',
+    contains: (el) => el === focused,
+    querySelectorAll: () => [],
+    querySelector: (sel) => (sel === 'button.is-current' ? curBtn : null),
+  }, { activeElement: focused });
+
+  V2.renderPagination(els, { pageNum: 2, total: 25, pages: 3, queried: true, onGoto: () => {} });
+  assert.strictEqual(curBtn.focused, true, '焦点原本在页码条里 → 应还给新的当前页按钮');
+});
+
+test('renderPagination：焦点不在页码条时不抢焦点（A9）', () => {
+  // 鼠标点击 / 焦点在别处时不得凭空抢焦点，否则会打断用户当前正在输入的内容
+  const curBtn = { focused: false, focus() { this.focused = true; } };
+  const { V: V2, els } = stubPaginationElsWithDoc({
+    innerHTML: '',
+    contains: () => false,
+    querySelectorAll: () => [],
+    querySelector: (sel) => (sel === 'button.is-current' ? curBtn : null),
+  }, { activeElement: { id: 'somewhere-else' } });
+
+  V2.renderPagination(els, { pageNum: 2, total: 25, pages: 3, queried: true, onGoto: () => {} });
+  assert.strictEqual(curBtn.focused, false, '焦点不在页码条内 → 不该动焦点');
 });
 
 test('renderPagination：页码按钮点击回传数字页码', () => {

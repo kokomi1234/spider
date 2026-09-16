@@ -162,7 +162,16 @@
     };
   }
 
+  /**
+   * 重置：清空筛选 + 结果回到初始空态 + 提示。
+   *
+   * 原来只清控件、**结果原样留着**，也没有任何提示 —— 与首页「重置」的表现完全不同：
+   * 首页会清空结果、回到初始空态并 toast，这里按了像「没反应」，用户会把上一轮结果
+   * 当成本次查询的结果读。三页统一为「清空筛选 + 初始空态 + toast」（清单 C7）。
+   */
   function resetForm() {
+    state.reqSeq += 1;                 // 作废在途查询：回来时不再往已清空的界面回写
+    setLoading(false);
     ['#t_taskNo', '#t_taskName', '#t_demandNo', '#t_leadProduct', '#t_relationProducts',
      '#t_taskType', '#t_taskPerformStatue', '#t_tieVersion', '#t_belongYear',
      '#t_projectNo', '#t_projectName', '#t_projLeadDept', '#t_prodPracDeptName']
@@ -176,6 +185,20 @@
     Object.values(datePickers).forEach((p) => { if (p && p.clear) p.clear(); });
     // 牵头部门恢复成当前用户所在团队，跟抓包里的默认筛选一致
     if (deptSelect && defaultDept) deptSelect.setValue(defaultDept);
+
+    // 结果 / 统计 / 分页一并回到初始空态
+    hideQueryFail();
+    state.queried = false;
+    state.pageNum = 1;
+    lastOkPageNum = 1;
+    state.total = 0;
+    state.rows = [];
+    state.cond = null;
+    renderEmpty(emptyText('initial', null, '请输入条件后点击「查询」'));
+    renderPagination();                // queried=false → 隐藏分页条
+    renderStats();                     // queried=false → 隐藏统计行
+    const rc = $('#resultCount'); if (rc) rc.textContent = '';
+    toast('筛选条件已重置', 1500, 'info');
   }
 
   // ═══════════════════════════════════════════════════
@@ -276,15 +299,15 @@
         <td class="col-index">${start + i + 1}</td>
         <td class="cell-no" title="${esc(no)}">${esc(no || '—')}</td>
         <td class="cell-name" title="${esc(r.taskApplicationTaskName || '')}">${esc(r.taskApplicationTaskName || '—')}</td>
-        <td>${esc(r.taskApplicationTaskType ?? '—')}</td>
+        <td title="${esc(r.taskApplicationTaskType ?? '')}">${esc(r.taskApplicationTaskType ?? '—')}</td>
         <td title="${esc(r.leadDept || '')}">${esc(r.leadDept || '—')}</td>
         <td class="cell-demand" title="${esc(r.softCenterDemandNo || '')}">${esc(r.softCenterDemandNo || '—')}</td>
         <td class="cell-prod" title="${esc(r.leadProduct || '')}">${esc(r.leadProduct || '—')}</td>
         <td class="cell-rel" title="${esc(r.relationProducts || '')}">${esc(r.relationProducts || '—')}</td>
-        <td>${esc(r.schedulingAgreeBatch || '—')}</td>
-        <td>${esc(r.taskStateId ?? '—')}</td>
-        <td>${esc(r.taskPerformStatue ?? '—')}</td>
-        <td>${esc(shortDate(r.upUpSchAgreedPutProdDate))}</td>
+        <td title="${esc(r.schedulingAgreeBatch || '')}">${esc(r.schedulingAgreeBatch || '—')}</td>
+        <td title="${esc(r.taskStateId ?? '')}">${esc(r.taskStateId ?? '—')}</td>
+        <td title="${esc(r.taskPerformStatue ?? '')}">${esc(r.taskPerformStatue ?? '—')}</td>
+        <td title="${esc(shortDate(r.upUpSchAgreedPutProdDate))}">${esc(shortDate(r.upUpSchAgreedPutProdDate))}</td>
         <td><button class="text-btn" data-detail="${i}" type="button">详情</button></td>
       </tr>`;
     }).join('');
@@ -405,6 +428,23 @@
     // 失败常驻条上的「重试」：重跑当前页码（首次失败时 pageNum 仍为 1）
     const retryBtn = $('#btnRetryQuery');
     if (retryBtn) retryBtn.addEventListener('click', () => query(state.pageNum || 1));
+
+    // 筛选区里按回车直接查询（与首页 / 订阅页同一套手感）。
+    // 原来 task 页完全没有这条处理：数据录入型用户填完条件按回车只会空等。
+    // 自带键盘行为的控件必须先排除 —— 它们的 Enter 是「展开面板 / 选中选项」，
+    // 而且只 preventDefault、不 stopPropagation，不排除就会在展开面板的同时顺带查一次。
+    const filterCard = $('#filterCard');
+    if (filterCard) {
+      filterCard.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+        const el = e.target;
+        if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'SELECT')) return;
+        if (el.type === 'checkbox' || el.type === 'number' || el.type === 'radio') return;
+        if (el.closest('.dp-wrapper, .searchable-select, .msel')) return;
+        e.preventDefault();
+        query(1);
+      });
+    }
 
     // 筛选卡片折叠
     const card = $('#filterCard');

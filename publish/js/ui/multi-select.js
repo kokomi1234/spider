@@ -12,9 +12,20 @@
  * 样式在 theme.css 的「共享页级控件」小节，本文件只管 DOM 与行为。
  *
  * 对外 API：setOptions(list) / getValues() / clear()
+ *
+ * ── 键盘可达（清单 B10）──────────────────────────────
+ * 原来只绑了 click：`.msel-display` 是只读 input，能 Tab 聚焦却什么都打不开，
+ * 在订阅页 / task 页按 Enter 还会一路冒泡到「筛选区回车即查询」→ 面板没开、整页先查了一次。
+ * 现在：
+ *   display：Enter / 空格 / ↓ → 打开面板；Esc → 收起并把焦点还回 display
+ *   panel  ：Esc 收起；↑↓ 在选项间移动焦点；Enter 勾选当前项；空格归复选框自己用
+ * 这些都是自定义控件，键盘事件一律 stopPropagation，避免被页面的回车查询接手。
  */
 (function () {
   'use strict';
+
+  // 给每个实例分配唯一 id，供 aria-controls 使用（同一页有 5 个多选控件，不能撞）
+  let mselSeq = 0;
 
   function esc(v) {
     return String(v ?? '')
@@ -35,13 +46,19 @@
 
     const selected = new Set();
     let list = Array.isArray(options) ? options.slice() : [];
+    const label = placeholder || '全部';
+    // 面板 id 唯一：aria-controls 要指向它（同页多个多选控件不能撞 id）
+    const panelId = 'msel-panel-' + (++mselSeq);
 
     host.innerHTML = `
-      <input type="text" class="msel-display" readonly placeholder="${esc(placeholder || '全部')}"
-             title="点击选择（可多选）">
+      <input type="text" class="msel-display" readonly placeholder="${esc(label)}"
+             role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="${panelId}"
+             aria-label="${esc(label + '（可多选）')}"
+             title="点击或按回车 / 空格选择（可多选）">
       <span class="msel-arrow" aria-hidden="true">▼</span>
-      <div class="msel-panel">
-        <input type="text" class="msel-search" placeholder="搜索">
+      <div class="msel-panel" id="${panelId}" role="listbox" aria-multiselectable="true"
+           aria-label="${esc(label + ' 选项')}">
+        <input type="text" class="msel-search" placeholder="搜索" aria-label="搜索选项">
         <div class="msel-list"></div>
         <div class="msel-foot">
           <button type="button" class="outlined btn-xs" data-act="all">全 选</button>
@@ -76,6 +93,7 @@
     function open() {
       panel.classList.add('show');
       host.classList.add('is-open');   // 箭头旋转 + 变主色（与可搜索下拉一致）
+      display.setAttribute('aria-expanded', 'true');
       search.value = '';
       renderList();
       search.focus();
@@ -94,6 +112,7 @@
     function close() {
       panel.classList.remove('show');
       host.classList.remove('is-open');
+      display.setAttribute('aria-expanded', 'false');
       if (listenersBound) {
         document.removeEventListener('mousedown', onDocMouseDown);
         window.removeEventListener('resize', onWindowResize);
@@ -126,14 +145,81 @@
     }
     let listenersBound = false;
 
+    /** 勾选 / 取消勾选一项（change 事件与键盘 Enter 共用同一套状态回写） */
+    function applyToggle(cb) {
+      if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
+      paintLabel();
+    }
+
     display.addEventListener('click', () => (isOpen() ? close() : open()));
     search.addEventListener('input', renderList);
 
     listEl.addEventListener('change', (e) => {
       const cb = e.target;
       if (!cb || cb.type !== 'checkbox') return;
-      if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
-      paintLabel();
+      applyToggle(cb);
+    });
+
+    // ── 键盘可达（清单 B10）───────────────────────────
+    // 面板里当前可见的复选框（方向键在它们之间移动焦点）
+    function visibleBoxes() {
+      return Array.prototype.slice.call(listEl.querySelectorAll('.msel-item input[type="checkbox"]'));
+    }
+
+    /** 焦点在选项间移动（首尾循环）；焦点还在搜索框里时，↓ 进第一项、↑ 进最后一项 */
+    function moveFocus(delta) {
+      const boxes = visibleBoxes();
+      if (!boxes.length) return;
+      const cur = boxes.indexOf(document.activeElement);
+      let next = cur < 0 ? (delta > 0 ? 0 : boxes.length - 1) : cur + delta;
+      if (next < 0) next = boxes.length - 1;
+      if (next >= boxes.length) next = 0;
+      boxes[next].focus();
+    }
+
+    function dismiss() {
+      close();
+      display.focus();
+    }
+
+    display.addEventListener('keydown', (e) => {
+      const k = e.key;
+      if (k === 'Escape') {
+        if (!isOpen()) return;
+        e.preventDefault(); e.stopPropagation();
+        dismiss();
+        return;
+      }
+      if (k === 'Enter' || k === ' ' || k === 'Spacebar' || k === 'ArrowDown' || k === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();          // 别让页面的「筛选区回车即查询」接手
+        if (!isOpen()) { open(); return; }
+        if (k === 'ArrowDown' || k === 'ArrowUp') moveFocus(k === 'ArrowDown' ? 1 : -1);
+      }
+    });
+
+    // open() 会把焦点放进搜索框，所以方向键必须在这里也接住
+    panel.addEventListener('keydown', (e) => {
+      const k = e.key;
+      if (k === 'Escape') {
+        e.preventDefault(); e.stopPropagation();
+        dismiss();
+        return;
+      }
+      if (k === 'ArrowDown' || k === 'ArrowUp') {
+        e.preventDefault(); e.stopPropagation();
+        moveFocus(k === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (k === 'Enter') {
+        // 复选框原生只认空格，回车在这里手动 toggle；不拦冒泡的话页面会跟着发一次查询
+        e.preventDefault(); e.stopPropagation();
+        const cb = e.target;
+        if (cb && cb.type === 'checkbox') { cb.checked = !cb.checked; applyToggle(cb); }
+        return;
+      }
+      // 空格（勾选）与其它键归控件自己用，不往上冒泡
+      e.stopPropagation();
     });
 
     panel.querySelector('.msel-foot').addEventListener('click', (e) => {

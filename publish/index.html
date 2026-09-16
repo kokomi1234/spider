@@ -367,7 +367,7 @@
           <div class="form-group" data-page-node-id="BqgS8Nm8P0HoCqXfiIQb6V">
             <label for="f_checkoutInStatus" data-page-node-id="Z2gM6Eile36yvwzhzidat8">CHECKOUT/IN状态</label>
             <select id="f_checkoutInStatus" disabled
-                    title="getPublishDataList 的请求体里没有这个字段，后端不支持该筛选" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
+                    title="当前版本暂不支持该筛选" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
               <option value="" data-page-node-id="eDnxbLswcJilBSqNufn4uh">全部</option>
             </select>
           </div>
@@ -527,12 +527,13 @@
         </table>
       </div>
 
-      <!-- 分页 -->
-      <div class="pagination" id="pagination" style="display:none;" data-page-node-id="BkUdATmB5ZgBdFTpU5AvhR">
+      <!-- 分页：语义上是「导航」，用 <nav> + aria-label 让读屏能念出这是一组分页控件（清单 A9） -->
+      <nav class="pagination" id="pagination" aria-label="分页" style="display:none;" data-page-node-id="BkUdATmB5ZgBdFTpU5AvhR">
         <button class="outlined btn-xs" id="btnPrev" data-page-node-id="4VrosZipJvq5czA43p1NyU">‹ 上一页</button>
-        <span class="page-info" id="pageInfo" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
+        <!-- role=status + aria-live：与同页 #resultCount 同口径，翻页后读屏能念出新的页码 -->
+        <span class="page-info" id="pageInfo" role="status" aria-live="polite" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
         <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
-      </div>
+      </nav>
     </div>
   </div>
 
@@ -540,7 +541,7 @@
   <div class="overlay" id="detailOverlay" role="presentation" data-page-node-id="mNpDiuC6QMQfG655iXYrVs">
     <div class="dialog dialog--md" id="detailDialog" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1" data-page-node-id="bGCCegV8JaUJ3xkNGgfhio">
       <!-- 右上角 ✕：与订阅页详情弹窗同款（.sub-close），绝对定位适配本页无 .sub-head 的旧结构 -->
-      <button type="button" class="sub-close dlg-close" id="btnDetailCloseX" aria-label="关闭">✕</button>
+      <button type="button" class="sub-close" id="btnDetailCloseX" aria-label="关闭">✕</button>
       <h2 id="detailTitle" data-page-node-id="6nXAIEDcDasHaUz6uGNSIp">服务详情</h2>
       <!-- 详情接口预留：加载中 / 接口失败回退本地的状态提示 -->
       <div class="detail-status" id="detailStatus" role="status" aria-live="polite" hidden></div>
@@ -617,7 +618,7 @@
             <table class="sub-tbl">
               <thead>
                 <tr>
-                  <th class="c-chk"><input type="checkbox" id="judgeCheckAll" aria-label="全选评委"></th>
+                  <th class="c-chk"><label class="chk-hit"><input type="checkbox" id="judgeCheckAll" aria-label="全选评委"></label></th>
                   <th class="c-idx">序号</th>
                   <th>评委角色</th>
                   <th>评委工号</th>
@@ -812,7 +813,7 @@
           <table class="sub-tbl">
             <thead>
               <tr>
-                <th class="c-chk"><input type="checkbox" id="docCheckAll" aria-label="全选文档"></th>
+                <th class="c-chk"><label class="chk-hit"><input type="checkbox" id="docCheckAll" aria-label="全选文档"></label></th>
                 <th>文档编号</th>
                 <th>文档名称</th>
                 <th>文档批次</th>

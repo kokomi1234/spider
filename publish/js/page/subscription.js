@@ -50,8 +50,8 @@
     queried: false,
     caller: '',              // 生效的调用方系统编号（'' = 不限定 / 全部调用方）
     reqSeq: 0,                // 请求序号，旧响应直接丢弃
-    // 默认就按优先级排（逾期 / 临期的顶上来），用户点列头可切宽松在前或恢复后端原序
-    sort: 'asc',              // 'asc' 紧急在前 / 'desc' 宽松在前 / null 后端原序
+    // 默认就按优先级排（逾期 / 紧急的顶上来），用户点列头可切宽松在前或恢复默认顺序
+    sort: 'asc',              // 'asc' 紧急在前 / 'desc' 宽松在前 / null 默认顺序
     mode: 'server',           // 'client' = 全量在前端（排序 + 分页都在本地）；'server' = 后端分页
     allRows: null,            // client 模式下的全量结果（已算好优先级）
     sortLimited: false,       // 已提示过「数据量过大，只排当前页」，避免重复弹
@@ -164,13 +164,37 @@
     getMulti: (key) => (multiSelects[key] ? multiSelects[key].getValues() : []),
   };
 
+  /**
+   * 重置：清空筛选 + 结果回到初始空态 + 提示。
+   *
+   * 原来只清控件、**旧结果原样留着、也没有任何提示** —— 与首页「重置」的表现完全不同，
+   * 用户按了以为没反应，或把上一轮数据当成新结果读（清单 C7）。
+   * 排序方向 state.sort 保留：它是列头的查看偏好，不是筛选条件。
+   */
   function resetForm() {
+    state.reqSeq += 1;               // 作废在途查询，避免关闭后回来又往空界面回写
+    setLoading(false);
     Object.values(selects).forEach((s) => s && s.clear());
     Object.values(multiSelects).forEach((m) => m && m.clear());
     ['#f_providerServiceNameAndId', '#f_subscriberName'].forEach((id) => {
       const el = $(id); if (el) el.value = '';
     });
     setQuickCaller(DEFAULT_CALLER);
+
+    // 结果 / 计数 / 失败条一并回到初始空态
+    hideQueryFail();
+    state.queried = false;
+    state.pageNum = 1;
+    state.total = 0;
+    state.rows = [];
+    state.allRows = null;
+    state.mode = 'server';
+    state.progress = null;
+    state.sortLimited = false;
+    state.fetchAllWarned = false;
+    renderEmpty(emptyText('initial', null, '请输入条件后点击「查询」'));
+    renderCount();
+    toast('筛选条件已重置', 1500, 'info');
   }
 
   // ═══════════════════════════════════════════════════
@@ -227,7 +251,7 @@
     state.queried = true;
 
     // 排序开启且总量不大时，整批拉回来做「全局」排序 + 前端分页，
-    // 这样逾期 / 临期的才是真的排在最前面，而不是只在当前页里排。
+    // 这样逾期 / 紧急的才是真的排在最前面，而不是只在当前页里排。
     if (state.sort && first.total > 0 && first.total <= CLIENT_SORT_MAX) {
       let all = null;
       if (first.total <= first.rows.length) {
@@ -284,7 +308,7 @@
 
     render();
     if (!state.total) toast('查询完成，没有匹配的订阅关系', 2200);
-    if (first.local) toast('⚠️ 查询接口未接入（endpoint 为空），返回空结果', 3000);
+    if (first.local) toast('⚠️ 该查询暂未开放，无法返回结果', 3000);
   }
 
   /**
@@ -333,7 +357,7 @@
 
     render();
     if (!state.total) toast('查询完成，窗口内（近 12 个月）没有匹配的订阅关系', 2400);
-    if (res.local) toast('⚠️ 查询接口未接入（endpoint 空），返回空结果', 3000);
+    if (res.local) toast('⚠️ 该查询暂未开放，无法返回结果', 3000);
   }
 
   /**
@@ -390,12 +414,17 @@
     return state.rows;
   }
 
-  /** 表头排序指示器：↑ 紧急在前 / ↓ 宽松在前 / ⇅ 后端原序 */
+  /** 表头排序指示器：↑ 紧急在前 / ↓ 宽松在前 / ⇅ 默认顺序 */
   function syncSortIndicator() {
     const ind = $('#prioSortInd');
     const th = $('#thPrio');
     if (ind) ind.textContent = state.sort === 'asc' ? '↑' : (state.sort === 'desc' ? '↓' : '⇅');
-    if (th) th.classList.toggle('is-sorted', !!state.sort);
+    if (th) {
+      th.classList.toggle('is-sorted', !!state.sort);
+      // aria-sort 三态与表头箭头一一对应（清单 B9）：读屏用户只靠视觉箭头听不出排序状态
+      th.setAttribute('aria-sort', state.sort === 'asc' ? 'ascending'
+        : (state.sort === 'desc' ? 'descending' : 'none'));
+    }
   }
 
   /** 翻页统一入口：client 模式只重渲染，server 模式才请求后端 */
@@ -461,7 +490,7 @@
   }
 
   // statusTag / reviewStatusTag / prioCell 的 HTML 生成已下沉到 SubscriptionView
-  // （映射与「临期判定」数据在 SubscriptionModel 的 STATUS_CLASS / REVIEW_STATUS_MAP / prioParts）。
+  // （映射与「剩余 ≤3 天加粗」判定数据在 SubscriptionModel 的 STATUS_CLASS / REVIEW_STATUS_MAP / prioParts）。
 
   function renderTable() {
     // 注意顺序：必须先 pageRows()（client 模式下它会按排序切出当前页），
@@ -663,34 +692,41 @@
     $('#btnReset').addEventListener('click', resetForm);
     $('#btnRefresh').addEventListener('click', () => query(state.pageNum));
 
-    // 优先级列头：点击循环 紧急在前 → 宽松在前 → 恢复后端顺序
-    $('#thPrio').addEventListener('click', () => {
+    // 优先级列头：点击循环 紧急在前 → 宽松在前 → 恢复默认顺序。
+    // 排序入口是表头里的真 <button id="btnSortPrio">（清单 B9）——原来只在 th 上绑 click，
+    // 「鼠标专属」，键盘用户完全改不了排序；换成 button 后 Tab 能到、Enter/空格原生可触发，
+    // 也就不需要自己写 keydown。aria-sort 同步见 syncSortIndicator。
+    const cyclePrioSort = () => {
       state.sort = state.sort === 'asc' ? 'desc' : (state.sort === 'desc' ? null : 'asc');
       syncSortIndicator();
       state.pageNum = 1;     // 换了排序就从头看
 
       // 全量已在手上（client 模式）时换个方向只是重排，不用再打扰后端；
-      // 切到「后端原序」或当前还没整批拉过，就重新查一次。
+      // 切到「默认顺序」或当前还没整批拉过，就重新查一次。
       if (state.sort && state.mode === 'client' && state.allRows) {
         render();
         toast(state.sort === 'asc'
-          ? '已按优先级排序：逾期 / 临期的在最上面'
+          ? '已按优先级排序：逾期 / 紧急的在最上面'
           : '已按优先级倒序：宽松的在最上面', 2200);
         return;
       }
       query(1);
-      if (state.sort === null) toast('已恢复后端返回顺序', 2200);
-    });
+      if (state.sort === null) toast('已恢复默认顺序', 2200);
+    };
+    $('#btnSortPrio').addEventListener('click', cyclePrioSort);
     const retryBtn = $('#btnRetryQuery');
     if (retryBtn) retryBtn.addEventListener('click', () => query(state.pageNum));
 
-    // 筛选区里按回车直接查询（与首页一致）。下拉组件内部已经 stopPropagation，
-    // 所以这里只会在文本输入框里触发。
+    // 筛选区里按回车直接查询（与首页一致）。
+    // 自带键盘行为的控件先排除：日期选择器（Enter = 展开）、可搜索下拉 / 多选
+    // （Enter = 展开、选中）。它们只 preventDefault 不 stopPropagation，
+    // 不排除就会在展开面板的同时顺带查一次。
     $('#filterBody').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
       const el = e.target;
       if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'SELECT')) return;
-      if (el.type === 'checkbox' || el.type === 'number') return;
+      if (el.type === 'checkbox' || el.type === 'number' || el.type === 'radio') return;
+      if (el.closest('.dp-wrapper, .searchable-select, .msel')) return;
       e.preventDefault();
       query(1);
     });
