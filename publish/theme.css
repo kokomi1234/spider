@@ -161,6 +161,18 @@ body {
   color: var(--on-surface);
 }
 
+/* 卡片头的「共 N 条」与右侧按钮组：三页统一口径 ——
+   计数靠左（紧跟标题）、操作按钮靠右、字号一致（原来是首页 fs-sm 靠左、
+   订阅/任务页 fs-xs 靠右，同一信息在三页之间位置和字号都在跳）。 */
+.card-head .toolbar {
+  flex: 1 1 auto;
+  justify-content: flex-end;
+}
+.card-head .result-count {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+}
+
 /* 可折叠 */
 .card.collapsible .card-body { transition: max-height .25s ease, opacity .2s ease; }
 .card.collapsed .card-body { display: none; }
@@ -169,6 +181,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;          /* ::before 扩命中区的定位基准 */
   width: 24px;
   height: 24px;
   padding: 0;
@@ -181,6 +194,13 @@ body {
   transition: transform .2s ease, opacity .15s;
   opacity: .5;
   user-select: none;
+}
+/* 外观保持 24×24，命中区扩到 32×32：折叠开关是高频控件，
+   直接放大盒子会顶高卡片头，所以用伪元素向外扩。 */
+.chevron::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 .chevron:hover { opacity: 1; }
 .chevron:focus-visible {
@@ -395,6 +415,13 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   user-select: none;
   transition: transform .2s ease, color .15s;
 }
+/* 箭头图标只有约 18×20（实测），展开要靠瞄这条窄带。
+   用伪元素把命中区扩到约 32×32，字形位置不动（right 固定，加 padding 会让图标左移）。 */
+.searchable-select .searchable-select-arrow::before {
+  content: '';
+  position: absolute;
+  inset: -6px -6px;
+}
 .searchable-select .searchable-select-arrow:hover { color: var(--primary); }
 .searchable-select.is-open .searchable-select-arrow {
   transform: translateY(-50%) rotate(180deg);
@@ -485,6 +512,13 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   cursor: pointer;
   user-select: none;
   transition: color .15s, background .15s;
+}
+/* 视觉仍是 22×22 的圆，命中区扩到约 34×34：
+   想展开下拉却点到 ✕ 会直接清空已选值并触发联动，比"点不中"更糟。 */
+.searchable-select .searchable-select-clear-btn::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 .searchable-select .searchable-select-clear-btn:hover {
   color: var(--on-red-c);
@@ -1096,6 +1130,9 @@ tbody tr.unsubscribed-row:hover td {
   align-items: center;
   /* 居中：这栏在结果表格正下方，左对齐/右对齐都会和表格的视觉中线错开 */
   justify-content: center;
+  /* 极窄视口下让它换行，而不是挤出 2px 级溢出去横滚整页（实测 900px 时的行为） */
+  flex-wrap: wrap;
+  row-gap: var(--sp1);
   gap: var(--sp1);
   margin-top: var(--sp2);
   font-size: var(--fs-sm);
@@ -1104,10 +1141,10 @@ tbody tr.unsubscribed-row:hover td {
 
 .pagination button { min-height: 36px; padding: 6px 14px; }
 .pagination .page-info { margin: 0 8px; }
-/* 跳页输入框：与分页按钮同高，外观走统一输入框变量 */
+/* 跳页输入框：与分页按钮同高（按钮已是 36px，这里必须跟着改，否则两者差 4px） */
 .pagination input {
   width: 72px;
-  height: 32px;
+  height: 36px;
   padding: 0 8px;
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
@@ -1115,6 +1152,12 @@ tbody tr.unsubscribed-row:hover td {
   font-family: inherit;
   color: var(--on-surface);
   background: var(--surface);
+}
+/* 每页条数也是可搜索下拉，包装后默认 42px（--control-h-md），比同行按钮高 6px。
+   统一到 36px，让这一栏只有一种高度。 */
+.pagination .searchable-select .searchable-select-input {
+  height: 36px;
+  font-size: var(--fs-xs);
 }
 .pagination input:focus {
   outline: none;
@@ -1258,7 +1301,14 @@ body.dialog-open { overflow: hidden; }
   color: var(--muted);
   font-size: var(--fs-md);
   line-height: 1;
-  padding: var(--sp1);
+  /* 32×32 命中区：✕ 是弹窗唯一的「放弃退出」入口，原来 padding 8px + 14px 字形
+     只有约 30×30，又贴在圆角上，鼠标容易落到遮罩上（那会直接关窗、丢掉填写内容）。 */
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--r-xs);
   cursor: pointer;
   transition: background .15s, color .15s;
@@ -1278,7 +1328,9 @@ body.dialog-open { overflow: hidden; }
 .sub-foot {
   display: flex;
   justify-content: flex-end;
-  gap: var(--sp1);
+  /* 16px：底部是「取 消 / 确 认」，两者只隔 8px 时容易把确认点成取消，
+     而取消会直接丢掉整份长表单（脏检查还没做，见 TODO） */
+  gap: var(--sp2);
   padding: var(--sp2) var(--sp3);
   border-top: 1px solid var(--outline-soft);
   background: var(--surface);
@@ -1557,11 +1609,25 @@ label.req::after {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: var(--sp1);
   margin-top: var(--sp2);
   font-size: var(--fs-xs);
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* #docPageSize 会被包成可搜索下拉（.searchable-select 默认 width:100%），
+   不约束宽度就会把整行撑塌：实测包装容器 804px、内层输入框 42px 高，
+   而同行「上一页」只有 30px。这里跟分页栏同样收成 108px / 30px。 */
+.doc-pager .searchable-select {
+  width: 108px;
+  flex: 0 0 auto;
+}
+
+.doc-pager .searchable-select .searchable-select-input {
+  height: 30px;
+  font-size: var(--fs-nano);
 }
 
 .doc-page-size {

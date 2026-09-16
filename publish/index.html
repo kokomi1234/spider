@@ -163,9 +163,20 @@
       text-align: center;
       white-space: nowrap;
     }
+    /* 表头必须跟着内容一起居中：这 4 列的数据格是居中的（见上），
+       而表头默认走 theme.css 的 `thead th { text-align: left }`，
+       不给 th 加类就会「表头左对齐 + 内容居中」左右错位。 */
+    .result-table thead th.col-status,
+    .result-table thead th.col-check,
+    .result-table thead th.col-sub,
+    .result-table thead th.col-op {
+      text-align: center;
+    }
+    /* 操作列是每行最高频的两个操作（详情 / 订阅）。原来 25px 高、间距 2px，
+       鼠标从「详情」滑到「订阅」很容易点错，点错就得关掉再重来。 */
     .result-table .col-op .text-btn {
-      padding: 3px 7px;
-      min-height: 25px;
+      padding: 5px 10px;
+      min-height: 32px;
       font-size: var(--fs-nano);
     }
     .result-table .col-op .action-row {
@@ -173,7 +184,7 @@
       align-items: center;
       justify-content: center;
       flex-wrap: wrap;
-      gap: 2px;
+      gap: 8px;
     }
     .result-table .col-op .action-row .btn-subscribe {
       color: var(--on-amber-c);
@@ -498,16 +509,16 @@
           </colgroup>
           <thead data-page-node-id="vhBGLmjVLYMowZVkCfa4AI">
             <tr data-page-node-id="LcCTSeHwUY3PSMNqvMqZvO">
-          <th scope="col" data-page-node-id="XTMzAWixkoYLya1rjFTwsU">#</th>
-          <th scope="col" data-page-node-id="kJBUOi0qB6UaEx1tXqUu0X">服务编码 / 接口名</th>
-          <th scope="col" data-page-node-id="ZOSUjmKnsaC9ZjBtCYRHRL">服务名称</th>
-          <th scope="col" data-page-node-id="HbhVQ46HfrGhxGEu6mfNPt">服务编号</th>
-          <th scope="col" data-page-node-id="pgKZaIDqyZ1U3YHQ2sHCNW">批次</th>
-          <th scope="col" data-page-node-id="ejUAwVTHap5I0da1Ttjmlx">服务状态</th>
-          <th scope="col" data-page-node-id="TBdjvB0gDeGwa5Jkzy2QBu">是否已核对</th>
-          <th scope="col" data-page-node-id="aeXRear2uwnrqtmz2XOp7K">所属部门</th>
-          <th scope="col" data-page-node-id="ZY25pA4j6o2FgZHEC83DXy">订阅标记</th>
-          <th scope="col" data-page-node-id="wSNSneb4Vf94HZqIIxq6Ux">操作</th>
+          <th scope="col" class="col-index" data-page-node-id="XTMzAWixkoYLya1rjFTwsU">#</th>
+          <th scope="col" class="col-code" data-page-node-id="kJBUOi0qB6UaEx1tXqUu0X">服务编码 / 接口名</th>
+          <th scope="col" class="col-name" data-page-node-id="ZOSUjmKnsaC9ZjBtCYRHRL">服务名称</th>
+          <th scope="col" class="col-comp" data-page-node-id="HbhVQ46HfrGhxGEu6mfNPt">服务编号</th>
+          <th scope="col" class="col-batch" data-page-node-id="pgKZaIDqyZ1U3YHQ2sHCNW">批次</th>
+          <th scope="col" class="col-status" data-page-node-id="ejUAwVTHap5I0da1Ttjmlx">服务状态</th>
+          <th scope="col" class="col-check" data-page-node-id="TBdjvB0gDeGwa5Jkzy2QBu">是否已核对</th>
+          <th scope="col" class="col-dept" data-page-node-id="aeXRear2uwnrqtmz2XOp7K">所属部门</th>
+          <th scope="col" class="col-sub" data-page-node-id="ZY25pA4j6o2FgZHEC83DXy">订阅标记</th>
+          <th scope="col" class="col-op" data-page-node-id="wSNSneb4Vf94HZqIIxq6Ux">操作</th>
             </tr>
           </thead>
           <tbody id="resultBody" data-page-node-id="cC7UHYtMGe1WWBhrJOjrSC">
@@ -616,7 +627,7 @@
               </thead>
               <tbody id="judgeTableBody"></tbody>
             </table>
-            <div class="judge-empty-hint" id="judgeEmptyHint">请点击「＋ 新增」添加评委，或点击「chu⤓ 拉取评委」从接口获取已有数据</div>
+            <div class="judge-empty-hint" id="judgeEmptyHint">还没有评委信息：可点「＋ 新增」手工添加，或点「⤓ 拉取评委」从接口获取</div>
 
           </div>
         </div>

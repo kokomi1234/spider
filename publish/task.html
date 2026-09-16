@@ -410,7 +410,10 @@
         <span class="page-info" id="pageInfo" data-page-node-id="3UwQieia1oEIxJS9rK3zPr">第 1 / 1 页</span>
         <button class="outlined btn-xs" id="btnNext" data-page-node-id="AM8AT15uZe2lPPCu4S23hM">下一页 ›</button>
         <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="Bhc0X61xKY1kU0duoMgDYk">末页 »</button>
-        <input type="number" id="pageJump" min="1" value="1" title="跳页" aria-label="跳转到页码" data-page-node-id="Tosvk465qcWI4yEvjUHlYG">
+        <!-- 跳页框必须有「跳至 … 页」的文字说明：原来是个裸数字框，只能靠悬停 title 才懂用途 -->
+        <span class="page-jump">跳至
+          <input type="number" id="pageJump" min="1" value="1" title="跳页" aria-label="跳转到页码" data-page-node-id="Tosvk465qcWI4yEvjUHlYG">
+        页</span>
       </div>
     </div>
   </div>
