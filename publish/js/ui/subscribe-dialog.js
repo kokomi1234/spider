@@ -82,6 +82,27 @@
     return box ? String(box.value || '').trim() : '';
   }
 
+  /**
+   * 把焦点（并滚到视野中间）落到校验失败的那个字段上 —— 光有 toast 文案，
+   * 用户在 28 个字段的长表单里还得自己找是哪一个。
+   * 三种目标的落法不同：
+   *   · 可搜索下拉：原生 <select> 已被隐藏（searchable-select.js 里 display:none），要聚焦它旁边的输入框
+   *   · 禁用输入框（关联文档）：自己不吃焦点，退到同一行的「选 择」按钮
+   *   · 普通输入框（TPS 峰值）：直接聚焦
+   * @param {string} id 出错字段的 DOM id（来自 subscribe-model.js 的校验结果）
+   */
+  function focusField(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const host = el.parentElement;
+    let target = host && host.querySelector('.searchable-select .searchable-select-input');
+    if (!target && !el.disabled) target = el;
+    if (!target && host) target = host.querySelector('button');
+    if (!target) return;
+    if (typeof target.focus === 'function') target.focus();
+    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center' });
+  }
+
   /** 给原生 <select> 灌选项（空字典只留「请选择」，不再塞一个空值占位项） */
   function fillSelect(sel, list) {
     if (!sel) return;
@@ -326,6 +347,12 @@
   // ── 确认订阅 ─────────────────────────────────────────
   function collectForm() {
     const val = (id) => { const el = $('#' + id); return el ? String(el.value || '').trim() : ''; };
+    // 数值字段（性能指标的 6 个输入）统一把全角数字转半角：中文输入法全角状态下敲的
+    // "５" 肉眼与 "5" 无异，但正则与后端都不认（规则见 subscribe-model.js 的 normalizeDigits）
+    const numVal = (id) => {
+      const raw = val(id);
+      return (M && typeof M.normalizeDigits === 'function') ? M.normalizeDigits(raw) : raw;
+    };
     const selVal = (id) => {
       const inst = selectInstances[id];
       // 带搜索下拉允许手输：组件的 getValue() 只在选中了选项时才有值，
@@ -364,8 +391,8 @@
       implUnit:            val('sub_implUnit'),
       needCopy:            selVal('sub_needCopy'),
       // 性能指标
-      perfDaily: { tps: val('sub_tpsDaily'), volume: val('sub_volumeDaily'), rt: val('sub_rtDaily') },
-      perfPeak:  { tps: val('sub_tpsPeak'),  volume: val('sub_volumePeak'),  rt: val('sub_rtPeak') },
+      perfDaily: { tps: numVal('sub_tpsDaily'), volume: numVal('sub_volumeDaily'), rt: numVal('sub_rtDaily') },
+      perfPeak:  { tps: numVal('sub_tpsPeak'),  volume: numVal('sub_volumePeak'),  rt: numVal('sub_rtPeak') },
       // 其它
       remark:              dom.remark.value.trim(),
       judges:              collectJudges(),
@@ -387,7 +414,7 @@
       !!(window.SubscribeManager && window.SubscribeManager.isSubscribed(code))
     ));
     if (!v.ok) {
-      if (v.focus === 'sub_tpsPeak') dom.tpsPeak.focus();
+      if (v.focus) focusField(v.focus);
       if (v.msg) toast(v.msg, v.duration, 'warn');
       return;
     }

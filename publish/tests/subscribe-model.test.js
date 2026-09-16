@@ -16,7 +16,7 @@ test('SubscribeModel：暴露预期接口且冻结', () => {
   [
     'docId', 'isMemberDoc', 'normalizeDoc', 'filterDocs', 'sortDocs', 'toPickedDetails',
     'displayBatch', 'batchLabel', 'batchSortKey', 'buildDocBatchOptions',
-    'pickField', 'judgeFieldsFromApi', 'roleOptionsWith', 'toServiceNoOptions',
+    'pickField', 'normalizeDigits', 'judgeFieldsFromApi', 'roleOptionsWith', 'toServiceNoOptions',
     'deriveCallerServiceNo', 'toJudgeInfoList', 'validateSubscribe', 'validateJudgeSubmit',
     'createUserCache', 'opts',
   ].forEach((k) => assert.strictEqual(typeof SM[k], 'function', '缺少函数 ' + k));
@@ -240,8 +240,12 @@ test('toJudgeInfoList：评委行 → 提交接口结构', () => {
   assert.deepStrictEqual(SM.toJudgeInfoList([]), []);
 });
 
-test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → TPS 的顺序与文案', () => {
-  const good = { callerSystem: 'C', perfPeak: { tps: '5' } };
+test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS 的顺序与文案', () => {
+  // 完整必填集（服务编号显式填了，走「用户确认过的值」这条路）
+  const good = {
+    callerSystem: 'E00406', relDocIds: 'doc-1', callerServiceNo: 'E00406TO1197',
+    perfPeak: { tps: '5' },
+  };
   // 无行数据：静默（没有文案，也没有聚焦目标）
   const noRow = SM.validateSubscribe(null, good);
   assert.strictEqual(noRow.ok, false);
@@ -257,11 +261,37 @@ test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → T
   assert.strictEqual(sub.code, 'subscribed');
   // 未订阅 → 继续往下校验
   assert.strictEqual(SM.validateSubscribe({ sysServeNo: 'S' }, good, () => false).ok, true);
-  // 未选调用方系统
-  const noCaller = SM.validateSubscribe({ serverCoding: 'S' }, { perfPeak: { tps: '5' } });
+  // 未选调用方系统：文案 + 聚焦目标
+  const noCaller = SM.validateSubscribe({ serverCoding: 'S' }, {
+    relDocIds: 'd', callerServiceNo: 'E00406TO1197', perfPeak: { tps: '5' },
+  });
   assert.strictEqual(noCaller.msg, '⚠️ 请选择调用方系统');
+  assert.strictEqual(noCaller.focus, 'sub_callerSystem');
+  // 未选关联文档：拦在前端（否则 documents 发空数组，白等一次往返才知道错）
+  const noDoc = SM.validateSubscribe({ serverCoding: 'S' }, {
+    callerSystem: 'E00406', perfPeak: { tps: '5' },
+  });
+  assert.strictEqual(noDoc.code, 'no-doc');
+  assert.strictEqual(noDoc.msg, '⚠️ 请选择关联文档');
+  assert.strictEqual(noDoc.focus, 'sub_relDoc');
+  // 服务编号：表单空、但行数据能派生（调用方系统 + TO 尾号）→ 放行（service-api 用同一规则）
+  assert.strictEqual(
+    SM.validateSubscribe({ serverCoding: 'E00301TO1197' }, {
+      callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' },
+    }).ok,
+    true,
+  );
+  // 服务编号：表单空且派生不出来 → 拦（这种情况 prodSysServeNoList 会是空数组）
+  const noService = SM.validateSubscribe({ serverCoding: 'E00301' }, {
+    callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' },
+  });
+  assert.strictEqual(noService.code, 'no-service-no');
+  assert.strictEqual(noService.msg, '⚠️ 请选择调用方应用系统服务编号');
+  assert.strictEqual(noService.focus, 'sub_callerServiceNo');
   // TPS 缺失：文案 + 需要把焦点放回输入框
-  const noTps = SM.validateSubscribe({ serverCoding: 'S' }, { callerSystem: 'C', perfPeak: { tps: '' } });
+  const noTps = SM.validateSubscribe({ serverCoding: 'S' }, {
+    callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197', perfPeak: { tps: '' },
+  });
   assert.strictEqual(noTps.msg, '⚠️ 请填写 TPS（峰值）');
   assert.strictEqual(noTps.focus, 'sub_tpsPeak');
   // 通过：把服务编码交回调用方
@@ -273,6 +303,61 @@ test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → T
   assert.strictEqual(SM.validateSubscribe({}, {}).code, 'no-coding');
   // 已订阅时不能先报调用方系统
   assert.strictEqual(SM.validateSubscribe({ serverCoding: 'S' }, {}, () => true).code, 'subscribed');
+});
+
+test('validateSubscribe：TPS（峰值）必须是大于 0 的数字（后端字段是数值型）', () => {
+  const base = { callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197' };
+  const withTps = (tps) => SM.validateSubscribe({ serverCoding: 'S' }, { ...base, perfPeak: { tps } });
+
+  for (const bad of ['abc', '5a', '-1', '0', '0.0', '１a', ' ', '5.5.5']) {
+    const r = withTps(bad);
+    assert.strictEqual(r.ok, false, `「${bad}」不该通过`);
+    assert.ok(r.code === 'bad-tps' || r.code === 'no-tps', `「${bad}」的 code 应为 bad-tps/no-tps`);
+    assert.strictEqual(r.focus, 'sub_tpsPeak');
+    assert.strictEqual(r.duration, 2500);
+  }
+  // 全角数字先归一再看数值：中文输入法全角状态下敲的 "５" 应当被接受
+  // （否则用户看到「请填数字」却看不出哪里不对，是个死胡同）
+  for (const ok of ['5', '12.5', '0.5', '1000', ' 5 ', '５', '０.５', '１２']) {
+    assert.strictEqual(withTps(ok).ok, true, `「${ok}」应当通过`);
+  }
+});
+
+test('normalizeDigits：全角数字转半角，非数字原样保留', () => {
+  assert.strictEqual(SM.normalizeDigits('０１２３４５６７８９'), '0123456789');
+  assert.strictEqual(SM.normalizeDigits('０.５'), '0.5');
+  assert.strictEqual(SM.normalizeDigits('  ５  '), '  5  ');   // 只管字符，不 trim
+  assert.strictEqual(SM.normalizeDigits('abc5'), 'abc5');
+  assert.strictEqual(SM.normalizeDigits(null), '');
+  assert.strictEqual(SM.normalizeDigits(undefined), '');
+  assert.strictEqual(SM.normalizeDigits(0), '0');
+});
+
+test('validateSubscribe：服务编号的派生源与 service-api 一致（含 serviceId）', () => {
+  // service-api.js 的 providerSysServeNo = sysServeNo || serviceId || serverCoding，
+  // 校验侧必须同源，否则「后端拼得出来、前端却拦」＝假失败。
+  const form = { callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' } };
+  // serverCoding 只是普通编码，TO 尾号藏在 serviceId 里 → 派生得出来，放行
+  assert.strictEqual(
+    SM.validateSubscribe({ serverCoding: 'E00301', serviceId: 'E00301TO1197' }, form).ok,
+    true,
+  );
+  // 三个字段都没有 TO 尾号 → 派生不出来，拦
+  assert.strictEqual(
+    SM.validateSubscribe({ serverCoding: 'E00301', serviceId: 'X' }, form).code,
+    'no-service-no',
+  );
+});
+
+test('validateSubscribe：批次刻意不做前端硬拦（该下拉当前未进请求体）', () => {
+  // service-api.js 组包时 prodBatch / prodBatchList 只取 row，form.callerBatch 并未参与，
+  // 所以在这里拦「批次必填」只会白挡用户、并不能改善数据质量。
+  // 哪天把批次接进请求体了，这条用例会失败 —— 提醒把校验一起补上再改这里。
+  const r = SM.validateSubscribe({ serverCoding: 'S' }, {
+    callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197',
+    perfPeak: { tps: '5' }, callerBatch: '',
+  });
+  assert.strictEqual(r.ok, true);
 });
 
 test('validateJudgeSubmit：无评委 / 无 publishId / 通过', () => {

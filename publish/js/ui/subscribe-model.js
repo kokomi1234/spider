@@ -325,6 +325,17 @@
     `;
 
   /**
+   * 全角数字 → 半角（"０５" → "05"）。
+   * 为什么需要：中文输入法处于全角状态时敲出来的数字是全角字符，在 TPS 这类数值字段里
+   * 肉眼几乎看不出区别，但正则不认、后端多半也不认，用户只会看到「请填数字」却看不出哪里错。
+   * 收集表单（subscribe-dialog.js）与校验（validateSubscribe）共用这一个函数，避免规则漂移。
+   */
+  function normalizeDigits(v) {
+    return String(v == null ? '' : v)
+      .replace(/[\uFF10-\uFF19]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  }
+
+  /**
    * 「调用方应用系统服务编号」推导：
    *   规则 = 调用方系统编号（如 E00406）+ 当前行服务编号尾部序号（如 TO1197）
    * 两处调用（调用方系统 change 联动、提交评委时兜底）共用一份，避免规则漂移。
@@ -353,15 +364,20 @@
   // ═══════════════════════════════════════════════════
 
   /**
-   * 确认订阅前的必填校验。检查顺序与原实现完全一致：
-   *   行 → 服务编码 → 是否已订阅 → 调用方系统 → TPS(峰值)
+   * 确认订阅前的必填校验。检查顺序（按表单从上到下，报第一个缺的）：
+   *   行 → 服务编码 → 是否已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS(峰值)
+   *
+   * 「调用方投产/变更批次」不在这里拦：该下拉当前并未进入请求体
+   * （service-api 的 prodBatch 只取 row.prodBatch），拦了只会白挡用户，
+   * 属于待业务口径确认的接线问题，不是校验问题。
    *
    * @param {object} row 当前行
    * @param {object} form collectForm() 的结果
    * @param {(code:string)=>boolean} [isSubscribed] 传 SubscribeManager.isSubscribed；
    *        不传则跳过「已在订阅列表」这一关
    * @returns {{ok:boolean, code:string, msg:string, duration:number, focus?:string, serverCoding?:string}}
-   *          ok:false 且 msg 为空表示静默返回（无行数据）
+   *          ok:false 且 msg 为空表示静默返回（无行数据）；
+   *          focus 是出错字段的 DOM id（调用方负责把焦点/滚动落过去）
    */
   function validateSubscribe(row, form, isSubscribed) {
     if (!row) return { ok: false, code: 'no-row', msg: '', duration: 0 };
@@ -373,11 +389,43 @@
       return { ok: false, code: 'subscribed', msg: '⚠️ 该服务已在订阅列表中', duration: 2500 };
     }
     if (!form || !form.callerSystem) {
-      return { ok: false, code: 'no-caller', msg: '⚠️ 请选择调用方系统', duration: 2500 };
+      return { ok: false, code: 'no-caller', msg: '⚠️ 请选择调用方系统', duration: 2500, focus: 'sub_callerSystem' };
     }
-    if (!form.perfPeak || !form.perfPeak.tps) {
+    // 关联文档必填：空着提交时 service-api 只会发出 documents: []（后端必然拒），
+    // 用户却要等一次往返才看到错。拦在前端，焦点落到这一行的「选 择」按钮上。
+    if (!String(form.relDocIds || '').trim()) {
+      return { ok: false, code: 'no-doc', msg: '⚠️ 请选择关联文档', duration: 2500, focus: 'sub_relDoc' };
+    }
+    // 调用方应用系统服务编号：表单没填还能靠派生救回来（= 调用方系统编号 + 行服务编号尾号 TOxxxx，
+    // 见 deriveCallerServiceNo，service-api.js 会用同一规则拼 prodSysServeNoList）。
+    // 派生不出来才是真缺 —— 那种请求 prodSysServeNoList 是空数组，等于订阅一条没有服务编号的记录。
+    if (!String(form.callerServiceNo || '').trim()) {
+      // 取编码的顺序必须与 service-api.js 的 providerSysServeNo 一致
+      // （sysServeNo → serviceId → serverCoding），否则会出现「后端拼得出来、前端却拦」的假失败。
+      const derived = deriveCallerServiceNo(
+        form.callerSystem,
+        row.sysServeNo || row.serviceId || row.serverCoding,
+      );
+      if (!derived) {
+        return {
+          ok: false, code: 'no-service-no',
+          msg: '⚠️ 请选择调用方应用系统服务编号', duration: 2500, focus: 'sub_callerServiceNo',
+        };
+      }
+    }
+    // TPS（峰值）：既要有、也得是数字 —— 后端字段是数值型，
+    // 手输 "abc" 会原样写进 prodTPSPeak（service-api.js:291）。
+    // 全角数字先归一，免得用户被「请填数字」卡住却看不出哪里不对。
+    const tps = normalizeDigits(form.perfPeak && form.perfPeak.tps).trim();
+    if (!tps) {
       // 需要把焦点放回输入框，所以把目标 id 一并带出去
       return { ok: false, code: 'no-tps', msg: '⚠️ 请填写 TPS（峰值）', duration: 2500, focus: 'sub_tpsPeak' };
+    }
+    if (!/^\d+(\.\d+)?$/.test(tps) || Number(tps) <= 0) {
+      return {
+        ok: false, code: 'bad-tps',
+        msg: '⚠️ TPS（峰值）请填大于 0 的数字', duration: 2500, focus: 'sub_tpsPeak',
+      };
     }
     return { ok: true, code: '', msg: '', duration: 0, serverCoding };
   }
@@ -463,6 +511,7 @@
     buildDocBatchOptions,
     // 通用
     pickField,
+    normalizeDigits,
     JUDGE_API_KEYS,
     judgeFieldsFromApi,
     roleOptionsWith,
