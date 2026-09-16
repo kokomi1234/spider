@@ -143,8 +143,9 @@
       notify(msg, duration, type);
       return;
     }
-    if (typeof window._showToast === 'function') {
-      window._showToast(msg, duration, type);
+    const toast = window.AppServices && window.AppServices.toast;
+    if (typeof toast === 'function') {
+      toast(msg, duration, type);
       return;
     }
     const el = document.getElementById('toast');
@@ -319,11 +320,11 @@
    */
   function batchOptions() {
     const as = window.AppServices;
-    return (as && as.batchOptions) || window._batchOptions || [];
+    return (as && as.batchOptions) || [];
   }
   function prodBatchInstance() {
     const as = window.AppServices;
-    return (as && as.prodBatchInstance) || window._prodBatchInstance || null;
+    return (as && as.prodBatchInstance) || null;
   }
 
   function resolveOptions(f) {
@@ -630,8 +631,8 @@
     const refresh = window.AppServices && window.AppServices.afterSubscribeChanged;
     if (typeof refresh === 'function') {
       try { refresh(); } catch (e) { console.error(e); }
-    } else if (typeof window._afterSubscribeChanged === 'function') {
-      try { window._afterSubscribeChanged(); } catch (e) { console.error(e); }
+    } else if (window.AppServices && typeof window.AppServices.afterSubscribeChanged === 'function') {
+      try { window.AppServices.afterSubscribeChanged(); } catch (e) { console.error(e); }
     }
   }
 

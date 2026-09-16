@@ -358,8 +358,9 @@
       notify(msg, duration, type);
       return;
     }
-    if (typeof window._showToast === 'function') {
-      window._showToast(msg, duration, type);
+    const toast = window.AppServices && window.AppServices.toast;
+    if (typeof toast === 'function') {
+      toast(msg, duration, type);
       return;
     }
     // 否则创建临时 toast

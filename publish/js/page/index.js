@@ -73,7 +73,7 @@
   }
   function getBatchOptions() {
     const as = window.AppServices;
-    return (as && as.batchOptions) || window._batchOptions || [];
+    return (as && as.batchOptions) || [];
   }
 
   // ── 提供方系统下拉搜索组件实例 ──────────────────────
