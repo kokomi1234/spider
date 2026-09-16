@@ -454,6 +454,12 @@
   // colspan 23 = 订阅页表格列数（22 个数据列 + 操作列）；空状态与分页条显隐统一走 TableUtils
   function renderEmpty(text) {
     window.TableUtils.renderEmpty(text, 23);
+    // 空态文案不放进 3046px 的表格里居中（会跑到视口外），
+    // 而是显示 .tbl-scroll 上的覆盖层，让它在卡片可见区内居中。
+    const txt = $('#subqEmptyText');
+    const overlay = $('#subqEmptyOverlay');
+    if (txt) txt.textContent = text;
+    if (overlay) overlay.hidden = false;
   }
 
   function renderCount() {
@@ -500,6 +506,8 @@
       renderEmpty(emptyText('none', '订阅关系', '没有匹配的订阅关系'));
       return;
     }
+    const overlay = $('#subqEmptyOverlay');
+    if (overlay) overlay.hidden = true;
     V.renderTable($('#resultBody'), rows, {
       onJump: (row) => jumpToServiceSearch(row),
       onCopy: (text) => copyToClipboard(text),

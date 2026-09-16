@@ -1852,6 +1852,52 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 订阅页空态提示居中：3046px 宽表会让 td[colspan] 里的文字直接居中时跑到视口外，
+  // 所以改成 .tbl-scroll 上的覆盖层；断言文字中心与滚动容器中心重合。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(800);
+      const r = await page.evaluate(() => {
+        const overlay = document.getElementById('subqEmptyOverlay');
+        const txt = document.getElementById('subqEmptyText');
+        const scroll = document.querySelector('.tbl-scroll');
+        const sr = scroll.getBoundingClientRect();
+        const or = overlay.getBoundingClientRect();
+        const rng = document.createRange();
+        rng.selectNodeContents(txt);
+        const tr = rng.getBoundingClientRect();
+        return {
+          overlayHidden: overlay.hidden,
+          overlayW: Math.round(or.width),
+          overlayH: Math.round(or.height),
+          scrollW: Math.round(sr.width),
+          scrollH: Math.round(sr.height),
+          textCenterOffset: Math.round((tr.left + tr.width / 2) - (sr.left + sr.width / 2)),
+          text: txt.textContent.trim(),
+        };
+      });
+      process.stdout.write(`  空态提示居中: ${JSON.stringify(r)}\n`);
+      if (r.overlayHidden !== false) fails.push('空态覆盖层应可见');
+      if (r.textCenterOffset !== 0) {
+        fails.push(`空态提示应水平居中（文字中心与滚动容器中心偏差 ${r.textCenterOffset}px）`);
+      }
+      if (!/请输入条件后点击/.test(r.text)) fails.push(`空态提示文案不符：${r.text}`);
+      if (Math.abs(r.overlayW - r.scrollW) > 4 || Math.abs(r.overlayH - r.scrollH) > 4) {
+        fails.push(`覆盖层应铺满 .tbl-scroll（overlay ${r.overlayW}x${r.overlayH} vs scroll ${r.scrollW}x${r.scrollH}）`);
+      }
+    } catch (e) {
+      fails.push(`空态居中段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 第三批优化：排序入口是真按钮 + 复制单元格键盘漫游
   // ═══════════════════════════════════════════════════════════════
   {

@@ -112,13 +112,28 @@
     .subq-table thead th.col-op { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-op { background: var(--surface-1); }
 
-    /* 空态：表格总宽 3046px（远超视口），若沿用全局 .empty-hint 的居中，文字会落在视口外看不见，
-       所以这里左对齐（贴着第一列显示） */
+    /* 空态：.subq-table 的 min-width 是 3046px，若直接给 .empty-hint 加
+       text-align:center，文字会落在 3046px 单元格正中、跑到视口右侧外面看不见。
+       所以加一个覆盖 .tbl-scroll 可见区的居中浮层来显示空态文案；
+       数据加载后浮层隐藏，表格本体恢复 3046px 宽表布局。 */
     .subq-table td[colspan] {
       text-align: left;
       padding: 40px 0 40px 20px;
       color: var(--muted);
     }
+    .tbl-scroll { position: relative; }
+    .subq-empty-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface);
+      border-radius: inherit;
+      z-index: 10;          /* 高于吸顶表头（--z-sticky-head:1）*/
+    }
+    .subq-empty-overlay[hidden] { display: none; }
+    .subq-empty-overlay .empty-hint { padding: var(--sp5) 0; }
     /* 编号类字段用等宽字体，数字对齐更好读 */
     .subq-table .cell-code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -452,6 +467,9 @@
       </div>
 
       <div class="tbl-scroll">
+        <div class="subq-empty-overlay" id="subqEmptyOverlay">
+          <span class="empty-hint" id="subqEmptyText">请输入条件后点击「查询」</span>
+        </div>
         <table class="subq-table">
           <colgroup>
             <!-- 宽度一律按「内容」定（依据：缓存 17933 行真实数据在浏览器里量出的文本宽度分布），
