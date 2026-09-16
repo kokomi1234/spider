@@ -503,7 +503,8 @@
   document.addEventListener('keydown', (e) => {
     const el = document.activeElement;
 
-    if (e.key === 'Escape' && $('#detailOverlay').classList.contains('show')) {
+    const detailOverlay = $('#detailOverlay');
+    if (e.key === 'Escape' && detailOverlay && detailOverlay.classList.contains('show')) {
       if (window.DetailDialog) window.DetailDialog.close();
       return;
     }
@@ -516,6 +517,11 @@
       e.stopPropagation();
       return;
     }
+    // 弹窗打开时回车交给弹窗自己用（订阅表单、文档选择、批次时间、详情…）：
+    // 这些弹窗里的普通输入框按回车，原来会顺带触发一次主页全量查询，
+    // 而 loading 遮罩的 z-index 比弹窗高，用户看到的是「填着表突然整页转圈」。
+    // 判据用 .overlay.show —— 全站弹窗（含 dialog-utils 动态建的那种）都带这两个类。
+    if (document.querySelector('.overlay.show')) return;
     PublishQuery.doQuery({ focusMissing: false });
   });
 
