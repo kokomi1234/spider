@@ -1,0 +1,321 @@
+/**
+ * subscribe-model.js 单测：覆盖从 subscribe-dialog.js 抽出的常量与纯函数。
+ * 通过 tests/harness.js 的 loadScript 注入 window 后读取 window.SubscribeModel。
+ *
+ * 注意：本文件只验证纯函数本身（无 DOM、无行为变更），文案与口径按搬出前的原值钉死。
+ */
+'use strict';
+
+const { loadScript, test } = require('./harness');
+const assert = require('assert');
+
+const win = loadScript('js/ui/subscribe-model.js');
+const SM = win.SubscribeModel;
+
+test('SubscribeModel：暴露预期接口且冻结', () => {
+  [
+    'docId', 'isMemberDoc', 'normalizeDoc', 'filterDocs', 'sortDocs', 'toPickedDetails',
+    'displayBatch', 'batchLabel', 'batchSortKey', 'buildDocBatchOptions',
+    'pickField', 'judgeFieldsFromApi', 'roleOptionsWith', 'toServiceNoOptions',
+    'deriveCallerServiceNo', 'toJudgeInfoList', 'validateSubscribe', 'validateJudgeSubmit',
+    'createUserCache', 'opts',
+  ].forEach((k) => assert.strictEqual(typeof SM[k], 'function', '缺少函数 ' + k));
+  ['DICT', 'SEARCHABLE_FIELDS', 'DOC_SEARCHABLE_IDS', 'TEXT_FIELDS'].forEach((k) => {
+    assert.strictEqual(typeof SM[k], 'object', '缺少常量 ' + k);
+  });
+  assert.strictEqual(typeof SM.PLACEHOLDER_TEXT, 'string');
+  assert.strictEqual(typeof SM.JUDGE_ROW_TEMPLATE, 'string');
+  assert.strictEqual(typeof SM.JUDGE_API_KEYS, 'object');
+  assert.strictEqual(Object.isFrozen(SM), true);   // 禁止外部改写
+});
+
+test('常量：字典 / 字段清单与搬出前一致', () => {
+  assert.deepStrictEqual(SM.DICT.mq, [
+    { label: 'TDMQ', value: 'TDMQ' },
+    { label: 'IBMMQ', value: 'IBMMQ' },
+    { label: 'KAFKA', value: 'KAFKA' },
+  ]);
+  // yesNo 三项（含「无需幂等」），不是普通是否
+  assert.strictEqual(SM.DICT.yesNo.length, 3);
+  assert.strictEqual(SM.DICT.pageSize[0].label, '10 条');
+  assert.deepStrictEqual(SM.DOC_SEARCHABLE_IDS, ['docFilterBatch', 'docPageSize']);
+  // 文档子弹窗的两个下拉必须仍在全量清单里，否则没人创建它们的实例
+  const ids = SM.SEARCHABLE_FIELDS.map((f) => f.id);
+  SM.DOC_SEARCHABLE_IDS.forEach((id) => assert.ok(ids.includes(id), '缺 ' + id));
+  // 主弹窗跳过的正好是 doc 那两个，其余 14 个仍归主弹窗
+  const mainIds = SM.SEARCHABLE_FIELDS
+    .filter((f) => SM.DOC_SEARCHABLE_IDS.indexOf(f.id) < 0).map((f) => f.id);
+  assert.strictEqual(mainIds.length, SM.SEARCHABLE_FIELDS.length - 2);
+  assert.strictEqual(mainIds.includes('docFilterBatch'), false);
+  assert.strictEqual(mainIds.includes('sub_callerSystem'), true);
+  assert.strictEqual(SM.TEXT_FIELDS.length, 16);
+  assert.ok(SM.TEXT_FIELDS.includes('sub_tpsPeak'));
+  assert.strictEqual(SM.PLACEHOLDER_TEXT, '（待抓包补全：此字典接口尚未抓包）');
+  // opts 把字符串数组转成 {label,value}
+  assert.deepStrictEqual(SM.opts(['A']), [{ label: 'A', value: 'A' }]);
+  assert.deepStrictEqual(SM.opts([{ label: 'L', value: 'v' }]), [{ label: 'L', value: 'v' }]);
+});
+
+test('displayBatch：作废 / dl 独立 / 纯数字 三类模式 + 兜底', () => {
+  // ① 作废批次（精确匹配）
+  assert.strictEqual(SM.displayBatch('26n6ydlpc'), '26年6月独立批次(作废)');
+  // ② dl 结尾的独立批次：year 是 '20' + 前缀前两位，所以是四位数年份
+  assert.strictEqual(SM.displayBatch('269dl'), '2026年9月独立');
+  assert.strictEqual(SM.displayBatch('2610dl'), '2026年10月独立');
+  // ③ 纯数字常规批次
+  assert.strictEqual(SM.displayBatch('2609'), '2609批次');
+  assert.strictEqual(SM.displayBatch('2611'), '2611批次');
+  // 兜底：未知格式原样返回；空值空串；两端空白先 trim
+  assert.strictEqual(SM.displayBatch('other'), 'other');
+  assert.strictEqual(SM.displayBatch('  2609  '), '2609批次');
+  assert.strictEqual(SM.displayBatch(''), '');
+  assert.strictEqual(SM.displayBatch(null), '');
+});
+
+test('docId / isMemberDoc：唯一 id 与成员判定', () => {
+  assert.strictEqual(SM.docId({ value: 'V' }), 'V');          // 抓包确认字段是 value
+  assert.strictEqual(SM.docId({ docInstId: 'D' }), 'D');      // 兜底
+  assert.strictEqual(SM.docId({ id: 'I' }), 'I');             // 兜底
+  assert.strictEqual(SM.docId({ value: 'V', id: 'I' }), 'V');
+  assert.strictEqual(SM.docId({}), '');
+  assert.strictEqual(SM.docId(null), '');
+
+  assert.strictEqual(SM.isMemberDoc({ isMember: '1' }), true);
+  assert.strictEqual(SM.isMemberDoc({ isMember: 1 }), true);
+  assert.strictEqual(SM.isMemberDoc({ isMember: '0' }), false);
+  assert.strictEqual(SM.isMemberDoc({}), false);
+  assert.strictEqual(SM.isMemberDoc(null), false);
+});
+
+test('normalizeDoc：三列字段兜底与成员标记收敛到一处', () => {
+  const n = SM.normalizeDoc({ value: 'V', docNo: 'N', docName: '名', batchNum: '2609', isMember: '1' });
+  assert.deepStrictEqual(n, { id: 'V', docNo: 'N', docName: '名', batchNum: '2609', member: true });
+  // 候选字段名兜底：no / name / batch
+  const alt = SM.normalizeDoc({ no: 'N2', name: '名2', batch: '2610' });
+  assert.strictEqual(alt.docNo, 'N2');
+  assert.strictEqual(alt.docName, '名2');
+  assert.strictEqual(alt.batchNum, '2610');
+  assert.strictEqual(alt.member, false);
+  // 全缺省 → 空串（不是 undefined，渲染与过滤都按空串比）
+  const empty = SM.normalizeDoc({});
+  assert.deepStrictEqual([empty.docNo, empty.docName, empty.batchNum, empty.id], ['', '', '', '']);
+  assert.strictEqual(SM.normalizeDoc(null).docNo, '');
+});
+
+test('filterDocs：编号/名称模糊 + 批次精确，空条件放行', () => {
+  const rows = [
+    { value: '1', docNo: 'DOC-001', docName: '需求说明书', batchNum: '2609' },
+    { value: '2', no: 'OTHER-9', name: '联合测试报告', batch: '2610' },
+    { value: '3', docNo: 'doc-002', docName: '设计说明', batchNum: '2609' },
+  ];
+  // 空条件：全部放行
+  assert.strictEqual(SM.filterDocs(rows, {}).length, 3);
+  assert.strictEqual(SM.filterDocs(rows).length, 3);
+  // 编号模糊 + 大小写不敏感
+  assert.deepStrictEqual(SM.filterDocs(rows, { kw: 'doc-00' }).map(SM.docId), ['1', '3']);
+  // 名称模糊（用兜底字段 name 也要能筛到）
+  assert.deepStrictEqual(SM.filterDocs(rows, { kw: '报告' }).map(SM.docId), ['2']);
+  // 批次精确：2609 不能命中 2610
+  assert.deepStrictEqual(SM.filterDocs(rows, { batch: '2609' }).map(SM.docId), ['1', '3']);
+  // 两个条件同时生效
+  assert.deepStrictEqual(SM.filterDocs(rows, { kw: 'DOC', batch: '2609' }).map(SM.docId), ['1', '3']);
+  assert.deepStrictEqual(SM.filterDocs(rows, { kw: '设计', batch: '2610' }).map(SM.docId), []);
+  // 空行集合不炸
+  assert.deepStrictEqual(SM.filterDocs(null, { kw: 'x' }), []);
+});
+
+test('sortDocs：已勾选最前、非成员最后、组内保持原序、不改入参', () => {
+  const rows = [
+    { value: 'a', isMember: '0' },   // 非成员
+    { value: 'b', isMember: '1' },
+    { value: 'c', isMember: '1' },   // 已勾选
+    { value: 'd', isMember: '0' },
+  ];
+  const out = SM.sortDocs(rows, new Set(['c']));
+  assert.deepStrictEqual(out.map(SM.docId), ['c', 'b', 'a', 'd']);
+  // 数组形式的已选 id 也接受
+  assert.deepStrictEqual(SM.sortDocs(rows, ['b']).map(SM.docId), ['b', 'c', 'a', 'd']);
+  // 原数组顺序不变
+  assert.deepStrictEqual(rows.map(SM.docId), ['a', 'b', 'c', 'd']);
+  // 无已选时等同于「成员在前」
+  assert.deepStrictEqual(SM.sortDocs(rows, null).map(SM.docId), ['b', 'c', 'a', 'd']);
+});
+
+test('toPickedDetails：提交用的 6 字段口径（docNo 无 d.no 兜底）', () => {
+  const out = SM.toPickedDetails([
+    { value: 'V', docNo: 'N1', docName: '名', batchNum: '2609', label: 'L', templateCode: 'T' },
+    { value: 'V2', no: 'N2', name: '名2' },
+  ]);
+  assert.deepStrictEqual(out[0], {
+    docInstId: 'V', docNo: 'N1', docName: '名', batchNum: '2609', label: 'L', templateCode: 'T',
+  });
+  // 第二行：docNo/batchNum/label/templateCode 发空串，docName 走 name 兜底
+  assert.deepStrictEqual(out[1], {
+    docInstId: 'V2', docNo: '', docName: '名2', batchNum: '', label: '', templateCode: '',
+  });
+  assert.strictEqual(SM.toPickedDetails(null).length, 0);
+});
+
+test('batchSortKey / batchLabel / buildDocBatchOptions', () => {
+  assert.strictEqual(SM.batchSortKey('2609'), 2609);
+  assert.strictEqual(SM.batchSortKey('2610dl'), 2610);
+  assert.strictEqual(SM.batchSortKey('344'), 344);
+  assert.strictEqual(SM.batchSortKey(''), 0);
+  assert.strictEqual(SM.batchSortKey('abc'), 0);
+
+  const dict = [{ value: '2609', label: '2609批次' }, { value: '269dl', label: '26年9月独立' }];
+  assert.strictEqual(SM.batchLabel(' 2609 ', dict), '2609批次');   // 字典 label 优先
+  assert.strictEqual(SM.batchLabel('269dl', dict), '26年9月独立');
+  assert.strictEqual(SM.batchLabel('2611', dict), '2611批次');     // 字典没有 → 按批次号推
+  assert.strictEqual(SM.batchLabel('', dict), '');
+
+  // 下拉按文档去重生成，按批次号倒序（新批次在前）
+  const opts = SM.buildDocBatchOptions([
+    { batchNum: '2609' }, { batchNum: '2611' }, { batch: '2609' }, {},
+  ], dict);
+  assert.deepStrictEqual(opts, [
+    { value: '2611', label: '2611批次' },
+    { value: '2609', label: '2609批次' },
+  ]);
+  // 一条文档都没有 → 退回全局批次字典（并滤掉空 value）
+  assert.deepStrictEqual(
+    SM.buildDocBatchOptions([], [{ value: '2609', label: '2609批次' }, { value: '', label: 'x' }, null]),
+    [{ value: '2609', label: '2609批次' }],
+  );
+});
+
+test('pickField / judgeFieldsFromApi：接口行候选字段名', () => {
+  assert.strictEqual(SM.pickField({ a: '', b: 'B' }, ['a', 'b']), 'B');
+  assert.strictEqual(SM.pickField({ a: '', b: 'B' }, ['a']), '');     // 全空 → 空串
+  assert.strictEqual(SM.pickField({ a: 0 }, ['a']), '0');             // 0 不算空，强转字符串
+  assert.strictEqual(SM.pickField(null, ['a']), '');
+
+  const f = SM.judgeFieldsFromApi({
+    judgeRoleName: '调用方产品负责人', judgeUserId: 'U1', judgeName: '张三', judgeDeptName: '某部',
+  });
+  assert.deepStrictEqual(f, { role: '调用方产品负责人', no: 'U1', name: '张三', dept: '某部' });
+  // 兜底字段名
+  const g = SM.judgeFieldsFromApi({ role: 'R', empNo: 'E', userName: '李四', teamName: 'T' });
+  assert.deepStrictEqual(g, { role: 'R', no: 'E', name: '李四', dept: 'T' });
+  assert.deepStrictEqual(SM.judgeFieldsFromApi({}), { role: '', no: '', name: '', dept: '' });
+});
+
+test('roleOptionsWith：字典里没有该角色时才并入（命中时返回原数组本身）', () => {
+  const base = [{ value: 'A', label: 'A' }];
+  assert.strictEqual(SM.roleOptionsWith('A', base), base);            // 不改动 → 调用方跳过 updateOptions
+  assert.deepStrictEqual(SM.roleOptionsWith('X', base), [
+    { value: 'A', label: 'A' }, { value: 'X', label: 'X' },
+  ]);
+  assert.strictEqual(SM.roleOptionsWith('', base), base);             // 空角色不动
+  assert.deepStrictEqual(SM.roleOptionsWith('X', null), [{ value: 'X', label: 'X' }]);
+});
+
+test('toServiceNoOptions：字符串/对象两种形态，空 value 丢弃', () => {
+  assert.deepStrictEqual(
+    SM.toServiceNoOptions(['E00406TO1', { value: 'E00406TO2', label: '二号' }, { value: '' }]),
+    [{ value: 'E00406TO1', label: 'E00406TO1' }, { value: 'E00406TO2', label: '二号' }],
+  );
+  assert.deepStrictEqual(SM.toServiceNoOptions(null), []);
+});
+
+test('deriveCallerServiceNo：调用方系统 + 服务编号尾部 TO 序号', () => {
+  assert.strictEqual(SM.deriveCallerServiceNo('E00406', 'E00301TP0050TO1197'), 'E00406TO1197');
+  assert.strictEqual(SM.deriveCallerServiceNo(' E00406 ', 'XTO1197'), 'E00406TO1197');
+  // 尾部没有 TO 序号 / 任一侧为空 → 推不出来，返回空串（调用方清空或留空列表）
+  assert.strictEqual(SM.deriveCallerServiceNo('E00406', 'E00301TP0050'), '');
+  assert.strictEqual(SM.deriveCallerServiceNo('', 'XTO1197'), '');
+  assert.strictEqual(SM.deriveCallerServiceNo('E00406', ''), '');
+  assert.strictEqual(SM.deriveCallerServiceNo('E00406', 'TO1197abc'), '');
+  assert.strictEqual(SM.deriveCallerServiceNo(null, null), '');
+});
+
+test('toJudgeInfoList：评委行 → 提交接口结构', () => {
+  assert.deepStrictEqual(
+    SM.toJudgeInfoList([{ name: '张三', empNo: 'U1', dept: '某部', role: '调用方产品负责人' }]),
+    [{
+      judgeName: '张三', judgeUserId: 'U1', judgeDeptName: '某部',
+      involvedProduct: '', judgeRoleName: '调用方产品负责人',
+    }],
+  );
+  assert.deepStrictEqual(SM.toJudgeInfoList([]), []);
+});
+
+test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → TPS 的顺序与文案', () => {
+  const good = { callerSystem: 'C', perfPeak: { tps: '5' } };
+  // 无行数据：静默（没有文案，也没有聚焦目标）
+  const noRow = SM.validateSubscribe(null, good);
+  assert.strictEqual(noRow.ok, false);
+  assert.strictEqual(noRow.msg, '');
+  // 拿不到服务编码（serverCoding 优先，回退 sysServeNo）
+  const noCode = SM.validateSubscribe({}, good);
+  assert.strictEqual(noCode.code, 'no-coding');
+  assert.strictEqual(noCode.msg, '⚠️ 无法获取服务编码');
+  assert.strictEqual(noCode.duration, 2500);
+  // 已订阅
+  const sub = SM.validateSubscribe({ serverCoding: 'S' }, good, (c) => c === 'S');
+  assert.strictEqual(sub.msg, '⚠️ 该服务已在订阅列表中');
+  assert.strictEqual(sub.code, 'subscribed');
+  // 未订阅 → 继续往下校验
+  assert.strictEqual(SM.validateSubscribe({ sysServeNo: 'S' }, good, () => false).ok, true);
+  // 未选调用方系统
+  const noCaller = SM.validateSubscribe({ serverCoding: 'S' }, { perfPeak: { tps: '5' } });
+  assert.strictEqual(noCaller.msg, '⚠️ 请选择调用方系统');
+  // TPS 缺失：文案 + 需要把焦点放回输入框
+  const noTps = SM.validateSubscribe({ serverCoding: 'S' }, { callerSystem: 'C', perfPeak: { tps: '' } });
+  assert.strictEqual(noTps.msg, '⚠️ 请填写 TPS（峰值）');
+  assert.strictEqual(noTps.focus, 'sub_tpsPeak');
+  // 通过：把服务编码交回调用方
+  const ok = SM.validateSubscribe({ serverCoding: 'S' }, good);
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.serverCoding, 'S');
+  assert.strictEqual(ok.msg, '');
+  // 校验顺序：编码缺失时不能先报「请选择调用方系统」
+  assert.strictEqual(SM.validateSubscribe({}, {}).code, 'no-coding');
+  // 已订阅时不能先报调用方系统
+  assert.strictEqual(SM.validateSubscribe({ serverCoding: 'S' }, {}, () => true).code, 'subscribed');
+});
+
+test('validateJudgeSubmit：无评委 / 无 publishId / 通过', () => {
+  assert.strictEqual(SM.validateJudgeSubmit(null, [{ name: 'a' }]).code, 'no-row');
+  const noJudges = SM.validateJudgeSubmit({ id: 'X' }, []);
+  assert.strictEqual(noJudges.msg, '⚠️ 请先添加评委信息');
+  assert.strictEqual(noJudges.duration, 2500);
+  // publishId 优先，回退行 id；缺了要拦（否则提交会打到错的行）
+  const noId = SM.validateJudgeSubmit({}, [{ name: 'a' }]);
+  assert.strictEqual(noId.msg, '⚠️ 当前行缺少 publishId，无法提交评委信息');
+  assert.strictEqual(noId.duration, 2800);
+  const ok = SM.validateJudgeSubmit({ publishId: 'P' }, [{ name: 'a' }]);
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(ok.publishId, 'P');
+  assert.strictEqual(SM.validateJudgeSubmit({ id: 'X' }, [{ name: 'a' }]).publishId, 'X');
+});
+
+test('createUserCache：跨行共享的已搜用户缓存', () => {
+  const cache = SM.createUserCache();
+  assert.strictEqual(cache.size, 0);
+  cache.cacheUsers([
+    { userId: 'U1', userName: '张三', teamName: '开发三部' },
+    { userId: 'U2' },                                  // 无姓名 → label 用工号
+    { userName: '没有工号' },                           // 无 userId → 丢弃
+    null,
+  ]);
+  assert.strictEqual(cache.size, 2);
+  // 同一工号再塞一次是覆盖，不是新增
+  cache.cacheUsers([{ userId: 'U1', userName: '张三丰' }]);
+  assert.strictEqual(cache.size, 2);
+  assert.strictEqual(cache.get('U1').userName, '张三丰');
+  assert.deepStrictEqual(cache.cachedUserOptions(), [
+    { value: 'U1', label: '张三丰（U1）' },
+    { value: 'U2', label: 'U2' },
+  ]);
+  // cacheUsers(null) 不炸
+  cache.cacheUsers(null);
+  assert.strictEqual(cache.size, 2);
+});
+
+test('JUDGE_ROW_TEMPLATE：仍是 6 个单元格的评委行', () => {
+  assert.strictEqual(SM.JUDGE_ROW_TEMPLATE.split('<td').length - 1, 6);
+  ['judge-check', 'judge-idx', 'judge-role', 'judge-no', 'judge-name', 'judge-dept']
+    .forEach((cls) => assert.ok(SM.JUDGE_ROW_TEMPLATE.includes(cls), '缺 ' + cls));
+  assert.ok(SM.JUDGE_ROW_TEMPLATE.includes('placeholder="请输入工号"'));
+});

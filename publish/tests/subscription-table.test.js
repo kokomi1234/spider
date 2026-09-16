@@ -18,7 +18,11 @@ const { ROOT, test } = require('./harness');
 // 报告里看到的是「进程挂了」而不是「这一条用例失败」，其余用例也白跑。
 function parsePage() {
   const html = fs.readFileSync(path.join(ROOT, 'subscription.html'), 'utf8');
+  // 纯逻辑（常量 / 映射）已下沉到 subscription-model.js，纯渲染已下沉到 subscription-view.js；
+  // 这里的字符串断言要分别去这两个模块里找，subscription.js 本身不再内联它们。
   const js = fs.readFileSync(path.join(ROOT, 'js/page/subscription.js'), 'utf8');
+  const modelJs = fs.readFileSync(path.join(ROOT, 'js/page/subscription-model.js'), 'utf8');
+  const viewJs = fs.readFileSync(path.join(ROOT, 'js/page/subscription-view.js'), 'utf8');
 
   const pick = (re) => {
     const m = re.exec(html);
@@ -37,7 +41,7 @@ function parsePage() {
     assert.ok(m, '每个 <col> 都要写死宽度（table-resize 靠它取默认值）：' + attr);
     return Number(m[1]);
   });
-  return { html, js, style, cols, ths, widths };
+  return { html, js, modelJs, viewJs, style, cols, ths, widths };
 }
 
 // 固定列已缩减为 3 列（提供方应用系统服务中文名称 / 接口编码不再固定，见 2026-09-15）
@@ -81,11 +85,11 @@ test('每个左固定列的 sticky left 等于它前面所有列宽之和', () =
 });
 
 test('左固定列在 <th> 上也带同一套类名，且 JS 侧登记齐全', () => {
-  const { js, ths } = parsePage();
+  const { ths, modelJs } = parsePage();
   const headClasses = ths.map((m) => m[0]);
   fixedClasses.forEach((cls) => {
     assert.ok(headClasses.some((h) => h.includes(cls)), `<th> 上缺少 ${cls}`);
-    assert.ok(js.includes(`'${cls}'`), `subscription.js 的固定列映射里缺少 ${cls}`);
+    assert.ok(modelJs.includes(`'${cls}'`), `subscription-model.js 的固定列映射里缺少 ${cls}`);
   });
 });
 
@@ -93,7 +97,7 @@ test('左固定列在 <th> 上也带同一套类名，且 JS 侧登记齐全', (
 // 列宽改窄之后，长字段必须能折行，否则又回到「一律省略号」。这条守着三条不可分割的约定：
 //   ① td.cell-wrap 放开换行；② .cell-clamp 限 2 行；③ JS 渲染时同时给出这两个（含内层 span）。
 test('长内容单元格：CSS 与渲染代码必须成套出现', () => {
-  const { html, js, style } = parsePage();
+  const { html, js, style, viewJs } = parsePage();
 
   assert.match(style, /\.subq-table\s+td\.cell-wrap\s*\{[^}]*white-space:\s*normal/,
     '缺少 .subq-table td.cell-wrap（该规则负责放开换行）');
@@ -105,8 +109,8 @@ test('长内容单元格：CSS 与渲染代码必须成套出现', () => {
   assert.match(style, /\.subq-table\s+thead\s+th\s*\{[^}]*white-space:\s*normal/,
     '表头必须允许折行：列宽按内容定，不能再让表头字数撑宽整列');
 
-  assert.ok(js.includes('cell-wrap'), 'subscription.js 渲染时没有给数据格加 cell-wrap');
-  assert.ok(js.includes('<span class="cell-clamp">'),
+  assert.ok(viewJs.includes('cell-wrap'), 'subscription-view.js 渲染时没有给数据格加 cell-wrap');
+  assert.ok(viewJs.includes('<span class="cell-clamp">'),
     '数据格的内容要套一层 <span class="cell-clamp">（-webkit-line-clamp 加在 <td> 上会破坏表格布局）');
   assert.ok(!/class="[^"]*cell-clamp[^"]*"/.test(html.replace(/<style>[\s\S]*?<\/style>/, '')),
     'cell-clamp 只能加在内层 span 上，不要写成 <td class="cell-clamp">');

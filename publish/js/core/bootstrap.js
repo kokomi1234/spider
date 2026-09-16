@@ -26,6 +26,11 @@
       ['Fmt', () => has(window.Fmt, 'esc')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
+      ['PublishModel', () => has(window.PublishModel, 'normalizeRow')],
+      ['PublishView', () => has(window.PublishView, 'renderRows')],
+      ['PublishQuery', () => has(window.PublishQuery, 'doQuery')],
+      ['SubscribeModel', () => has(window.SubscribeModel, 'displayBatch')],
+      ['DocPicker', () => has(window.DocPicker, 'open')],
     ],
     subscription: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
@@ -37,6 +42,7 @@
       ['createDatePicker', () => typeof window.createDatePicker === 'function'],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
+      ['SubscriptionModel', () => has(window.SubscriptionModel, 'rowKey')],
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
