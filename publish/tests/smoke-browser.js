@@ -1044,6 +1044,222 @@ const PAGES = [
     }
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 回车不串台（2026-09-16 修复的回归保护）
+  // ═══════════════════════════════════════════════════════════════
+  // 主页有个 document 级回车监听 =「回车即查询」。弹窗打开时，用户在订阅表单的普通
+  // 输入框（TPS、任务编号、评委姓名…）敲回车，原来会顺带触发一次主页全量查询；
+  // 而 loading 遮罩 z-index(2000) 高于弹窗(1000)，观感就是「填着表突然整页转圈」。
+  // 断言三条：① 无弹窗时回车仍然查询（正面控制 —— 防止把功能一并改死）；
+  //           ② 弹窗打开时回车不查询；③ 弹窗内另一个普通输入框同样不查询。
+  //
+  // 计数手法：window.PublishQuery 是 Object.freeze 的（publish-query.js:421），
+  // 加载后赋值替换**静默失效**（踩过一次：正负样本都数到 0，弹窗那两条是假通过）。
+  // 所以用 addInitScript 在页面脚本执行前装一个 setter，赋值时把它包成计数版。
+  {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    const fails = [];
+    try {
+      await page.addInitScript(() => {
+        window.__enterQueryCalls = 0;
+        let real = null;
+        Object.defineProperty(window, 'PublishQuery', {
+          configurable: true,
+          get() { return real; },
+          set(v) {
+            if (!v || typeof v.doQuery !== 'function') { real = v; return; }
+            real = Object.freeze(Object.assign({}, v, {
+              doQuery() { window.__enterQueryCalls += 1; },   // 计数桩：不真发请求
+            }));
+          },
+        });
+      });
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(1000);
+      const eg = await page.evaluate(async () => {
+        const out = { hasQuery: typeof window.PublishQuery === 'object' && !!window.PublishQuery };
+        const pressEnter = () => document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+        );
+        const calls = () => window.__enterQueryCalls;
+
+        // ① 正面控制：无弹窗 + 主页普通输入框 → 必须查询
+        const main = document.getElementById('f_serviceName');
+        main.focus();
+        out.mainFocused = document.activeElement === main;
+        window.__enterQueryCalls = 0;
+        pressEnter();
+        out.noDialogCalls = calls();
+
+        // ② 弹窗打开（订阅弹窗）：复刻 SubscribeDialog.open 的做法 —— display:flex + .show
+        const overlay = document.getElementById('subscribeOverlay');
+        overlay.style.display = 'flex';
+        overlay.classList.add('show');
+        await new Promise((r) => requestAnimationFrame(r));
+
+        const tps = document.getElementById('sub_tpsPeak');
+        tps.focus();
+        out.tpsFocused = document.activeElement === tps;
+        window.__enterQueryCalls = 0;
+        pressEnter();
+        out.dialogCalls = calls();
+
+        // ③ 弹窗内另一个普通输入框（任务编号）同样不该查询
+        const taskNo = document.getElementById('sub_taskNo');
+        taskNo.focus();
+        out.taskNoFocused = document.activeElement === taskNo;
+        window.__enterQueryCalls = 0;
+        pressEnter();
+        out.dialogCalls2 = calls();
+
+        overlay.classList.remove('show');
+        overlay.style.display = '';
+        return out;
+      });
+      process.stdout.write(`  回车不串台: ${JSON.stringify(eg)}\n`);
+      if (!eg.hasQuery) fails.push('window.PublishQuery 缺失，本段断言不可信');
+      else {
+        if (eg.mainFocused !== true || eg.tpsFocused !== true || eg.taskNoFocused !== true) {
+          fails.push(`探针没拿到焦点（main=${eg.mainFocused} tps=${eg.tpsFocused} taskNo=${eg.taskNoFocused}），本段断言不可信`);
+        }
+        if (eg.noDialogCalls !== 1) {
+          fails.push(`正面控制失败：无弹窗时回车应触发 1 次查询，实际 ${eg.noDialogCalls} 次`);
+        }
+        if (eg.dialogCalls !== 0) fails.push(`弹窗打开时回车触发了 ${eg.dialogCalls} 次主页查询（应为 0）`);
+        if (eg.dialogCalls2 !== 0) fails.push(`弹窗内任务编号回车触发了 ${eg.dialogCalls2} 次主页查询（应为 0）`);
+      }
+    } catch (e) {
+      fails.push(`回车串台段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 订阅表单必填校验 + 字段级聚焦（2026-09-16 修复的回归保护）
+  // ═══════════════════════════════════════════════════════════════
+  // 校验口径在 subscribe-model.js（已有单测），这里验的是**接线**：
+  // 点「确认」→ 该拦的拦住（不发请求）→ 文案对得上 → 焦点真的落到出错字段上。
+  // 三条都走真实弹窗（SubscribeDialog.open）+ 真实按钮，不用内部 API 造状态。
+  //   (a) 空表单           → 「请选择调用方系统」    + 焦点 = 该下拉的输入框
+  //   (b) 填了系统、没选文档 → 「请选择关联文档」     + 焦点 = 该行的「选 择」按钮
+  //   (c) 补上文档、TPS 写 'abc' → 「TPS 请填大于 0 的数字」+ 焦点 = TPS 输入框
+  // 注：(c) 不填服务编号是故意的 —— 行数据能派生出 E00406TO1197 时应放行，
+  //     这条同时守住「派生出得来就别拦」的分支。
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(1000);
+      const vc = await page.evaluate(async () => {
+        const out = {};
+        if (!window.SubscribeDialog || typeof window.SubscribeDialog.open !== 'function') {
+          return { err: 'window.SubscribeDialog.open 缺失' };
+        }
+        if (!window.AppServices || typeof window.AppServices.toast !== 'function') {
+          return { err: 'AppServices.toast 缺失' };
+        }
+        // 记录 toast，避免依赖提示元素与队列时序
+        const toasts = [];
+        const realToast = window.AppServices.toast;
+        window.AppServices.toast = (msg, d, t) => { toasts.push({ msg: String(msg), t }); };
+        const lastToast = () => (toasts.length ? toasts[toasts.length - 1] : null);
+        const clearToasts = () => { toasts.length = 0; };
+
+        // 是否误发**写**请求：这套接口连查询都用 POST，所以只认写端点
+        // （setSubcription = 订阅落库，subscriptionReview = 评委信息落库）
+        const writes = [];
+        const realFetch = window.fetch;
+        window.fetch = (url, opts) => {
+          const u = String(url);
+          if (/setSubcription|subscriptionReview/i.test(u)) writes.push(u);
+          return realFetch.apply(window, [url, opts]);
+        };
+
+        const tick = () => new Promise((r) => setTimeout(r, 120));
+        try {
+          // 行数据：sysServeNo 带 TO 尾号 → 服务编号可派生（(c) 要用到这个分支）
+          await window.SubscribeDialog.open({
+            serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197',
+            provideComponentName: '冒烟探针组件', taskNo: 'SMOKE-1',
+          });
+          await tick();
+          out.opened = document.getElementById('subscribeOverlay').classList.contains('show');
+
+          const confirm = document.getElementById('btnSubConfirm');
+
+          // ── (a) 空表单 ──
+          clearToasts();
+          confirm.click();
+          await tick();
+          const t1 = lastToast();
+          out.emptyToast = t1 && t1.msg;
+          out.emptyFocus = (document.activeElement && (document.activeElement.id
+            || document.activeElement.className || document.activeElement.tagName)) || '';
+
+          // ── (b) 填调用方系统（走组件可见输入框 = 用户手输路径），文档仍为空 ──
+          const csSel = document.getElementById('sub_callerSystem');
+          const csBox = csSel.parentElement.querySelector('.searchable-select-input');
+          csBox.value = 'E00406';
+          csBox.dispatchEvent(new Event('input', { bubbles: true }));
+          clearToasts();
+          confirm.click();
+          await tick();
+          const t2 = lastToast();
+          out.docToast = t2 && t2.msg;
+          out.docFocusId = document.activeElement ? document.activeElement.id : '';
+
+          // ── (c) 视为已选文档（写隐藏字段），TPS 手输非法值 ──
+          document.getElementById('sub_relDocIds').value = 'doc-smoke-1';
+          document.getElementById('sub_tpsPeak').value = 'abc';
+          clearToasts();
+          confirm.click();
+          await tick();
+          const t3 = lastToast();
+          out.tpsToast = t3 && t3.msg;
+          out.tpsFocusId = document.activeElement ? document.activeElement.id : '';
+          out.writes = writes.length;
+        } finally {
+          window.AppServices.toast = realToast;
+          window.fetch = realFetch;
+          if (window.SubscribeDialog) window.SubscribeDialog.close();
+        }
+        return out;
+      });
+      process.stdout.write(`  订阅校验接线: ${JSON.stringify(vc)}\n`);
+      if (vc.err) fails.push(vc.err);
+      else {
+        if (vc.opened !== true) fails.push('订阅弹窗没打开，本段断言不可信');
+        if (!/请选择调用方系统/.test(String(vc.emptyToast))) {
+          fails.push(`空表单应提示「请选择调用方系统」，实际：${vc.emptyToast}`);
+        }
+        if (vc.emptyFocus !== 'searchable-select-input') {
+          fails.push(`空表单的焦点应落到调用方系统的下拉输入框，实际落在 ${vc.emptyFocus}`);
+        }
+        if (!/请选择关联文档/.test(String(vc.docToast))) {
+          fails.push(`没选关联文档应被拦下，实际提示：${vc.docToast}`);
+        }
+        if (vc.docFocusId !== 'btnSelectDoc') {
+          fails.push(`关联文档的焦点应落到「选 择」按钮，实际 ${vc.docFocusId}`);
+        }
+        if (!/TPS（峰值）请填大于 0 的数字/.test(String(vc.tpsToast))) {
+          fails.push(`TPS 填 'abc' 应被拦下，实际提示：${vc.tpsToast}`);
+        }
+        if (vc.tpsFocusId !== 'sub_tpsPeak') {
+          fails.push(`TPS 的焦点应落到 sub_tpsPeak，实际 ${vc.tpsFocusId}`);
+        }
+        if (vc.writes !== 0) fails.push(`被拦下的提交仍发出了 ${vc.writes} 个写请求`);
+      }
+    } catch (e) {
+      fails.push(`订阅校验段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
   await browser.close();
   server.close();
   process.stdout.write(`\n==== 结果: ${anyFail ? '有 FAIL' : 'ALL PASS (静态加载/接线无报错)'} ====\n`);
