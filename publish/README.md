@@ -89,7 +89,8 @@ publish/
 │   │                    #   detail-dialog / dict-selects / toast / subscribe-* / people-search
 │   └── page/            # index.js / task.js / subscription.js /
 │                        #   subscription-batch-times.js（批量改批次时间）
-├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）
+├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）、
+│                        #   模块化方案评估.md（ESM/注册表的结论与顺序约定）
 ├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）
 ├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
 └── tools/               # 开发工具，不参与页面加载
@@ -201,3 +202,4 @@ node tools/mock-proxy.js
 - `analysis/output/openapi.json` — OpenAPI 描述
 - `docs/design-system.md` — 颜色/字号/圆角令牌与组件规范
 - `docs/导入说明.md` — 订阅列表导入测试步骤
+- `docs/模块化方案评估.md` — 为什么**不**上 ESM / 模块注册表；「调用时才取 `window.*`」的约定与顺序回归防线

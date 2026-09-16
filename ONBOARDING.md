@@ -86,10 +86,16 @@ spider/
 ## 已知架构债（接手时心里有数）
 
 - 模块之间靠隐式全局变量通信（`window.API` / `window.ServiceApi` / `window.SubscribeDialog` /
-  `window.Priority` 等），页面脚本的加载顺序不能随意调整。新增模块请沿用
-  `window.Xxx = {...}` 的显式导出，不要再新增 `window._私有桥`。
-- 三个页面的入口脚本各自初始化，没有统一的启动器编排；改动 `publish/js/core/bootstrap.js`
-  前先确认它只服务 `index.html`。
+  `window.Priority` 等）。新增模块请沿用 `window.Xxx = {...}` 的显式导出，
+  不要再新增 `window._私有桥`。
+- **依赖一律「调用时才取 `window.*`」，不要写在 IIFE 顶层。**
+  顶层捕获（`const toast = window.toast || fallback`）在脚本顺序变化后会**静默降级**成兜底实现、
+  且不报错（表现是「点了没反应」）。写法、理由与已改造清单见 `publish/docs/模块化方案评估.md`；
+  回归用例在 `tests/module-order.test.js`（含静态扫描，加了新的顶层捕获会直接报错）。
+  例外：少数**命名空间对象**（`PublishModel` / `PublishView` / `SubscriptionModel` …）有意留在顶层——
+  它们下面紧跟着就解引用成员，错序会当场抛 `TypeError`（有声失败），不算隐患。
+- `publish/js/core/bootstrap.js` 是**三页共用**的启动检查（按页 `PRESETS` 点名报缺失 + 全局异常兜底），
+  改它要同时照顾 `index` / `subscription` / `task` 三页。
 
 ## 三条铁律（违反过，代价很高）
 
