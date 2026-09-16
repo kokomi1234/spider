@@ -1094,14 +1094,15 @@ tbody tr.unsubscribed-row:hover td {
 .pagination {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  /* 居中：这栏在结果表格正下方，左对齐/右对齐都会和表格的视觉中线错开 */
+  justify-content: center;
   gap: var(--sp1);
   margin-top: var(--sp2);
   font-size: var(--fs-sm);
   color: var(--muted);
 }
 
-.pagination button { min-height: 32px; padding: 4px 14px; }
+.pagination button { min-height: 36px; padding: 6px 14px; }
 .pagination .page-info { margin: 0 8px; }
 /* 跳页输入框：与分页按钮同高，外观走统一输入框变量 */
 .pagination input {
@@ -1731,30 +1732,61 @@ label.req::after {
 .pagination .page-numbers {
   display: flex;
   align-items: center;
-  gap: 4px;
+  /* 6px：相邻页码之间要留出可见缝隙，否则连号数字会糊成一片、点错相邻页 */
+  gap: 6px;
   list-style: none;
   margin: 0;
   padding: 0;
 }
+/* 页码按钮：命中区比上下页再大一档（40×40），号码窄也点得准。
+   相邻页码（非当前页）压暗一档 + 灰边，当前页才是实心主色 —— 一眼分得出「我在哪」。 */
 .pagination .page-numbers button {
-  min-width: 32px;
-  min-height: 32px;
-  padding: 4px 8px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px 10px;
   border: 1px solid var(--outline);
   border-radius: var(--r-xs);
   background: var(--surface);
-  color: var(--on-surface);
-  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
   font-family: inherit;
   cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }
-.pagination .page-numbers button:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.pagination .page-numbers button:hover:not(:disabled):not(.is-current) {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+.pagination .page-numbers button:active:not(:disabled):not(.is-current) {
+  background: color-mix(in srgb, var(--primary) 16%, var(--surface));
+}
 .pagination .page-numbers button.is-current {
   background: var(--primary);
   border-color: var(--primary);
   color: var(--on-primary);
+  font-weight: 700;
+  /* 外圈光环 + 加粗：当前页在相邻页码里再跳一层，避免「选中的和旁边的一样大」 */
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 24%, transparent);
+  cursor: default;
 }
-.pagination .page-numbers .page-ellipsis { padding: 0 2px; color: var(--faint); }
+/* 当前页再 hover 时保持实心主色，别被 hover 规则改成浅底（浅底 + 白字会糊在一起） */
+.pagination .page-numbers button.is-current:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+/* 省略号与按钮同高，保证整排基线不抖 */
+.pagination .page-numbers .page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  min-height: 40px;
+  padding: 0 2px;
+  color: var(--faint);
+}
 .pagination .page-jump { display: inline-flex; align-items: center; gap: 4px; margin-left: var(--sp1); }
 
 /* ── 快速筛选按钮组（按调用方系统筛选）───────────────── */

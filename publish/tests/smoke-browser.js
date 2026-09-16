@@ -1260,6 +1260,136 @@ const PAGES = [
     await page.close();
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 分页栏：居中 + 页码命中区 / 选中态（2026-09-16 调整的回归保护）
+  // ═══════════════════════════════════════════════════════════════
+  // 页码的坑是「点错相邻页」：原来按钮 32×32、间距 4px、当前页只靠底色区分，
+  // 连号数字挤在一起时很容易点到隔壁。这里把几何尺寸和状态差异都钉成断言。
+  // 走真实渲染器（SubscriptionView.renderPagination）而不是手搓 DOM，
+  // 保证页码结构与类名跟线上一致。
+  {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(800);
+      const pg = await page.evaluate(() => {
+        if (!window.SubscriptionView || typeof window.SubscriptionView.renderPagination !== 'function') {
+          return { err: 'window.SubscriptionView.renderPagination 缺失' };
+        }
+        const els = {
+          bar: document.getElementById('pagination'),
+          pageTotal: document.getElementById('pageTotal'),
+          pageNumbers: document.getElementById('pageNumbers'),
+          btnPrev: document.getElementById('btnPrev'),
+          btnNext: document.getElementById('btnNext'),
+          pageJumpInput: document.getElementById('pageJumpInput'),
+        };
+        const gotos = [];
+        window.SubscriptionView.renderPagination(els, {
+          pageNum: 5, total: 480, pages: 20, queried: true, onGoto: (n) => { gotos.push(n); },
+        });
+
+        const btns = [...els.pageNumbers.querySelectorAll('button[data-page]')];
+        const rect = (el) => el.getBoundingClientRect();
+        const cs = (el) => getComputedStyle(el);
+        const cur = els.pageNumbers.querySelector('button.is-current');
+        const nb = btns.find((b) => b !== cur
+          && Math.abs(Number(b.dataset.page) - Number(cur.dataset.page)) === 1);
+
+        // 相邻页码之间的最小缝隙：只比对页码相差 1 的两对按钮
+        // （差 2 及以上中间夹着省略号，量出来的是省略号宽度，没有意义）
+        let minGap = Infinity;
+        for (let i = 0; i < btns.length - 1; i += 1) {
+          const a = Number(btns[i].dataset.page);
+          const b = Number(btns[i + 1].dataset.page);
+          if (b - a === 1) minGap = Math.min(minGap, rect(btns[i + 1]).left - rect(btns[i]).right);
+        }
+
+        // 点一下相邻页码：按钮放大后必须仍然可点、且回传正确页码
+        let clickErr = '';
+        try { nb.click(); } catch (e) { clickErr = String(e && e.message); }
+
+        return {
+          barJustify: cs(els.bar).justifyContent,
+          barDisplay: cs(els.bar).display,
+          btnCount: btns.length,
+          minW: Math.min(...btns.map((b) => rect(b).width)),
+          minH: Math.min(...btns.map((b) => rect(b).height)),
+          gapPx: Number.isFinite(minGap) ? Math.round(minGap * 100) / 100 : -1,
+          currentCount: els.pageNumbers.querySelectorAll('button.is-current').length,
+          currentPage: cur && cur.dataset.page,
+          curBg: cs(cur).backgroundColor,
+          curWeight: Number(cs(cur).fontWeight) || 0,
+          curColor: cs(cur).color,
+          nbPage: nb && nb.dataset.page,
+          nbBg: cs(nb).backgroundColor,
+          nbWeight: Number(cs(nb).fontWeight) || 0,
+          nbColor: cs(nb).color,
+          prevH: rect(els.btnPrev).height,
+          gotos,
+          clickErr,
+        };
+      });
+      process.stdout.write(`  分页栏几何/状态: ${JSON.stringify(pg)}\n`);
+      if (pg.err) fails.push(pg.err);
+      else {
+        if (pg.barJustify !== 'center') fails.push(`分页栏应居中，实际 justify-content=${pg.barJustify}`);
+        if (pg.barDisplay !== 'flex') fails.push(`分页栏应可见（display:flex），实际 ${pg.barDisplay}`);
+        if (pg.minW < 40 || pg.minH < 40) {
+          fails.push(`页码命中区应 ≥40×40，实际最小 ${pg.minW}×${pg.minH}`);
+        }
+        if (pg.gapPx < 6) fails.push(`相邻页码间距应 ≥6px，实际 ${pg.gapPx}px`);
+        if (pg.prevH < 36) fails.push(`上一页/下一页按钮高度应 ≥36px，实际 ${pg.prevH}`);
+        if (pg.currentCount !== 1) fails.push(`应只有一个 .is-current，实际 ${pg.currentCount} 个`);
+        if (pg.currentPage !== '5') fails.push(`当前页应标在 5，实际 ${pg.currentPage}`);
+        if (pg.curBg === pg.nbBg) fails.push(`当前页底色应与相邻页不同（都是 ${pg.curBg}）`);
+        if (!(pg.curWeight > pg.nbWeight)) {
+          fails.push(`当前页应比相邻页更重（bold），实际 cur=${pg.curWeight} nb=${pg.nbWeight}`);
+        }
+        if (pg.curColor === pg.nbColor) fails.push(`当前页文字色应与相邻页不同（都是 ${pg.curColor}）`);
+        if (pg.clickErr) fails.push(`点击相邻页码报错：${pg.clickErr}`);
+        if (pg.gotos.join(',') !== String(pg.nbPage)) {
+          fails.push(`点相邻页码应回传 ${pg.nbPage}，实际回传 [${pg.gotos.join(',')}]`);
+        }
+      }
+    } catch (e) {
+      fails.push(`分页栏段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // 首页的分页栏共用同一套 CSS，这里只确认它也被居中（该页是「上一页/第 X / Y 页/下一页」结构）
+  {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(600);
+      const r = await page.evaluate(() => {
+        const bar = document.getElementById('pagination');
+        if (!bar) return { justify: 'NO-BAR' };
+        // 该页分页条默认 display:none（还没查询过），先显示出来才量得到真实几何
+        bar.style.display = '';
+        const prev = bar.querySelector('#btnPrev');
+        return {
+          justify: getComputedStyle(bar).justifyContent,
+          prevH: prev ? prev.getBoundingClientRect().height : -1,
+        };
+      });
+      process.stdout.write(`  首页分页栏: ${JSON.stringify(r)}\n`);
+      if (r.justify !== 'center') fails.push(`首页分页栏应居中，实际 ${r.justify}`);
+      if (!(r.prevH >= 36)) fails.push(`首页上一页按钮高度应 ≥36px，实际 ${r.prevH}`);
+    } catch (e) {
+      fails.push(`首页分页栏段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
   await browser.close();
   server.close();
   process.stdout.write(`\n==== 结果: ${anyFail ? '有 FAIL' : 'ALL PASS (静态加载/接线无报错)'} ====\n`);
