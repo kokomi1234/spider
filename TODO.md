@@ -41,30 +41,6 @@
 > 评估报告 `前端用户体验评估报告.html` 的 P0 / P1 已全部落地并提交（10 个 commit），
 > 交叉验证也已通过（95/95、冒烟 ALL PASS）。下面这批是**仍未做**或**需要外部条件**的。
 
-- [~] **清理 `window._` 私有桥（报告 P2 第 1 条）**：实测澄清 + 内部读取方已清零（2026-09-16）。
-      **澄清**：报告写「37 处 / 10 文件」已过时。真正的**单下划线私有桥**只有 **4 个名字**
-      （`_showToast` / `_batchOptions` / `_prodBatchInstance` / `_afterSubscribeChanged`）、**13 行代码**，
-      集中在 **3 个文件**（`index.js` / `subscribe-ui.js` / `subscribe-dialog.js`）。
-      `window.__APP_DEBUG__` / `__APP_CONFIG__` / `__APP_ERROR_GUARD__` 是**双下划线全局配置/标志**，
-      **不是私有桥、不动**。
-      **进展**：已把全部内部读取方（9 处）改为走 `window.AppServices`（`.toast` / `.batchOptions` /
-      `.prodBatchInstance` / `.afterSubscribeChanged`）；`run.js` 95/95、`smoke-browser` ALL PASS。
-      `index.js` 4 处 `window._xxx = ...` **兼容挂载点保留**（供外部/旧集成使用，不删）。
-      **剩余**：要彻底去掉 `window._` 需连挂载点一并删（破坏性，须确认无外部依赖）→ 与
-      「技术债 · 引入模块注册表 / ESM」合并评估再动手。
-
-- [ ] **subscription 页「查询失败 → 重试」全链路实测（验证记录 §6-1）**：
-      该页 `query()` 有前置校验（必须选调用方或提供方系统之一），无后端时字典为空、
-      `setValue` 无匹配项会置空，**无法从 UI 满足校验**，所以只能靠单测 + 冒烟 + 代码审查覆盖。
-      **目标**：在有后端的环境里真实点一次「失败 → 重试」。
-      **卡点**：依赖内网后端 / 代理。
-      **需要**：能连 `itamp.bocsys.cn` 的环境，或用 `tools/mock-proxy.js`（端口 3001）造失败场景。
-
-- [ ] **真实接口联动验证（验证记录 §6-4）**：本轮所有验证都在**无后端静态服务器**下做的，
-      接口全部失败或被注入，覆盖的是前端行为而非真实接口联动。
-      **目标**：连真实后端跑一遍三页主流程。
-      **需要**：内网环境 + 有效 token。
-
 - [ ] **`analysis/` 抓包素材的备份策略（本轮新发现）**：`*.har`、`output/*.png`、
       `analysis/har/*.json`（含关键的 `订阅.json` = `setSubcription` 成功报文）**都在 `.gitignore` 里**，
       只存在于本机磁盘。刚修复完它们的乱码文件名，但换机器 / 重装会全丢，且 git 救不回来。

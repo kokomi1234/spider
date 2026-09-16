@@ -140,7 +140,7 @@
   function start() {
     const page = currentPage();
     report(page);
-    // 统一的服务注册表：模块优先从这里取跨模块回调，旧 window._xxx 仅作为兼容回退。
+    // 统一的服务注册表：模块从这里取跨模块回调（已移除旧的 window._xxx 私有桥）。
     window.AppServices = window.AppServices || {};
     // 各页保持自启动兼容；bootstrap 只负责统一检查，不重复调用业务初始化。
     window.AppRuntime = Object.freeze({

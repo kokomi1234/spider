@@ -49,8 +49,7 @@
   let batchSelectInstance = null;
 
   // 暴露给外部模块（如订阅弹窗）读取首页已选批次。
-  // 项目铁律禁止新增 window._私有桥：正式登记到 window.AppServices（bootstrap.js 里建的注册表）；
-  // window._prodBatchInstance 保留为**同一个对象的别名**做兼容，新代码一律走 AppServices。
+  // 项目铁律禁止新增 window._私有桥：统一登记到 window.AppServices（bootstrap.js 里建的注册表）。
   const prodBatchInstance = { _inst: null, get value() { return batchSelectInstance ? batchSelectInstance.getValue() : ''; } };
   Object.defineProperty(prodBatchInstance, 'instance', {
     get() { return batchSelectInstance; },
@@ -58,17 +57,15 @@
   });
   window.AppServices = window.AppServices || {};
   window.AppServices.prodBatchInstance = prodBatchInstance;
-  window._prodBatchInstance = prodBatchInstance;   // 兼容旧调用点（同一引用，不是副本）
 
   /**
-   * 批次选项的跨模块读写：正式走 AppServices，window._batchOptions 仅作兼容别名。
+   * 批次选项的跨模块读写：统一走 AppServices。
    * 批次列表加载成功时才有，缺失时解析不出 label（见 resolveBatchLabel）。
    */
   function setBatchOptions(opts) {
     const list = opts || [];
     window.AppServices = window.AppServices || {};
     window.AppServices.batchOptions = list;
-    window._batchOptions = list;                   // 兼容旧读取点
     return list;
   }
   function getBatchOptions() {
@@ -237,8 +234,7 @@
   // Toast 公共实现见 js/ui/toast.js（三页共用；本地保留 showToast 这个名字）
   const showToast = window.toast || (() => {});
 
-  // 暴露给其他模块使用
-  window._showToast = showToast;
+  // 暴露给其他模块使用（统一登记到 AppServices）
   window.AppServices = window.AppServices || {};
   window.AppServices.toast = showToast;
 
@@ -1184,9 +1180,7 @@
   };
   window.AppServices = window.AppServices || {};
   window.AppServices.afterSubscribeChanged = afterSubscribeChanged;
-  // 旧入口保留，兼容此前在控制台或外部页面调用的集成代码。
-  window._afterSubscribeChanged = afterSubscribeChanged;
-  // 已移除 window._viewDetail：全仓检索确认没有任何调用点（声明后从未被使用）。
+  // 已移除 viewDetail 旧入口：全仓检索确认没有任何调用点（声明后从未被使用）。
   // 详情页入口统一走 window.DetailDialog.open(row)。
 
   // 输入法状态：中文输入法的 compositionend 与确认键之间可能存在极短时序窗口。
