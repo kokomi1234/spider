@@ -46,7 +46,7 @@
     ],
   };
 
-  /** 由路径推断当前页（约定：subscription.html / task.html / 其余当首页） */
+  /** 由路径推断当前页（干净路由：/home /subscription /task；旧 /xxx.html 仍兼容） */
   function currentPage() {
     const path = (location.pathname || '').toLowerCase();
     if (path.includes('subscription')) return 'subscription';

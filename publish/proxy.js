@@ -147,13 +147,23 @@ const MIME = {
   '.ttf':  'font/ttf',
 };
 
+// ── 干净路由（去掉 .html 后缀）──────────────────────────────────
+// /home → index.html、/subscription → subscription.html、/task → task.html。
+// 旧地址（带 .html）仍可直接访问（按扩展名命中静态服务），这里只新增别名，
+// 平滑迁移、不破坏书签与既有链接。要改路由改这里即可，无需动各页面文件。
+const PAGE_ROUTES = {
+  '/home':         'index.html',
+  '/subscription': 'subscription.html',
+  '/task':         'task.html',
+};
+
 /** 判断是否是静态资源请求 */
 function isStaticRequest(url) {
-  // GET 请求且路径对应 __dirname 下的文件 → 静态
-  if (url === '/') return true;           // / 首页 → index.html
+  const clean = String(url).split('?')[0].split('#')[0];
+  // 干净路由（/home /subscription /task）与 / 都按静态页处理
+  if (clean === '/' || clean in PAGE_ROUTES) return true;
   // 必须先剥掉查询串/锚点：否则 /index.html?debug=1 的 extname 会算成
   // ".html?debug=1"，被判成非静态 → 走代理 → 404，地址栏加 ?debug=1 就打不开页面
-  const clean = String(url).split('?')[0].split('#')[0];
   const ext = path.extname(clean).toLowerCase();
   return ext in MIME;
 }
@@ -171,9 +181,16 @@ function serveStatic(req, res) {
 
     let filePath = path.join(__dirname, urlPath);
 
-    // / → index.html
+    // / → 302 跳转到 /home（干净路由，作为首页唯一入口）
     if (urlPath === '/' || urlPath === '') {
-      filePath = path.join(__dirname, 'index.html');
+      res.writeHead(302, { 'Location': '/home' });
+      res.end();
+      return;
+    }
+
+    // 干净路由：/home /subscription /task → 对应 HTML 文件（去掉 .html 后缀）
+    if (urlPath in PAGE_ROUTES) {
+      filePath = path.join(__dirname, PAGE_ROUTES[urlPath]);
     }
 
     // 文件不存在（如浏览器自动请求的 /favicon.ico）→ 404，不能抛异常
