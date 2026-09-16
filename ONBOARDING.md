@@ -126,5 +126,7 @@ spider/
 ## 给 AI 接手者的说明
 
 - 工作记忆在 `.workbuddy/memory/`（`MEMORY.md` 是长期约定，`YYYY-MM-DD.md` 是日志），
-  项目里 `.workbuddy-ai`、`.opencode` 是指向它的软链，所有 AI 共享这一份。
+  项目根目录的 `.opencode`、`.workbuddy-ai` 是两个**单行文本指针文件**（内容就是字符串
+  `.workbuddy`，给 OpenCode 之类的 CLI 指路用 —— 不是软链），所有 AI 共享这一份；
+  这两个指针文件已在 `.gitignore` 里（属本地约定，不入库）。
 - 提交信息用中文；`publish/cache/`、`*.har`、`analysis/har/` 永远不入库。
