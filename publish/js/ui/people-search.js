@@ -21,6 +21,19 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  /**
+   * 错误串 → 一句人能读的话。
+   * 走全站唯一实现 QueryFeedback.shortError（抽后端 msg / 超长截断）；
+   * 模块缺失时朴素截断 —— 别把 `HTTP 500 {"code":...}` 整段塞进提示区。
+   */
+  function errText(e) {
+    if (window.QueryFeedback && typeof window.QueryFeedback.shortError === 'function') {
+      return window.QueryFeedback.shortError(e);
+    }
+    const s = String(e == null || e === '' ? '未知错误' : e);
+    return s.length > 90 ? s.slice(0, 90) + '…' : s;
+  }
+
   const STATUS_TEXT = { '1': '在职', '2': '试用期', '3': '在职' };
 
   let searchSeq = 0;   // 防竞态：只认最后一次搜索的结果
@@ -69,11 +82,11 @@
     if (seq !== searchSeq) return;   // 已有更新的搜索，丢弃旧结果
 
     if (!r.ok) {
-      setMsg(`⚠️ 搜索失败：${r.error || '未知错误'}`);
+      setMsg(`⚠️ 搜索失败：${errText(r.error)}，可换完整姓名或工号再试`);
       return;
     }
     if (!r.list.length) {
-      setMsg(`未找到姓名包含「${kw}」的用户${r.local ? '（接口未启用）' : ''}`);
+      setMsg(`没有匹配的用户，可换完整姓名或工号再试${r.local ? '；该查询暂未开放' : ''}`);
       return;
     }
     renderList(r.list);
@@ -104,7 +117,7 @@
     if (expandedId !== userId) return;   // 已切到别的行
     const cell = detailRow.querySelector('td');
     if (!r.ok) {
-      cell.innerHTML = `⚠️ 详情加载失败：${esc(r.error || '')}`;
+      cell.innerHTML = `⚠️ 详情加载失败：${esc(errText(r.error))}`;
       return;
     }
     const u = r.user || {};

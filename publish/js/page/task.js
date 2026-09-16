@@ -16,6 +16,19 @@
 
   const $ = (sel) => document.querySelector(sel);
 
+  /**
+   * 错误串 → 一句人能读的话。
+   * 接口层抛的是 `HTTP 500 {"code":500,"msg":"..."}` 这种，直接上屏用户既读不懂、
+   * 也不知道下一步做什么；统一走全站唯一的 QueryFeedback.shortError（抽 msg / 截断），
+   * 该模块缺失时退回朴素截断，不静默吞掉错误。
+   */
+  function errText(e) {
+    const Q = window.QueryFeedback;
+    if (Q && typeof Q.shortError === 'function') return Q.shortError(e);
+    const s = String(e == null || e === '' ? '未知错误' : e);
+    return s.length > 90 ? s.slice(0, 90) + '…' : s;
+  }
+
   // ═══════════════════════════════════════════════════
   // 常量
   // ═══════════════════════════════════════════════════
@@ -186,7 +199,7 @@
       const res = await window.TaskApi.fetchTaskList(state.cond, state.pageNum, state.pageSize);
       if (seq !== state.reqSeq) return;          // 已被更新的请求取代，整段丢弃
       if (!res.ok) {
-        toast(`⚠️ 查询失败：${res.error || '未知错误'}`, 3500);
+        toast(`⚠️ 查询失败：${errText(res.error)}，请稍后重试`, 4000);
         showQueryFail(res.error || '未知错误');    // toast 会消失，常驻条不会
         // 失败不清空已有结果，方便对照 / 重试；但所有「页码 / 条数」显示都要退回上一次成功的状态，
         // 否则旧表格会配着一个已经前进过的页码，看起来像「查到了但没变化」。
@@ -208,7 +221,7 @@
       if (!res.rows.length) toast('查询完成，没有匹配的任务单', 2200);
     } catch (e) {
       if (seq !== state.reqSeq) return;
-      toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
+      toast(`⚠️ 查询异常：${errText(e)}，请稍后重试`, 4000);
       showQueryFail(e && e.message ? e.message : e);
       console.error('[task] query 异常', e);
     } finally {
@@ -228,6 +241,9 @@
     renderTable();
     renderPagination();
     renderStats();
+    // 任务单页是服务端分页：翻页靠重新 query，表格在 .tbl-scroll 里。
+    // 不复位纵向滚动的话，从表格中下部点「下一页」，新页会停在中下部、前几行看不到。
+    if (window.TableUtils && window.TableUtils.resetTableScroll) window.TableUtils.resetTableScroll();
   }
 
     // colspan 13 = 任务单表格列数；空状态与分页条显隐统一走 TableUtils
@@ -339,7 +355,13 @@
   async function exportCsv() {
     if (!state.queried || !state.total) { toast('⚠️ 请先查询再导出', 2200); return; }
     const btn = $('#btnExportCsv');
-    if (btn) { btn.disabled = true; btn.textContent = '导出中…'; }
+    // 初始文案从 HTML 取一次存下来：原来复位写死成「导 出」，与初始的「导出 CSV」不一致，
+    // 导出过一次后按钮标签就永久变了（宽度也跳）
+    if (btn) {
+      if (!btn.dataset.label) btn.dataset.label = btn.textContent.trim();
+      btn.disabled = true;
+      btn.textContent = '导出中…';
+    }
 
     try {
       const want = Math.min(state.total, EXPORT_MAX);
@@ -363,9 +385,12 @@
         2600
       );
     } catch (e) {
-      toast(`⚠️ 导出失败：${e.message || String(e)}`, 3000);
+      toast(`⚠️ 导出失败：${errText(e)}`, 3000);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '导 出'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.label || '导出 CSV';
+      }
     }
   }
 

@@ -425,21 +425,25 @@
 
   btnReset.addEventListener('click', resetForm);
 
+  /**
+   * 首页切页统一入口：重绘当前页 + 复位表格纵向滚动。
+   * 滚动复位见 TableUtils.resetTableScroll —— 结果表在 .tbl-scroll 里自成滚动容器，
+   * 滚到中下部再点「下一页」时新页会停在中下部，前几行看不到。
+   */
+  function gotoPage(n) {
+    state.pageNum = n;
+    PublishView.renderCurrentPage(state, checkSubscribeStatus);   // 纯客户端切页，保留当前订阅筛选
+    PublishView.updatePagination(state);
+    if (window.TableUtils && window.TableUtils.resetTableScroll) window.TableUtils.resetTableScroll();
+  }
+
   btnPrev.addEventListener('click', () => {
-    if (state.pageNum > 1) {
-      state.pageNum--;
-      PublishView.renderCurrentPage(state, checkSubscribeStatus);   // 纯客户端切页，保留当前订阅筛选
-      PublishView.updatePagination(state);
-    }
+    if (state.pageNum > 1) gotoPage(state.pageNum - 1);
   });
 
   btnNext.addEventListener('click', () => {
     const totalPages = window.TableUtils.totalPages(state.filteredRows.length, state.pageSize);
-    if (state.pageNum < totalPages) {
-      state.pageNum++;
-      PublishView.renderCurrentPage(state, checkSubscribeStatus);   // 纯客户端切页，保留当前订阅筛选
-      PublishView.updatePagination(state);
-    }
+    if (state.pageNum < totalPages) gotoPage(state.pageNum + 1);
   });
 
   btnExportCsv.addEventListener('click', () => PublishQuery.exportCsv());

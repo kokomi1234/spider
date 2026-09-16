@@ -92,6 +92,19 @@
     return typeof v === 'function' ? v(what) : v;
   }
 
+  /**
+   * 错误串 → 一句人能读的话（抽后端 msg / 超长截断）。
+   * 统一走全站唯一实现 QueryFeedback.shortError；该模块缺失时朴素截断，
+   * 绝不把 `HTTP 500 {"code":...}` 整段原样弹给业务用户。
+   */
+  function errText(e) {
+    if (window.QueryFeedback && typeof window.QueryFeedback.shortError === 'function') {
+      return window.QueryFeedback.shortError(e);
+    }
+    const s = String(e == null || e === '' ? '未知错误' : e);
+    return s.length > 90 ? s.slice(0, 90) + '…' : s;
+  }
+
   /** 复制到剪贴板：点击时把文本写入剪贴板，toast 提示成功 */
   async function copyToClipboard(text, toastEl) {
     const raw = String(text ?? '').trim();
@@ -192,7 +205,7 @@
       if (SubscriptionModel.hasSpecificFilter(nextCond)) await runSingleQuery(seq, nextCond);
       else await runWindowQuery(seq, nextCond);
     } catch (e) {
-      toast('⚠️ 查询异常：' + (e && e.message ? e.message : e), 3500);
+      toast(`⚠️ 查询异常：${errText(e)}，请稍后重试`, 4000);
       console.error('[subscription] query 异常', e);
     } finally {
       if (seq === state.reqSeq) setLoading(false);
@@ -389,9 +402,15 @@
   function gotoPage(n) {
     const page = Math.min(Math.max(1, n), totalPages());
     if (page === state.pageNum && state.mode === 'server' && state.rows.length) return;
+    const changed = page !== state.pageNum;
     state.pageNum = page;
     if (state.mode === 'client') render();
     else query(page);
+    // 真的换了页才复位纵向滚动（保留横向位置）：表格滚到中下部时翻页，
+    // 新页会停在中下部、前几行看不到，见 TableUtils.resetTableScroll
+    if (changed && window.TableUtils && window.TableUtils.resetTableScroll) {
+      window.TableUtils.resetTableScroll();
+    }
   }
 
   function render() {

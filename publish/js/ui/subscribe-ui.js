@@ -150,7 +150,11 @@
     if (!container) return;
 
     if (!filtered.length) {
-      container.innerHTML = '<div style="text-align:center;color:var(--muted);padding:32px 0;">暂无已订阅服务</div>';
+      // 「搜索无命中」与「一个都没订阅」是两种状态，原来共用一句「暂无已订阅服务」——
+      // 用户已经订阅了 20 个服务、在搜索框里敲一个不存在的编码，会以为订阅数据全丢了。
+      container.innerHTML = list.length
+        ? `<div style="text-align:center;color:var(--muted);padding:32px 0;">没有匹配的已订阅服务（共 ${list.length} 个，可清空搜索框查看全部）</div>`
+        : '<div style="text-align:center;color:var(--muted);padding:32px 0;">还没有订阅任何服务，可在结果表点「订阅」添加</div>';
       return;
     }
 
@@ -166,6 +170,17 @@
       btn.addEventListener('click', async () => {
         const code = btn.getAttribute('data-code');
         if (btn.disabled) return;
+        // 二次确认：同一弹窗里「清空」有确认、单条删除却点即生效，破坏性相近却两套规则；
+        // 行距只有 8px，误点直接发起移除，而删错的这一条除了重新搜索再加回来没有退路。
+        const ok = (window.DialogUtils && typeof window.DialogUtils.confirmBox === 'function')
+          ? await window.DialogUtils.confirmBox({
+            title: '移除订阅',
+            message: `确定移除 ${code} 吗？`,
+            okText: '移 除',
+            danger: true,
+          })
+          : window.confirm(`确定移除 ${code} 吗？`);
+        if (!ok) return;
         btn.disabled = true; btn.textContent = '移除中…';
         // 预留层（service-api.js）未配置 subscribeRemove 时，unsubscribe 直接返回本地模式
         const res = window.ServiceApi ? await window.ServiceApi.unsubscribe(code) : { ok: true, local: true };
@@ -306,6 +321,39 @@
     });
   }
 
+  /**
+   * 复制文本到剪贴板：优先 Clipboard API，失败/不可用则退回临时 textarea。
+   * 原来这里直接 `navigator.clipboard.writeText(...)`：非安全上下文（HTTP 内网地址）下
+   * `navigator.clipboard` 是 undefined，会在 `.then` 之前同步抛错 —— 既不进 catch、
+   * 也走不到 execCommand 兜底，表现就是「点了批量导出什么都没发生」。
+   * 实现与 subscription.js 的 copyToClipboard 同口径（已在 TODO 里登记要抽成公共函数）。
+   */
+  function copyText(text, okMsg) {
+    const raw = String(text == null ? '' : text);
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = raw;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand('copy');
+        showToast(okMsg);
+      } catch (_) {
+        showToast('⚠️ 复制失败，请手动复制');
+      }
+      document.body.removeChild(ta);
+    };
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        navigator.clipboard.writeText(raw).then(() => showToast(okMsg)).catch(fallback);
+        return;
+      }
+    } catch (_) { /* 落到同步兜底 */ }
+    fallback();
+  }
+
   /** 导出已订阅服务 */
   function exportServices() {
     const text = window.SubscribeManager.export();
@@ -313,20 +361,7 @@
       showToast('⚠️ 暂无可导出的服务');
       return;
     }
-
-    // 复制到剪贴板
-    navigator.clipboard.writeText(text).then(() => {
-      showToast('✅ 已复制到剪贴板');
-    }).catch(() => {
-      // 降级方案
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      showToast('✅ 已复制到剪贴板');
-    });
+    copyText(text, '✅ 已复制到剪贴板');
   }
 
   /** 确认清空 */

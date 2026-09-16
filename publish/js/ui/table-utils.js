@@ -53,5 +53,19 @@
     if (bar) bar.style.display = 'none';
   }
 
-  window.TableUtils = Object.freeze({ totalPages, renderEmpty, EMPTY_TEXT });
+  /**
+   * 翻页后把结果表格的纵向滚动复位（**保留**横向位置）。
+   *
+   * 为什么需要：表格在 .tbl-scroll 里自成滚动容器（首页还带 max-height），
+   * 用户往下滚了半屏再点「下一页」，tbody 换了但 scrollTop 保留 ——
+   * 新页直接停在表格中下部，前几行根本看不到，只能自己再滚回去。
+   * 横向位置保留是因为宽表（订阅页 3046px）翻页后还想看同一批列。
+   */
+  function resetTableScroll() {
+    document.querySelectorAll('.tbl-scroll').forEach((sc) => {
+      if (sc.scrollTop) sc.scrollTop = 0;
+    });
+  }
+
+  window.TableUtils = Object.freeze({ totalPages, renderEmpty, EMPTY_TEXT, resetTableScroll });
 })();

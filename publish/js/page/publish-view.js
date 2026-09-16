@@ -289,10 +289,16 @@
   /** 结果区：查询失败 —— 表格 / 分页 / 统计 / 计数必须一起复位 */
   function renderQueryError(err) {
     const etFail = emptyText();
+    // 原来把 err.message 原样以等宽字体追加在第二行，屏幕上是
+    // `HTTP 404 {"code":404,...}` 或 `请求超时（20000ms 未响应）：/itamp-tool/...`，
+    // 业务用户读不懂、也不知道下一步做什么。
+    // 改成压缩过的后端 msg（走全站唯一实现，缺失时退化为不加技术细节）。
+    const Q = window.QueryFeedback;
+    const detail = (Q && typeof Q.shortError === 'function') ? Q.shortError(err && err.message) : '';
     $('#resultBody').innerHTML = `<tr><td colspan="${RESULT_COL_COUNT}" class="empty-hint">`
       + `${esc(etFail.fail || '查询失败，请检查网络或稍后重试')}`
-      + '<br><small style="color:var(--muted);font-family:monospace;">'
-      + esc(err?.message || '未知错误') + '</small></td></tr>';
+      + (detail ? `<br><small style="color:var(--muted);">${esc(detail)}</small>` : '')
+      + '</td></tr>';
     $('#pagination').style.display = 'none';
     $('#statsRow').style.display = 'none';
     $('#subscribeStats').style.display = 'none';

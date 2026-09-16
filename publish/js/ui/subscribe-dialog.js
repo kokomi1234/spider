@@ -40,6 +40,7 @@
   let openSeq = 0;             // 弹窗会话号：open / close 各 +1，用来丢弃「关窗后才回来的异步响应」
   let submitting = false;      // 确认订阅 in-flight 锁：防连点重复提交
   let judgeFetching = false;   // 评委拉取 in-flight 锁：同上
+  let judgeSubmitting = false; // 评委提交 in-flight 锁：同上（防重复写入审核数据）
   let returnFocus = null;      // 关闭后要还原的焦点
   let dragInstance = null;     // 主弹窗的 dialog-utils 拖拽句柄（含 reset）
   let judgeSeq = 0;            // 评委行自增 id
@@ -740,33 +741,59 @@
       if (v.msg) toast(v.msg, v.duration, 'warn');
       return;
     }
-    const form = collectForm();
-    // 调用方应用系统服务编号（如 E00406TO1197）；没填则按调用方系统 + 服务编号尾部序号推一份
-    const derived = M.deriveCallerServiceNo(
-      form.callerSystem,
-      currentRow.sysServeNo || currentRow.serverCoding,
-    );
-    const prodSysServeNoList = form.callerServiceNo ? [form.callerServiceNo] : (derived ? [derived] : []);
-    const r = await window.ToolApi.submitSubscriptionReview({
-      publishId: v.publishId,
-      prodSysServeNoList,
-      judgeInfoList: M.toJudgeInfoList(judges),
-    });
-    if (!r || !r.ok) {
-      toast(`⚠️ 提交失败：${(r && r.error) || '未知错误'}`, 3000, 'error');
-      return;
+    // 提交锁：与「确认订阅」同款。这个按钮点完表格没有任何变化、只弹一个短 toast，
+    // 用户会再点一次确认自己点到没有 —— 结果是向 subscriptionReview 重复写入审核数据。
+    if (judgeSubmitting) return;
+    judgeSubmitting = true;
+    const seq = openSeq;
+    const btn = dom && dom.btnSubmitJudges;
+    const btnLabel = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '提交中…'; }
+
+    try {
+      const form = collectForm();
+      // 调用方应用系统服务编号（如 E00406TO1197）；没填则按调用方系统 + 服务编号尾部序号推一份
+      const derived = M.deriveCallerServiceNo(
+        form.callerSystem,
+        currentRow.sysServeNo || currentRow.serverCoding,
+      );
+      const prodSysServeNoList = form.callerServiceNo ? [form.callerServiceNo] : (derived ? [derived] : []);
+      const r = await window.ToolApi.submitSubscriptionReview({
+        publishId: v.publishId,
+        prodSysServeNoList,
+        judgeInfoList: M.toJudgeInfoList(judges),
+      });
+      // 弹窗在等响应期间被关掉 / 换了一行 → 只报结果，不回写界面
+      if (seq !== openSeq) return;
+      if (!r || !r.ok) {
+        toast(`⚠️ 提交失败：${(r && r.error) || '未知错误'}`, 3000, 'error');
+        return;
+      }
+      if (r.local) {
+        toast('接口未启用，评委信息仅保留在表单中', 2500, 'warn');
+        return;
+      }
+      toast('✅ 评委信息已提交', 2200, 'success');
+    } catch (e) {
+      // 兜底：接口层已把失败收敛成 { ok:false }，这里防的是意外抛错变成 unhandledrejection
+      if (seq === openSeq) toast(`⚠️ 提交失败：${(e && e.message) || String(e)}`, 3000, 'error');
+    } finally {
+      judgeSubmitting = false;
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btnLabel || '↑ 提交评委信息';
+      }
     }
-    if (r.local) {
-      toast('接口未启用，评委信息仅保留在表单中', 2500, 'warn');
-      return;
-    }
-    toast('✅ 评委信息已提交', 2200, 'success');
   }
 
   function renderJudgeTable() {
     const rows = dom.judgeBody.querySelectorAll('tr.judge-row');
     rows.forEach((tr, i) => { tr.querySelector('.judge-idx').textContent = i + 1; });
     syncJudgeAllState();
+    // 空态提示只在真的没有评委行时显示：原来 JS 里零引用、但 CSS 写好了 [hidden] 规则，
+    // 结果表格里已经有评委了它还在喊「请点击＋新增」，用户会怀疑刚才的操作没生效。
+    const hint = document.getElementById('judgeEmptyHint');
+    if (hint) hint.hidden = rows.length > 0;
   }
 
   function removeSelectedJudges() {
