@@ -247,11 +247,42 @@
   }
 
   /** 分页控制（基于筛选后的全量，纯客户端切分） */
+  /**
+   * 分页条：页码按钮 + 首页/末页 + 跳页（与订阅页同款）。
+   * 首页原来只有「上一页 / 下一页 / 第 X / Y 页」，翻到第 20 页要点 19 次（清单 A5）。
+   *
+   * 这里只负责**渲染**：点击交给 index.js 用事件委托接管 ——
+   * 页码条每页都整体重建，逐个绑事件会重复绑定，也会把导航逻辑耦合进视图层。
+   */
   function updatePagination(state) {
     const tp = totalPages(state.filteredRows.length, state.pageSize);
     $('#pageInfo').textContent = `第 ${state.pageNum} / ${tp} 页`;
-    $('#btnPrev').disabled = state.pageNum <= 1;
-    $('#btnNext').disabled = state.pageNum >= tp;
+    const atFirst = state.pageNum <= 1;
+    const atLast = state.pageNum >= tp;
+    const setDisabled = (sel, v) => { const el = $(sel); if (el) el.disabled = v; };
+    setDisabled('#btnPrev', atFirst);
+    setDisabled('#btnNext', atLast);
+    setDisabled('#btnFirst', atFirst);
+    setDisabled('#btnLast', atLast);
+
+    // 页码条整体重建 —— 被点的那颗按钮会随 DOM 一起销毁。若焦点原本落在页码条里，
+    // 重建后要主动还给新的当前页按钮，否则会掉回 <body>，键盘用户得从头 Tab（清单 A9）。
+    const nums = $('#pageNumbers');
+    if (nums && window.TableUtils && window.TableUtils.buildPageNumbers) {
+      const active = (typeof document !== 'undefined' && document) ? document.activeElement : null;
+      const hadFocus = !!(active && nums.contains && nums.contains(active));
+      nums.innerHTML = window.TableUtils.buildPageNumbers(tp, state.pageNum);
+      if (hadFocus) {
+        const cur = nums.querySelector ? nums.querySelector('button.is-current') : null;
+        if (cur && cur.focus) cur.focus();
+      }
+    }
+
+    const jump = $('#pageJump');
+    if (jump) {
+      jump.max = String(tp);
+      jump.value = String(state.pageNum);
+    }
   }
 
   /** 失败分页重试条显隐 */

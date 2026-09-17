@@ -311,6 +311,16 @@ a.outlined, a.filled, a.tonal-btn, a.text-btn {
   color: var(--on-variant);
 }
 
+/* 必填项星号：给 <label class="required"> 前面挂一个 *（走令牌，主题色换了会跟着变）。
+   原来只写在 index.html 的页面样式里，订阅页的查询表单就用不上 —— 那边
+   「调用方系统/分行」「提供方系统」是二选一必填，却一个标记都没有（清单 C5）。 */
+.required::before {
+  content: '*';
+  color: var(--on-red-c);
+  margin-right: 4px;
+  font-weight: bold;
+}
+
 .form-group input,
 .form-group select {
   height: var(--control-h-md);

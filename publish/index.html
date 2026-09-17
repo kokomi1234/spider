@@ -263,13 +263,7 @@
       color: var(--muted);
     }
 
-    /* 必填项星号（走令牌：此前写死 #e53e3e，主题色换了它不跟着变） */
-    .required::before {
-      content: '*';
-      color: var(--on-red-c);
-      margin-right: 4px;
-      font-weight: bold;
-    }
+    /* 必填项星号 .required 已移到 theme.css（订阅页查询表单也要用，三页共用一份） */
 
     /* 详情弹窗：宽度改由 theme.css 的 .dialog--md 统一提供，
        页面里不再用 ID 选择器覆盖（ID 权重高于 class，会让全局改不动） */
@@ -527,12 +521,20 @@
         </table>
       </div>
 
-      <!-- 分页：语义上是「导航」，用 <nav> + aria-label 让读屏能念出这是一组分页控件（清单 A9） -->
+      <!-- 分页：语义上是「导航」，用 <nav> + aria-label 让读屏能念出这是一组分页控件（清单 A9）。
+           首页原来只有「上一页 / 下一页 / 第 X / Y 页」—— 翻到第 20 页要点 19 次；
+           现补齐页码按钮 + 首页/末页 + 跳页，与订阅页 / 任务单页一致（清单 A5）。
+           样式（.page-numbers / .page-jump 等）全在 theme.css，三页共用。 -->
       <nav class="pagination" id="pagination" aria-label="分页" style="display:none;" data-page-node-id="BkUdATmB5ZgBdFTpU5AvhR">
+        <button class="outlined btn-xs" id="btnFirst" title="首页" data-page-node-id="a2FstIdx2026PageHome">« 首页</button>
         <button class="outlined btn-xs" id="btnPrev" data-page-node-id="4VrosZipJvq5czA43p1NyU">‹ 上一页</button>
+        <!-- 页码按钮：由 PublishView.updatePagination 整体重建，点击走 index.js 的事件委托 -->
+        <ul class="page-numbers" id="pageNumbers" data-page-node-id="a2PageNumbersUl"></ul>
+        <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
+        <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="a2LastIdx2026PageEnd">末页 »</button>
         <!-- role=status + aria-live：与同页 #resultCount 同口径，翻页后读屏能念出新的页码 -->
         <span class="page-info" id="pageInfo" role="status" aria-live="polite" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
-        <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
+        <span class="page-jump">跳至 <input type="number" id="pageJump" min="1" value="1" aria-label="跳转到页码" data-page-node-id="a2PageJumpInput"> 页</span>
       </nav>
     </div>
   </div>

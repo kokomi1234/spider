@@ -38,6 +38,10 @@
   const resultBody     = $('#resultBody');
   const btnPrev        = $('#btnPrev');
   const btnNext        = $('#btnNext');
+  const btnFirst       = $('#btnFirst');
+  const btnLast        = $('#btnLast');
+  const pageNumbers    = $('#pageNumbers');
+  const pageJump       = $('#pageJump');
   const btnExportCsv   = $('#btnExportCsv');
   const btnRetryFailed = $('#btnRetryFailed');
 
@@ -431,19 +435,47 @@
    * 滚到中下部再点「下一页」时新页会停在中下部，前几行看不到。
    */
   function gotoPage(n) {
-    state.pageNum = n;
+    // 夹到有效范围：页码按钮与跳页框都按「当时」的总页数渲染，但筛选 / 订阅状态
+    // 变化后总页数可能变小，这里兜一下，避免停在「第 7 / 1 页」这种越界状态。
+    const tp = window.TableUtils.totalPages(state.filteredRows.length, state.pageSize);
+    state.pageNum = Math.min(Math.max(1, Math.floor(n) || 1), tp);
     PublishView.renderCurrentPage(state, checkSubscribeStatus);   // 纯客户端切页，保留当前订阅筛选
     PublishView.updatePagination(state);
     if (window.TableUtils && window.TableUtils.resetTableScroll) window.TableUtils.resetTableScroll();
   }
+
+  const totalPagesNow = () => window.TableUtils.totalPages(state.filteredRows.length, state.pageSize);
+
+  btnFirst.addEventListener('click', () => {
+    if (state.pageNum > 1) gotoPage(1);
+  });
 
   btnPrev.addEventListener('click', () => {
     if (state.pageNum > 1) gotoPage(state.pageNum - 1);
   });
 
   btnNext.addEventListener('click', () => {
-    const totalPages = window.TableUtils.totalPages(state.filteredRows.length, state.pageSize);
-    if (state.pageNum < totalPages) gotoPage(state.pageNum + 1);
+    const tp = totalPagesNow();
+    if (state.pageNum < tp) gotoPage(state.pageNum + 1);
+  });
+
+  btnLast.addEventListener('click', () => {
+    const tp = totalPagesNow();
+    if (state.pageNum < tp) gotoPage(tp);
+  });
+
+  // 页码按钮每页都整体重建，逐个绑事件会重复绑定 → 用事件委托（与结果表内按钮同一套做法）
+  pageNumbers.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-page]');
+    if (b) gotoPage(Number(b.dataset.page));
+  });
+
+  // 跳页：与任务单页同口径 —— 用 change（失焦/回车都会触发），值非法就退回当前页
+  pageJump.addEventListener('change', (e) => {
+    const tp = totalPagesNow();
+    const n = Number(e.target.value);
+    if (n >= 1 && n <= tp) gotoPage(n);
+    else e.target.value = String(state.pageNum);
   });
 
   btnExportCsv.addEventListener('click', () => PublishQuery.exportCsv());

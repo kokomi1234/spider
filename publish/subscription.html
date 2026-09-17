@@ -11,6 +11,14 @@
     /* 结果条数说明（与首页 #resultCount 同款） */
     .result-count { font-size: var(--fs-xs); color: var(--muted); margin-right: var(--sp1); }
 
+    /* 必填说明：说明文字跟着按钮行左对齐（.filter-actions 是右对齐，靠 margin-right:auto 顶到左边）。
+       必填星号本身来自 theme.css 的 .required::before。 */
+    .filter-required-note {
+      margin-right: auto;
+      font-size: var(--fs-xs);
+      color: var(--muted);
+    }
+
     /* 结果表格：22 个数据列 + 操作列，列宽集中在 colgroup（列宽之和 = min-width = 3046px）。
        table-layout: fixed + min-width 让横向滚动条出现时表头列宽不塌。
        ⚠️ colgroup 的 <col> 个数必须与 thead 的 <th> 个数一致：js/ui/table-resize.js
@@ -342,7 +350,7 @@
         <!-- 常用条件：调用方系统 + 两个批次。其余全部收进「更多筛选项」。 -->
         <div class="form-grid">
           <div class="form-group">
-            <label for="f_callerCompNum">调用方系统/分行</label>
+            <label for="f_callerCompNum" class="required">调用方系统/分行</label>
             <select id="f_callerCompNum" placeholder="请输入或选择调用方系统/分行"></select>
           </div>
           <div class="form-group">
@@ -365,7 +373,7 @@
         </div>
         <div class="form-grid" id="advancedFields" style="display:none;">
           <div class="form-group">
-            <label for="f_providerCompNum">提供方系统</label>
+            <label for="f_providerCompNum" class="required">提供方系统</label>
             <select id="f_providerCompNum" placeholder="请输入或选择提供方系统"></select>
           </div>
           <div class="form-group">
@@ -418,6 +426,8 @@
 
         <!-- 按钮区 -->
         <div class="filter-actions">
+          <!-- 必填说明：把「二选一」这条规则摆到按钮旁边，用户不用点了「查询」才知道（清单 C5） -->
+          <span class="filter-required-note">* 调用方系统 / 提供方系统 <b>二选一</b>（至少选一个才能查询）</span>
           <button class="filled btn-sm" id="btnQuery">查 询</button>
           <button class="outlined btn-sm" id="btnReset">重 置</button>
         </div>

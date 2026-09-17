@@ -1929,6 +1929,133 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 必填标记（C5）：.required 的星号规则已从 index.html 的页面样式提到 theme.css 共享。
+  // 断言首页的星号没被改坏（回归），且订阅页查询表单的「二选一必填」有标记 + 说明。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    const star = (sel) => page.evaluate((s) => {
+      const lb = document.querySelector(s);
+      if (!lb) return { missing: true };
+      const cs = getComputedStyle(lb, '::before');
+      return { cls: lb.className, content: cs.content, color: cs.color };
+    }, sel);
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(700);
+      const idx = await star('label.required');
+
+      await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(700);
+      const caller = await star('label[for="f_callerCompNum"]');
+      const provider = await star('label[for="f_providerCompNum"]');
+      const note = await page.evaluate(() => {
+        const n = document.querySelector('.filter-required-note');
+        return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
+      });
+      process.stdout.write(`  必填标记(C5): 首页=${JSON.stringify(idx)} 调用方=${JSON.stringify(caller)}`
+        + ` 提供方=${JSON.stringify(provider)} 说明=${JSON.stringify(note)}\n`);
+      const hasStar = (x) => !!x && !x.missing && String(x.content).indexOf('*') > -1;
+      if (!hasStar(idx)) {
+        fails.push(`首页必填星号丢了（.required 规则搬到 theme.css 后失效？）实际 ${JSON.stringify(idx)}`);
+      }
+      if (!hasStar(caller)) fails.push(`订阅页「调用方系统/分行」应带必填星号，实际 ${JSON.stringify(caller)}`);
+      if (!hasStar(provider)) fails.push(`订阅页「提供方系统」应带必填星号，实际 ${JSON.stringify(provider)}`);
+      if (!note || note.indexOf('二选一') < 0) {
+        fails.push(`订阅页应给出「二选一」说明，实际 ${JSON.stringify(note)}`);
+      }
+    } catch (e) {
+      fails.push(`必填标记段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 首页分页条（A5）：原来只有「上一页 / 下一页 / 第 X / Y 页」，
+  // 翻到第 20 页要点 19 次。用假 state 直接驱动 PublishView.updatePagination
+  // 验证渲染（页码/首末页/跳页/禁用态），再点一个页码验证事件委托真的接管了点击。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(800);
+      const r = await page.evaluate(() => {
+        const out = {};
+        const bar = document.getElementById('pagination');
+        if (!bar) return { missing: true };
+        bar.style.display = '';   // 该页分页条默认 display:none（还没查询），先显示才量得到
+        const V = window.PublishView;
+        const nums = document.getElementById('pageNumbers');
+        const cur = () => nums.querySelector('button.is-current');
+
+        // ① 第 1 页：首页 / 上一页 都应禁用
+        V.updatePagination({ filteredRows: new Array(95), pageSize: 10, pageNum: 1 });
+        out.firstDisabledAt1 = document.getElementById('btnFirst').disabled;
+        out.prevDisabledAt1 = document.getElementById('btnPrev').disabled;
+
+        // ② 第 5 页 / 共 10 页
+        V.updatePagination({ filteredRows: new Array(95), pageSize: 10, pageNum: 5 });
+        out.btnCount = nums.querySelectorAll('button[data-page]').length;
+        out.curText = cur() ? cur().textContent : null;
+        out.curAria = cur() ? cur().getAttribute('aria-current') : null;
+        out.firstDisabledAt5 = document.getElementById('btnFirst').disabled;
+        out.lastDisabledAt5 = document.getElementById('btnLast').disabled;
+        out.jumpMax = document.getElementById('pageJump').max;
+        out.jumpValue = document.getElementById('pageJump').value;
+        out.pageInfoAt5 = document.getElementById('pageInfo').textContent;
+        out.numbersBefore = out.btnCount;
+
+        // ③ 点第 7 页（10 页 / 当前第 5 页时，页码条是 1,3,4,5,6,7,10，7 一定在）：
+        //    事件委托应接管 → gotoPage 用**真实** state 重渲染，
+        //    于是页码条从「10 页的 7 颗」变回真实数据（本页无数据 → 1 页）。
+        const target = nums.querySelector('button[data-page="7"]');
+        out.hasTargetPage = !!target;
+        if (target) target.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        out.numbersAfterClick = nums.querySelectorAll('button[data-page]').length;
+        out.pageInfoAfterClick = document.getElementById('pageInfo').textContent;
+        return out;
+      });
+      process.stdout.write(`  首页分页条(A5): ${JSON.stringify(r)}\n`);
+      if (r.missing) {
+        fails.push('首页没找到 #pagination');
+      } else {
+        if (r.firstDisabledAt1 !== true || r.prevDisabledAt1 !== true) {
+          fails.push(`第 1 页时首页/上一页应禁用（first=${r.firstDisabledAt1} prev=${r.prevDisabledAt1}）`);
+        }
+        if (r.btnCount !== 7) fails.push(`第 5/10 页应渲染 7 颗页码按钮（1,3,4,5,6,7,10），实际 ${r.btnCount}`);
+        if (r.curText !== '5') fails.push(`当前页按钮应为 5，实际 ${r.curText}`);
+        if (r.curAria !== 'page') fails.push(`当前页应带 aria-current="page"，实际 ${r.curAria}`);
+        if (r.firstDisabledAt5 !== false || r.lastDisabledAt5 !== false) {
+          fails.push(`第 5 页时首页/末页都该可点（first=${r.firstDisabledAt5} last=${r.lastDisabledAt5}）`);
+        }
+        if (r.jumpMax !== '10' || r.jumpValue !== '5') {
+          fails.push(`跳页框应为 max=10 / value=5，实际 max=${r.jumpMax} value=${r.jumpValue}`);
+        }
+        if (r.hasTargetPage !== true) {
+          fails.push('第 5/10 页的页码条里应存在第 7 页按钮（1,3,4,5,6,7,10）');
+        }
+        // 委托生效的证据：点击后重渲染成真实数据的分页（1 页），且页码数变了
+        if (r.numbersAfterClick === r.numbersBefore) {
+          fails.push(`点页码应触发重新分页（点击前后都是 ${r.numbersBefore} 颗 → 事件委托没接上）`);
+        }
+        if (!/第 1 \/ 1 页/.test(r.pageInfoAfterClick)) {
+          fails.push(`点页码后应按真实数据重渲染分页文案，实际 ${r.pageInfoAfterClick}`);
+        }
+      }
+    } catch (e) {
+      fails.push(`首页分页条段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 第三批优化：排序入口是真按钮 + 复制单元格键盘漫游
   // ═══════════════════════════════════════════════════════════════
   {
