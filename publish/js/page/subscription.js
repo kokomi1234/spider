@@ -139,6 +139,28 @@
     return inst ? String(inst.getValue() || '').trim() : '';
   }
 
+  /**
+   * 批次类筛选的取值器：优先取已正式选中的值（getValue），
+   * 其次回退到「手输但未从下拉正式选中」的自由文本（getFreeText）。
+   *
+   * 背景（即线上「选了提供方批次却查出全部」的根因）：
+   * searchable-select 在用户手输文本后直接点「查询」按钮时，失焦会把文本存进
+   * freeText（见控件 blur 处理），而 selValue 只读 getValue，导致手输批次被
+   * 静默丢弃、putBatch/prodBatch 为空、误走全量查询。这里回退读取，
+   * 让手输批次也能真正参与过滤。正常「从下拉选中」流程下 selectedValue 非空、
+   * freeText 为空，行为与原来完全一致，无回归。
+   */
+  function selBatchValue(key) {
+    const inst = selects[key];
+    if (!inst) return '';
+    const committed = String(inst.getValue() || '').trim();
+    if (committed) return committed;
+    const free = (typeof inst.getFreeText === 'function')
+      ? String(inst.getFreeText() || '').trim()
+      : '';
+    return free;
+  }
+
   function textValue(id) {
     const el = $(id);
     return el ? String(el.value || '').trim() : '';
@@ -159,6 +181,7 @@
   const buildCond = SubscriptionModel.buildCond;
   const condGetters = {
     selValue,
+    selBatchValue,
     textValue,
     effectiveCaller,
     getMulti: (key) => (multiSelects[key] ? multiSelects[key].getValues() : []),

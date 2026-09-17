@@ -196,6 +196,26 @@ test('buildCond：缺 getMulti / 姓名为中文 / 全空值器的兜底', () =>
   assert.strictEqual(c2.subscriberId, '');
 });
 
+test('buildCond：批次类筛选回退手输未选中的 freeText', () => {
+  const M = fresh().SubscriptionModel;
+  // selValue 返回空（用户没从下拉正式选中），但 selBatchValue 回退到手输文本。
+  const g = {
+    selValue: () => '',
+    selBatchValue: (key) => (key === 'f_providerBatch' ? '2608批次' : ''),
+    textValue: () => '',
+    effectiveCaller: () => 'E00301',
+    getMulti: () => [],
+  };
+  const c = M.buildCond(g);
+  assert.strictEqual(c.putBatch, '2608批次', '提供方批次：selValue 空时回退 freeText');
+  assert.strictEqual(c.prodBatch, '', '调用方批次：selValue 空且无手输文本时仍为空');
+
+  // 旧调用点没传 selBatchValue 时，必须退化为 selValue，不得抛错。
+  const legacy = { selValue: () => '', textValue: () => '', effectiveCaller: () => '', getMulti: () => [] };
+  const c3 = M.buildCond(legacy);
+  assert.strictEqual(c3.putBatch, '', '缺 selBatchValue 时退化为 selValue（不抛错）');
+});
+
 test('isEhrSplit：纯数字才算 EHR 号', () => {
   const M = fresh().SubscriptionModel;
   assert.strictEqual(M.isEhrSplit('12345'), true);

@@ -130,7 +130,9 @@
 
     return {
       compNum:                  g.selValue('f_providerCompNum'),
-      putBatch:                 g.selValue('f_providerBatch'),
+      // 批次类筛选：优先取正式选中值，否则回退手输未选中的自由文本（见 subscription.js 的 selBatchValue）。
+      // 用 g.selBatchValue ? ... : g.selValue(...) 兜底，旧调用点没传 selBatchValue 也不会报错。
+      putBatch:                 (g.selBatchValue ? g.selBatchValue('f_providerBatch') : g.selValue('f_providerBatch')),
       isSendOutsideSystem:      g.selValue('f_isSendOutside'),
       sysServeNoList:           g.getMulti ? g.getMulti('sysServeNo') : [],
       serverCodingList:         g.getMulti ? g.getMulti('serverCoding') : [],
@@ -138,7 +140,7 @@
       prodSysServeNoList:       g.getMulti ? g.getMulti('prodSysServeNo') : [],
       useNum:                   g.effectiveCaller(),
       callerComponent:          g.effectiveCaller(),
-      prodBatch:                g.selValue('f_callerBatch'),
+      prodBatch:                (g.selBatchValue ? g.selBatchValue('f_callerBatch') : g.selValue('f_callerBatch')),
       subscriberId:             isEhr ? subscriber : '',
       subscriberName:           isEhr ? '' : subscriber,
       status:                   g.selValue('f_status'),
