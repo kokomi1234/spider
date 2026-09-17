@@ -1145,12 +1145,25 @@ const PAGES = [
   //   (a) 空表单           → 「请选择调用方系统」    + 焦点 = 该下拉的输入框
   //   (b) 填了系统、没选文档 → 「请选择关联文档」     + 焦点 = 该行的「选 择」按钮
   //   (c) 补上文档、TPS 写 'abc' → 「TPS 请填大于 0 的数字」+ 焦点 = TPS 输入框
+  //   (d) 修正 TPS          → 「请先填写评委信息」    + 焦点 = 「⤓ 拉取评委」
+  //   (e) 填评委、清任务编号 → 「请填写任务编号」      + 焦点 = 任务编号输入框
+  //   (f) 填回任务编号、确认  → setSubcription 与 subscriptionReview **一并发出**，
+  //                           评委报文带 judgeInfoList，成功后弹窗自动关闭
   // 注：(c) 不填服务编号是故意的 —— 行数据能派生出 E00406TO1197 时应放行，
   //     这条同时守住「派生出得来就别拦」的分支。
   {
     const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
     const fails = [];
     try {
+      // (f) 两个写接口在浏览器层拦下并回成功响应：验证「一并提交」的发包，不打真实后端
+      await page.route('**/setSubcription*', (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ code: 200, msg: '操作成功', data: null }),
+      }));
+      await page.route('**/subscriptionReview*', (route) => route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ code: 200, msg: '操作成功', data: null }),
+      }));
       await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(1000);
       const vc = await page.evaluate(async () => {
@@ -1174,17 +1187,20 @@ const PAGES = [
         const realFetch = window.fetch;
         window.fetch = (url, opts) => {
           const u = String(url);
-          if (/setSubcription|subscriptionReview/i.test(u)) writes.push(u);
+          if (/setSubcription|subscriptionReview/i.test(u)) {
+            writes.push({ url: u, body: opts && typeof opts.body === 'string' ? opts.body : null });
+          }
           return realFetch.apply(window, [url, opts]);
         };
 
         const tick = () => new Promise((r) => setTimeout(r, 120));
         try {
-          // 行数据：sysServeNo 带 TO 尾号 → 服务编号可派生（(c) 要用到这个分支）
-          await window.SubscribeDialog.open({
-            serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197',
-            provideComponentName: '冒烟探针组件', taskNo: 'SMOKE-1',
-          });
+        // 行数据：sysServeNo 带 TO 尾号 → 服务编号可派生（(c) 要用到这个分支）；
+        // publishId 必须有 —— 评委随订阅一并提交时，subscriptionReview 报文要带它
+        await window.SubscribeDialog.open({
+          serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197',
+          provideComponentName: '冒烟探针组件', taskNo: 'SMOKE-1', publishId: 'P-SMOKE-VC',
+        });
           await tick();
           out.opened = document.getElementById('subscribeOverlay').classList.contains('show');
 
@@ -1221,6 +1237,49 @@ const PAGES = [
           out.tpsToast = t3 && t3.msg;
           out.tpsFocusId = document.activeElement ? document.activeElement.id : '';
           out.writes = writes.length;
+
+          // ── (d) 修正 TPS 后点确认：应被「评委信息必填」拦下。
+          //     弹窗预置的两行评委只有角色、没填工号/姓名 → 收集结果为空，
+          //     本行也没成功拉取过默认评委 → 不满足豁免条件。
+          document.getElementById('sub_tpsPeak').value = '5';
+          clearToasts();
+          confirm.click();
+          await tick();
+          const t4 = lastToast();
+          out.judgesToast = t4 && t4.msg;
+          out.judgesFocusId = document.activeElement ? document.activeElement.id : '';
+          out.writesAfterJudges = writes.length;
+
+          // ── (e) 给评委行填上姓名（越过评委关），清空任务编号 → 任务编号必填拦下
+          const jname = document.querySelector('#judgeTableBody tr.judge-row .judge-name');
+          if (jname) {
+            jname.value = '冒烟评委';
+            jname.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          document.getElementById('sub_taskNo').value = '';
+          clearToasts();
+          confirm.click();
+          await tick();
+          const t5 = lastToast();
+          out.taskNoToast = t5 && t5.msg;
+          out.taskNoFocusId = document.activeElement ? document.activeElement.id : '';
+
+          // ── (f) 填回任务编号并确认：setSubcription 与 subscriptionReview 应一并发出，
+          //     评委报文带 judgeInfoList；全部成功后弹窗自动关闭
+          document.getElementById('sub_taskNo').value = 'SMOKE-T1';
+          clearToasts();
+          confirm.click();
+          await tick(600);
+          out.writesAll = writes.map((w) => {
+            let body = null;
+            try { body = w.body ? JSON.parse(w.body) : null; } catch (_) { /* ignore */ }
+            return {
+              ep: (w.url.match(/(setSubcription|subscriptionReview)/i) || [])[1] || w.url,
+              body,
+            };
+          });
+          out.dialogClosedAfterSubmit
+            = !document.getElementById('subscribeOverlay').classList.contains('show');
         } finally {
           window.AppServices.toast = realToast;
           window.fetch = realFetch;
@@ -1251,6 +1310,47 @@ const PAGES = [
           fails.push(`TPS 的焦点应落到 sub_tpsPeak，实际 ${vc.tpsFocusId}`);
         }
         if (vc.writes !== 0) fails.push(`被拦下的提交仍发出了 ${vc.writes} 个写请求`);
+
+        // (d) 评委必填：没填评委且未拉取默认评委 → 拦，且一个写请求都不发
+        if (!/评委信息/.test(String(vc.judgesToast))) {
+          fails.push(`评委为空应被拦下（提示要提到评委信息），实际：${vc.judgesToast}`);
+        }
+        if (vc.judgesFocusId !== 'btnFetchJudges') {
+          fails.push(`评委缺失时焦点应落到「⤓ 拉取评委」，实际 ${vc.judgesFocusId}`);
+        }
+        if (vc.writesAfterJudges !== 0) {
+          fails.push(`评委缺失被拦时仍发出了 ${vc.writesAfterJudges} 个写请求`);
+        }
+        // (e) 任务编号必填
+        if (!/请填写任务编号/.test(String(vc.taskNoToast))) {
+          fails.push(`任务编号为空应被拦下，实际提示：${vc.taskNoToast}`);
+        }
+        if (vc.taskNoFocusId !== 'sub_taskNo') {
+          fails.push(`任务编号的焦点应落到 sub_taskNo，实际 ${vc.taskNoFocusId}`);
+        }
+        // (f) 订阅与评委一并提交
+        const subWrite = (vc.writesAll || []).find((w) => w.ep === 'setSubcription');
+        const reviewWrite = (vc.writesAll || []).find((w) => w.ep === 'subscriptionReview');
+        if (!subWrite || !reviewWrite) {
+          fails.push(`确认订阅应一并发出订阅与评委两个写请求，实际 ${JSON.stringify((vc.writesAll || []).map((w) => w.ep))}`);
+        }
+        if (subWrite && subWrite.body && subWrite.body.publishSubcription) {
+          if (subWrite.body.publishSubcription.serverCoding !== 'E00301TO1197') {
+            fails.push(`订阅报文里 serverCoding 应为行上的编码，实际 ${subWrite.body.publishSubcription.serverCoding}`);
+          }
+        }
+        if (reviewWrite && reviewWrite.body) {
+          const jl = reviewWrite.body.judgeInfoList || [];
+          if (!jl.length || jl[0].judgeName !== '冒烟评委') {
+            fails.push(`subscriptionReview 的 judgeInfoList 应带上填写的评委，实际 ${JSON.stringify(reviewWrite.body)}`);
+          }
+          if (!reviewWrite.body.publishId) {
+            fails.push('subscriptionReview 报文缺 publishId');
+          }
+        }
+        if (vc.dialogClosedAfterSubmit !== true) {
+          fails.push('订阅 + 评委都成功后弹窗应自动关闭');
+        }
       }
     } catch (e) {
       fails.push(`订阅校验段异常：${e.message}`);
@@ -1484,6 +1584,92 @@ const PAGES = [
       }
     } catch (e) {
       fails.push(`对齐与命中区段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 评委随订阅一并提交：部分失败的补交路径。
+  //   订阅成功、评委提交失败 → 弹窗**不关**（关了就没有补交入口，已订阅的行
+  //   不会再出现「订阅」按钮）；再点「确 认」只补发 subscriptionReview，
+  //   绝不重复发 setSubcription —— 否则要么丢评委，要么同一条订阅写两遍。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    let subCalls = 0;
+    let reviewCalls = 0;
+    let reviewShouldFail = true;
+    try {
+      await page.route('**/setSubcription*', (route) => {
+        subCalls += 1;
+        return route.fulfill({
+          status: 200, contentType: 'application/json',
+          body: JSON.stringify({ code: 200, msg: '操作成功' }),
+        });
+      });
+      await page.route('**/subscriptionReview*', (route) => {
+        reviewCalls += 1;
+        const body = reviewShouldFail
+          ? JSON.stringify({ code: 500, msg: '评审服务暂时不可用' })
+          : JSON.stringify({ code: 200, msg: '操作成功' });
+        return route.fulfill({ status: 200, contentType: 'application/json', body });
+      });
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(1000);
+
+      // 第 1 次确认：订阅成功、评委提交失败 → 弹窗保持打开 + 明确提示
+      const first = await page.evaluate(async () => {
+        const tick = (ms) => new Promise((r2) => setTimeout(r2, ms));
+        const toasts = [];
+        const realToast = window.AppServices.toast;
+        window.AppServices.toast = (msg) => { toasts.push(String(msg)); };
+        try {
+          await window.SubscribeDialog.open({
+            serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197',
+            provideComponentName: '补交评委探针', taskNo: 'SMOKE-R', publishId: 'P-SMOKE-R',
+          });
+          await tick(200);
+          const csBox = document.getElementById('sub_callerSystem')
+            .parentElement.querySelector('.searchable-select-input');
+          csBox.value = 'E00406';
+          csBox.dispatchEvent(new Event('input', { bubbles: true }));
+          document.getElementById('sub_relDocIds').value = 'doc-smoke-r';
+          document.getElementById('sub_tpsPeak').value = '5';
+          const jname = document.querySelector('#judgeTableBody tr.judge-row .judge-name');
+          jname.value = '补交评委';
+          document.getElementById('btnSubConfirm').click();
+          await tick(500);
+          return {
+            stillOpen: document.getElementById('subscribeOverlay').classList.contains('show'),
+            partialToast: toasts.find((t) => /评委信息提交失败/.test(t)) || null,
+          };
+        } finally {
+          window.AppServices.toast = realToast;
+        }
+      });
+      process.stdout.write(`  部分失败(评委补交): 第1次 ${JSON.stringify(first)}\n`);
+      if (first.stillOpen !== true) fails.push('订阅成功但评委失败时弹窗应保持打开（否则没有补交入口）');
+      if (!first.partialToast) fails.push('评委提交失败应给出明确提示（含「评委信息提交失败」）');
+
+      // 评审接口恢复 → 第 2 次确认：只补交评委，setSubcription 不得再发
+      reviewShouldFail = false;
+      const retry = await page.evaluate(async () => {
+        const tick = (ms) => new Promise((r2) => setTimeout(r2, ms));
+        document.getElementById('btnSubConfirm').click();
+        await tick(500);
+        return {
+          closedAfterRetry: !document.getElementById('subscribeOverlay').classList.contains('show'),
+        };
+      });
+      process.stdout.write(`  部分失败(评委补交): 第2次 ${JSON.stringify(retry)} sub=${subCalls} review=${reviewCalls}\n`);
+      if (subCalls !== 1) fails.push(`补交评委时 setSubcription 被重复发送了 ${subCalls - 1} 次（应只发 1 次）`);
+      if (reviewCalls !== 2) fails.push(`subscriptionReview 应发 2 次（首次失败 + 补交成功），实际 ${reviewCalls}`);
+      if (retry.closedAfterRetry !== true) fails.push('补交评委成功后弹窗应自动关闭');
+    } catch (e) {
+      fails.push(`评委补交段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;

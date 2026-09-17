@@ -48,6 +48,12 @@
   let judgeUserCache = null;   // 已搜用户缓存（实现见 subscribe-model.js，状态归本模块）
   let formBaseline = '';       // 打开时（resetForm 之后）的表单签名，用于脏检查（清单 B5）
   let closing = false;         // 脏检查确认框在途：防连点弹出多个确认框
+  // ── 评委随订阅一并提交（订阅弹窗修复，2026-09-17）──
+  let judgeFetchedOk = false;  // 本行是否已**成功拉取到默认评委数据**：评委会随订阅一并提交，
+                               // 用户因此可免于手工维护（评委必填校验的唯一豁免条件）
+  let subscribedCoding = null; // 订阅已在后端成立、但评委信息还没送出去的编码。
+                               // 此时再点「确认」只补交评委、不再重复订阅 —— 否则要么丢评委，
+                               // 要么把同一条订阅写两遍。open 时复位。
 
   // ── 小工具 ───────────────────────────────────────────
   function toast(msg, duration = 2500, type = 'info') {
@@ -319,6 +325,8 @@
     currentRow = row;
     openSeq += 1;               // 新会话：之前那次提交的迟到响应一律作废
     submitting = false;
+    judgeFetchedOk = false;     // 换了行，默认评委的拉取状态从头算
+    subscribedCoding = null;
     returnFocus = document.activeElement;
     resetForm();
 
@@ -485,17 +493,32 @@
 
   async function confirmSubscribe() {
     if (!currentRow) return;
-    // 校验口径在 subscribe-model.js，这里只负责按结果 toast / 聚焦
+    // 评委信息随订阅一并提交（本次修复）：先收集一次，校验与提交共用这一份
+    const judges = collectJudges().filter((j) => j.empNo || j.name);
+    // 校验口径在 subscribe-model.js，这里只负责按结果 toast / 聚焦。
+    //   · judgeState：评委必填的唯一豁免是「本行已成功拉取默认评委」；
+    //   · subscribedCoding：订阅已成立、上次评委没送出去 —— 这次只补交评委，
+    //     不能再拿「已在订阅列表」把补交的路堵死。
     const form = collectForm();
-    const v = M.validateSubscribe(currentRow, form, (code) => (
-      !!(window.SubscribeManager && window.SubscribeManager.isSubscribed(code))
-    ));
+    const v = M.validateSubscribe(currentRow, form, (code) => {
+      if (subscribedCoding === code) return false;
+      return !!(window.SubscribeManager && window.SubscribeManager.isSubscribed(code));
+    }, { judges, defaultsFetched: judgeFetchedOk });
     if (!v.ok) {
       if (v.focus) focusField(v.focus);
       if (v.msg) toast(v.msg, v.duration, 'warn');
       return;
     }
     const serverCoding = v.serverCoding;
+    // 评委要随订阅一并提交，而 subscriptionReview 的报文必须带 publishId（抓包口径）。
+    // 缺 publishId 的行连评委都送不出去 —— 提前拦，别让用户订阅成功了评委却永远补不上。
+    if (judges.length) {
+      const jv = M.validateJudgeSubmit(currentRow, judges);
+      if (!jv.ok) {
+        if (jv.msg) toast(jv.msg, jv.duration, 'warn');
+        return;
+      }
+    }
 
     // 提交锁：写请求期间禁掉确认按钮并挡住重入 —— 否则连点会发两次订阅
     if (submitting) return;
@@ -506,38 +529,92 @@
     const api = window.ServiceApi;
     let res = { ok: true, local: true };
     try {
-      if (api && typeof api.subscribeWithForm === 'function') {
+      if (subscribedCoding && subscribedCoding === serverCoding) {
+        // 补交评委的重试：订阅已经在后端成立，绝不能再发一次 setSubcription
+        res = { ok: true, local: true };
+      } else if (api && typeof api.subscribeWithForm === 'function') {
         res = await api.subscribeWithForm(currentRow, form);  // 传整个 row
       } else if (api && typeof api.subscribe === 'function') {
         res = await api.subscribe(serverCoding);
       }
     } catch (e) {
       res = { ok: false, error: (e && e.message) || String(e) };
-    } finally {
-      submitting = false;
-      if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
     }
 
     // 弹窗在等响应期间被关掉 / 换了一行 → 只报结果，不回写界面，避免幽灵行与错位的 toast
     if (seq !== openSeq) {
       if (res && res.ok) toast(`✅ 已订阅: ${serverCoding}`, 2200, 'success');
       else toast(`⚠️ 订阅失败：${(res && res.error) || '未知错误'}`, 3000, 'error');
+      submitting = false;
+      if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
       return;
     }
 
     if (!res || !res.ok) {
+      submitting = false;
+      if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
       toast(`⚠️ 订阅失败：${(res && res.error) || '未知错误'}`, 3000, 'error');
       return;
     }
 
+    // ── 评委信息随订阅一并提交 ──
+    // 抓包口径：评委走独立的 subscriptionReview 端点（body: { publishId,
+    // prodSysServeNoList, judgeInfoList }），setSubcription 的报文里**没有**评委字段 ——
+    // 所以「一并提交」的正确实现是订阅成功后立刻补发评委，而不是往订阅报文里塞字段
+    // （那才是没有抓包依据的猜测）。评委为空（走了豁免）时自然什么都不用补发。
+    let reviewError = null;
+    if (judges.length && window.ToolApi && typeof window.ToolApi.submitSubscriptionReview === 'function') {
+      const jv = M.validateJudgeSubmit(currentRow, judges);
+      const derived = M.deriveCallerServiceNo(
+        form.callerSystem,
+        currentRow.sysServeNo || currentRow.serverCoding,
+      );
+      const prodSysServeNoList = form.callerServiceNo ? [form.callerServiceNo] : (derived ? [derived] : []);
+      let rr = null;
+      try {
+        rr = await window.ToolApi.submitSubscriptionReview({
+          publishId: jv.publishId,
+          prodSysServeNoList,
+          judgeInfoList: M.toJudgeInfoList(judges),
+        });
+      } catch (e) {
+        rr = { ok: false, error: (e && e.message) || String(e) };
+      }
+      if (seq !== openSeq) {
+        submitting = false;
+        if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
+        return;
+      }
+      if (!rr || !rr.ok) reviewError = (rr && rr.error) || '未知错误';
+    }
+
+    submitting = false;
+    if (dom && dom.btnConfirm) dom.btnConfirm.disabled = false;
+
+    if (reviewError) {
+      // 订阅已成功、评委没送出去：**不能**悄悄关窗 —— 关了就没有补交入口
+      // （已订阅的行不会再出现「订阅」按钮），也不能让用户再点「确认」把同一条
+      // 订阅写两遍 → 记下编码，下次确认走「只补交评委」分支。
+      // 本地订阅状态照实更新：订阅在后端已经成立了。
+      subscribedCoding = serverCoding;
+      if (window.SubscribeManager) window.SubscribeManager.add(serverCoding);
+      const after = window.AppServices && window.AppServices.afterSubscribeChanged;
+      if (typeof after === 'function') { try { after(); } catch (e) { console.error(e); } }
+      toast(`⚠️ 订阅已创建，但评委信息提交失败：${reviewError}。可直接再点「确 认」重试`
+        + `（只补交评委，不会重复订阅），或点「↑ 提交评委信息」`, 5200, 'error');
+      return;
+    }
+
     if (window.SubscribeManager) window.SubscribeManager.add(serverCoding);
-    toast(`✅ 已订阅: ${serverCoding}`, 2200, 'success');
+    toast(judges.length
+      ? `✅ 已订阅: ${serverCoding}（评委信息已一并提交）`
+      : `✅ 已订阅: ${serverCoding}`, 2600, 'success');
     close({ force: true });      // 订阅已成功，不再走「放弃填写内容？」的脏检查
 
     // 让列表页自己刷新（订阅状态 / 统计 / 分页），避免模块反向依赖 index.js 内部函数
-    const after = window.AppServices && window.AppServices.afterSubscribeChanged;
-    if (typeof after === 'function') {
-      try { after(); } catch (e) { console.error(e); }
+    const after2 = window.AppServices && window.AppServices.afterSubscribeChanged;
+    if (typeof after2 === 'function') {
+      try { after2(); } catch (e) { console.error(e); }
     }
   }
 
@@ -801,6 +878,8 @@
       presetRole(tr._roleInstance, f.role);
     });
     renderJudgeTable();
+    // 拉到并填进了真实评委 → 确认订阅时的评委必填校验豁免（评委来自后端，会随订阅一并提交）
+    judgeFetchedOk = true;
     toast(`✅ 已拉取 ${r.list.length} 条评委信息`, 2200, 'success');
   }
 

@@ -240,11 +240,11 @@ test('toJudgeInfoList：评委行 → 提交接口结构', () => {
   assert.deepStrictEqual(SM.toJudgeInfoList([]), []);
 });
 
-test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS 的顺序与文案', () => {
+test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS → 评委 → 任务编号', () => {
   // 完整必填集（服务编号显式填了，走「用户确认过的值」这条路）
   const good = {
     callerSystem: 'E00406', relDocIds: 'doc-1', callerServiceNo: 'E00406TO1197',
-    perfPeak: { tps: '5' },
+    perfPeak: { tps: '5' }, taskNo: 'T-2026-001',
   };
   // 无行数据：静默（没有文案，也没有聚焦目标）
   const noRow = SM.validateSubscribe(null, good);
@@ -277,7 +277,7 @@ test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → �
   // 服务编号：表单空、但行数据能派生（调用方系统 + TO 尾号）→ 放行（service-api 用同一规则）
   assert.strictEqual(
     SM.validateSubscribe({ serverCoding: 'E00301TO1197' }, {
-      callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' },
+      callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' }, taskNo: 'T-1',
     }).ok,
     true,
   );
@@ -306,7 +306,7 @@ test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → �
 });
 
 test('validateSubscribe：TPS（峰值）必须是大于 0 的数字（后端字段是数值型）', () => {
-  const base = { callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197' };
+  const base = { callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197', taskNo: 'T-1' };
   const withTps = (tps) => SM.validateSubscribe({ serverCoding: 'S' }, { ...base, perfPeak: { tps } });
 
   for (const bad of ['abc', '5a', '-1', '0', '0.0', '１a', ' ', '5.5.5']) {
@@ -336,7 +336,7 @@ test('normalizeDigits：全角数字转半角，非数字原样保留', () => {
 test('validateSubscribe：服务编号的派生源与 service-api 一致（含 serviceId）', () => {
   // service-api.js 的 providerSysServeNo = sysServeNo || serviceId || serverCoding，
   // 校验侧必须同源，否则「后端拼得出来、前端却拦」＝假失败。
-  const form = { callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' } };
+  const form = { callerSystem: 'E00406', relDocIds: 'd', perfPeak: { tps: '5' }, taskNo: 'T-1' };
   // serverCoding 只是普通编码，TO 尾号藏在 serviceId 里 → 派生得出来，放行
   assert.strictEqual(
     SM.validateSubscribe({ serverCoding: 'E00301', serviceId: 'E00301TO1197' }, form).ok,
@@ -355,9 +355,61 @@ test('validateSubscribe：批次刻意不做前端硬拦（该下拉当前未进
   // 哪天把批次接进请求体了，这条用例会失败 —— 提醒把校验一起补上再改这里。
   const r = SM.validateSubscribe({ serverCoding: 'S' }, {
     callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197',
-    perfPeak: { tps: '5' }, callerBatch: '',
+    perfPeak: { tps: '5' }, callerBatch: '', taskNo: 'T-1',
   });
   assert.strictEqual(r.ok, true);
+});
+
+test('validateSubscribe：任务编号必填（缺失时阻止提交并给明确提示）', () => {
+  const base = {
+    callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197', perfPeak: { tps: '5' },
+  };
+  // 空串 / 纯空白 都算缺
+  for (const taskNo of ['', '   ']) {
+    const r = SM.validateSubscribe({ serverCoding: 'S' }, { ...base, taskNo });
+    assert.strictEqual(r.ok, false, `任务编号「${taskNo}」不该放行`);
+    assert.strictEqual(r.code, 'no-task-no');
+    assert.strictEqual(r.msg, '⚠️ 请填写任务编号');
+    assert.strictEqual(r.focus, 'sub_taskNo');
+    assert.strictEqual(r.duration, 2500);
+  }
+  // 填了就放行（其余字段齐全）
+  assert.strictEqual(SM.validateSubscribe({ serverCoding: 'S' }, { ...base, taskNo: 'T-1' }).ok, true);
+});
+
+test('validateSubscribe：评委信息必填，唯一豁免是「已成功拉取默认评委」', () => {
+  const form = {
+    callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197',
+    perfPeak: { tps: '5' }, taskNo: 'T-1',
+  };
+  const row = { serverCoding: 'S' };
+
+  // 评委为空且没拉取过默认评委 → 拦，提示里要给出两条补救路径
+  const blocked = SM.validateSubscribe(row, form, null, { judges: [], defaultsFetched: false });
+  assert.strictEqual(blocked.ok, false);
+  assert.strictEqual(blocked.code, 'no-judges');
+  assert.ok(/评委信息/.test(blocked.msg), '提示要点明是评委');
+  assert.ok(/拉取评委/.test(blocked.msg) && /新增/.test(blocked.msg), '提示要给出补救路径');
+  assert.strictEqual(blocked.focus, 'btnFetchJudges', '焦点落到「⤓ 拉取评委」，离补救动作最近');
+
+  // 豁免：defaultsFetched=true（本行已成功拉取默认评委）→ 放行
+  assert.strictEqual(
+    SM.validateSubscribe(row, form, null, { judges: [], defaultsFetched: true }).ok,
+    true,
+  );
+  // 有评委 → 放行
+  assert.strictEqual(
+    SM.validateSubscribe(row, form, null, { judges: [{ empNo: '4711510', name: '李胜' }], defaultsFetched: false }).ok,
+    true,
+  );
+  // 调用方没传 judgeState（旧签名）→ 不做评委校验，保持向后兼容
+  assert.strictEqual(SM.validateSubscribe(row, form, null).ok, true);
+
+  // 校验顺序：评委缺 + 任务编号缺 → 先报评委（评委区在任务编号之前）
+  const bothMissing = SM.validateSubscribe(row, {
+    callerSystem: 'E00406', relDocIds: 'd', callerServiceNo: 'E00406TO1197', perfPeak: { tps: '5' },
+  }, null, { judges: [], defaultsFetched: false });
+  assert.strictEqual(bothMissing.code, 'no-judges');
 });
 
 test('validateJudgeSubmit：无评委 / 无 publishId / 通过', () => {

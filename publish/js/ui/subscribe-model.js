@@ -368,20 +368,29 @@
   /**
    * 确认订阅前的必填校验。检查顺序（按表单从上到下，报第一个缺的）：
    *   行 → 服务编码 → 是否已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS(峰值)
+   *   → 评委信息 → 任务编号
    *
    * 「调用方投产/变更批次」不在这里拦：该下拉当前并未进入请求体
    * （service-api 的 prodBatch 只取 row.prodBatch），拦了只会白挡用户，
    * 属于待业务口径确认的接线问题，不是校验问题。
    *
+   * 评委信息（订阅弹窗修复，2026-09-17）：随订阅一并提交，**必填**；
+   * 唯一豁免是 `judgeState.defaultsFetched` —— 本行已成功拉取默认评委
+   * （评委来自后端、随订阅一并提交，用户不必手工维护）。
+   * 任务编号：提交前必填，缺失时阻止提交并给明确提示。
+   *
    * @param {object} row 当前行
    * @param {object} form collectForm() 的结果
    * @param {(code:string)=>boolean} [isSubscribed] 传 SubscribeManager.isSubscribed；
    *        不传则跳过「已在订阅列表」这一关
+   * @param {{judges?:Array, defaultsFetched?:boolean}} [judgeState]
+   *        judges=confirmSubscribe 收集的评委行（已按 empNo/name 过滤）；
+   *        传了才做评委必填校验（只校验「有没有」，publishId 口径见 validateJudgeSubmit）
    * @returns {{ok:boolean, code:string, msg:string, duration:number, focus?:string, serverCoding?:string}}
    *          ok:false 且 msg 为空表示静默返回（无行数据）；
    *          focus 是出错字段的 DOM id（调用方负责把焦点/滚动落过去）
    */
-  function validateSubscribe(row, form, isSubscribed) {
+  function validateSubscribe(row, form, isSubscribed, judgeState) {
     if (!row) return { ok: false, code: 'no-row', msg: '', duration: 0 };
     const serverCoding = row.serverCoding || row.sysServeNo || '';
     if (!serverCoding) {
@@ -428,6 +437,22 @@
         ok: false, code: 'bad-tps',
         msg: '⚠️ TPS（峰值）请填大于 0 的数字', duration: 2500, focus: 'sub_tpsPeak',
       };
+    }
+    // 评委信息必填（随订阅一并提交，订阅弹窗修复）：一行有效评委都没有就拦。
+    // 豁免：defaultsFetched —— 本行已成功拉取默认评委（评委来自后端、随订阅一并提交，
+    // 用户不必手工维护）。焦点落到「拉取评委」按钮，让用户离最近的补救动作最近。
+    const js = judgeState || null;
+    if (js && Array.isArray(js.judges) && !js.judges.length && !js.defaultsFetched) {
+      return {
+        ok: false, code: 'no-judges',
+        msg: '⚠️ 请先填写评委信息：点「⤓ 拉取评委」带入默认评委，或「＋ 新增」手工添加',
+        duration: 3200, focus: 'btnFetchJudges',
+      };
+    }
+    // 任务编号必填（订阅弹窗修复）：缺失时阻止提交并给明确提示。
+    // 位于「基础信息」区（评委区之后），所以校验顺序排在评委之后。
+    if (!String(form.taskNo || '').trim()) {
+      return { ok: false, code: 'no-task-no', msg: '⚠️ 请填写任务编号', duration: 2500, focus: 'sub_taskNo' };
     }
     return { ok: true, code: '', msg: '', duration: 0, serverCoding };
   }
