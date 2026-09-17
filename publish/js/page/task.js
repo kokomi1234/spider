@@ -95,8 +95,12 @@
   // 以下别名一律**调用时才取** window.*：顶层捕获会让本页「顺序敏感」——依赖的模块
   // 一旦排到本文件之后，提示 / 转义 / 数字格式化会永久退化成兜底实现，且不报错。
   const toast = (...a) => (window.toast || (() => {}))(...a);
-  // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）
-  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
+  // 公共实现见 js/core/format.js（三页共用，本地只留同名别名，调用点不用改）。
+  // 兜底**必须真转义**：原来写成 String(x ?? '')，等于零转义 ——
+  // format.js 一旦没加载，全站 innerHTML 的 XSS 防护就静默失效了。字符集与 Fmt.esc 一致。
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')))(v);
   const num = (v) => ((window.Fmt && window.Fmt.num) || ((x) => String(x ?? '—')))(v);
 
   // ── 加载态 / 查询失败提示：实现统一在 js/ui/query-feedback.js（三页共用）──
@@ -292,6 +296,8 @@
       return;
     }
     const body = $('#resultBody');
+    // 有数据了：收起宽表空态浮层，否则它会盖在数据行上
+    window.TableUtils.hideEmptyOverlay();
     const start = (state.pageNum - 1) * state.pageSize;
     body.innerHTML = state.rows.map((r, i) => {
       const no = r.taskApplicationTaskNo || '';
@@ -595,6 +601,10 @@
     }
 
     await loadDicts();
+
+    // 首屏就是空态：显示宽表空态浮层并对齐到表头下沿。
+    // （静态 HTML 里浮层是 hidden 的 —— 表头高度要等布局完成才测得准，先不显示。）
+    if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
   }
 
   if (document.readyState === 'loading') {

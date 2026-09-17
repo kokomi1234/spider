@@ -112,28 +112,14 @@
     .subq-table thead th.col-op { z-index: 3; background: var(--surface-1); }
     .subq-table tbody tr:hover td.col-op { background: var(--surface-1); }
 
-    /* 空态：.subq-table 的 min-width 是 3046px，若直接给 .empty-hint 加
-       text-align:center，文字会落在 3046px 单元格正中、跑到视口右侧外面看不见。
-       所以加一个覆盖 .tbl-scroll 可见区的居中浮层来显示空态文案；
-       数据加载后浮层隐藏，表格本体恢复 3046px 宽表布局。 */
+    /* 空态：.subq-table 的 min-width 是 3046px，<td colspan> 里的文案没法真正居中
+       （按 3046px 单元格居中会跑到视口右侧外面）。空态文案由 theme.css 的
+       .table-empty-overlay 浮层负责显示；下面这条只是「浮层没渲染」时的兜底。 */
     .subq-table td[colspan] {
       text-align: left;
       padding: 40px 0 40px 20px;
       color: var(--muted);
     }
-    .tbl-scroll { position: relative; }
-    .subq-empty-overlay {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--surface);
-      border-radius: inherit;
-      z-index: 10;          /* 高于吸顶表头（--z-sticky-head:1）*/
-    }
-    .subq-empty-overlay[hidden] { display: none; }
-    .subq-empty-overlay .empty-hint { padding: var(--sp5) 0; }
     /* 编号类字段用等宽字体，数字对齐更好读 */
     .subq-table .cell-code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -466,9 +452,11 @@
         <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">重 试</button>
       </div>
 
-      <div class="tbl-scroll">
-        <div class="subq-empty-overlay" id="subqEmptyOverlay">
-          <span class="empty-hint" id="subqEmptyText">请输入条件后点击「查询」</span>
+      <div class="tbl-scroll has-empty-overlay">
+        <!-- 空态浮层：宽表里 td[colspan] 没法居中，由它负责显示文案；
+             上沿由 js/ui/table-utils.js 对齐到表头下沿（不盖住表头），有数据时隐藏 -->
+        <div class="table-empty-overlay" id="subqEmptyOverlay" hidden>
+          <span class="empty-hint table-empty-overlay-text">请输入条件后点击「查询」</span>
         </div>
         <table class="subq-table">
           <colgroup>

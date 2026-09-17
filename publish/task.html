@@ -368,7 +368,12 @@
         <button class="outlined btn-xs retry-btn" id="btnRetryQuery" type="button">重 试</button>
       </div>
 
-      <div class="tbl-scroll" data-page-node-id="JRgH1QoMA0prksPqkBGWCq">
+      <div class="tbl-scroll has-empty-overlay" data-page-node-id="JRgH1QoMA0prksPqkBGWCq">
+        <!-- 空态浮层：宽表里 td[colspan] 没法居中，由它负责显示文案；
+             上沿由 js/ui/table-utils.js 对齐到表头下沿（不盖住表头），有数据时隐藏 -->
+        <div class="table-empty-overlay" id="taskEmptyOverlay" hidden>
+          <span class="empty-hint table-empty-overlay-text">请输入条件后点击「查询」</span>
+        </div>
         <table class="task-table" data-page-node-id="Ps8lqh37LZFEXw7lFa5f8w">
           <colgroup data-page-node-id="99d0NFpbYYAhjur5FralK4">
             <col class="col-index" data-page-node-id="MqMEPArdYOfLi7FDWaxyj3">

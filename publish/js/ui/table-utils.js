@@ -42,15 +42,60 @@
    * 注意：class 仍是 empty-hint（页面/表格级）。弹窗内的紧凑空态用 .sub-empty、
    * 面板内的用 .msel-empty —— 那两处 padding 更小是**刻意的**（上下文不同），
    * 别为了"统一"把它们合并掉；要统一的是**文案**，文案走上面的 EMPTY_TEXT。
+   *
+   * 宽表（min-width 远大于视口）里 <td colspan> 无法真正居中，页面会另放一个
+   * .table-empty-overlay 浮层（见 theme.css）；这里顺带把浮层文案同步、并显示出来。
+   * 页面没放浮层时下面这步自动跳过，不影响原有行为。
    */
   function renderEmpty(text, colspan) {
-    const esc = (window.Fmt && window.Fmt.esc) || ((s) => String(s ?? ''));
+    // 兜底**必须真转义**：原来写成 String(s ?? '')，等于零转义 ——
+    // format.js 一旦没加载，innerHTML 的 XSS 防护就静默失效了。字符集与 Fmt.esc 一致。
+    const esc = (window.Fmt && window.Fmt.esc) || ((s) => String(s ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;'));
     const body = document.querySelector('#resultBody');
     const bar = document.querySelector('#pagination');
     if (body) {
       body.innerHTML = `<tr><td colspan="${Number(colspan) || 1}" class="empty-hint">${esc(text)}</td></tr>`;
     }
     if (bar) bar.style.display = 'none';
+    const txt = document.querySelector('.table-empty-overlay-text');
+    if (txt) txt.textContent = text;
+    syncEmptyOverlay();
+  }
+
+  /** 页面里那个宽表空态浮层；没放就返回 null（功能整体跳过） */
+  function emptyOverlay() {
+    return document.querySelector('.table-empty-overlay');
+  }
+
+  /**
+   * 显示空态浮层，并把它的上沿对齐到表头下沿。
+   * 表头文字会随宽度折行、高度不固定，所以在运行时实测 —— 写死像素值迟早会对不上。
+   * @returns {boolean} 页面上是否有浮层（没有则 false，调用方无需关心）
+   */
+  function syncEmptyOverlay() {
+    const ov = emptyOverlay();
+    if (!ov) return false;
+    const scroll = ov.closest('.tbl-scroll');
+    const thead = (scroll || document).querySelector('thead');
+    if (thead) ov.style.top = Math.round(thead.getBoundingClientRect().height) + 'px';
+    ov.hidden = false;
+    return true;
+  }
+
+  /** 渲染出数据行后收起空态浮层 */
+  function hideEmptyOverlay() {
+    const ov = emptyOverlay();
+    if (ov) ov.hidden = true;
+  }
+
+  // 窗口变窄/变宽时表头可能折成不同行数，浮层上沿要跟着重算（只在浮层可见时动）
+  if (window.addEventListener) {
+    window.addEventListener('resize', () => {
+      const ov = emptyOverlay();
+      if (ov && !ov.hidden) syncEmptyOverlay();
+    }, { passive: true });
   }
 
   /**
@@ -67,5 +112,8 @@
     });
   }
 
-  window.TableUtils = Object.freeze({ totalPages, renderEmpty, EMPTY_TEXT, resetTableScroll });
+  window.TableUtils = Object.freeze({
+    totalPages, renderEmpty, EMPTY_TEXT, resetTableScroll,
+    syncEmptyOverlay, hideEmptyOverlay,
+  });
 })();

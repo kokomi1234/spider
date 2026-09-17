@@ -1852,45 +1852,76 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 订阅页空态提示居中：3046px 宽表会让 td[colspan] 里的文字直接居中时跑到视口外，
-  // 所以改成 .tbl-scroll 上的覆盖层；断言文字中心与滚动容器中心重合。
+  // 宽表空态浮层（订阅页 3046px / 任务单页 1346px 的宽表）：
+  // <td colspan> 里的文案没法真正居中 —— 按单元格居中会跑到视口右侧外面。
+  // 由 .table-empty-overlay 负责显示。断言三件事：
+  //   ① 文案在滚动容器可见区里水平居中；② 浮层上沿贴着表头下沿（不盖表头）；
+  //   ③ 浮层铺到容器底部。
   // ═══════════════════════════════════════════════════════════════
-  {
+  for (const [file, tag] of [['subscription.html', '订阅'], ['task.html', '任务单']]) {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + file, { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(800);
       const r = await page.evaluate(() => {
-        const overlay = document.getElementById('subqEmptyOverlay');
-        const txt = document.getElementById('subqEmptyText');
         const scroll = document.querySelector('.tbl-scroll');
+        const overlay = scroll && scroll.querySelector('.table-empty-overlay');
+        const txt = overlay && overlay.querySelector('.table-empty-overlay-text');
+        const thead = scroll && scroll.querySelector('thead');
+        if (!scroll || !overlay || !txt || !thead) return { missing: true };
         const sr = scroll.getBoundingClientRect();
         const or = overlay.getBoundingClientRect();
+        const hr = thead.getBoundingClientRect();
         const rng = document.createRange();
         rng.selectNodeContents(txt);
         const tr = rng.getBoundingClientRect();
         return {
           overlayHidden: overlay.hidden,
-          overlayW: Math.round(or.width),
-          overlayH: Math.round(or.height),
-          scrollW: Math.round(sr.width),
-          scrollH: Math.round(sr.height),
           textCenterOffset: Math.round((tr.left + tr.width / 2) - (sr.left + sr.width / 2)),
+          overlayTopVsHeadBottom: Math.round(or.top - hr.bottom),
+          overlayBottomVsScrollBottom: Math.round(sr.bottom - or.bottom),
           text: txt.textContent.trim(),
         };
       });
-      process.stdout.write(`  空态提示居中: ${JSON.stringify(r)}\n`);
-      if (r.overlayHidden !== false) fails.push('空态覆盖层应可见');
-      if (r.textCenterOffset !== 0) {
-        fails.push(`空态提示应水平居中（文字中心与滚动容器中心偏差 ${r.textCenterOffset}px）`);
-      }
-      if (!/请输入条件后点击/.test(r.text)) fails.push(`空态提示文案不符：${r.text}`);
-      if (Math.abs(r.overlayW - r.scrollW) > 4 || Math.abs(r.overlayH - r.scrollH) > 4) {
-        fails.push(`覆盖层应铺满 .tbl-scroll（overlay ${r.overlayW}x${r.overlayH} vs scroll ${r.scrollW}x${r.scrollH}）`);
+      if (r.missing) {
+        process.stdout.write(`  空态浮层(${tag}): ${JSON.stringify(r)}\n`);
+        fails.push(`${tag}页没找到宽表空态浮层（.table-empty-overlay / thead）`);
+      } else {
+        // 再走一遍共享 helper 的显示/隐藏接线：数据渲染完必须能收起浮层，
+        // 否则空态浮层会一直盖在数据行上（这次改动最容易引入的回归）。
+        const r2 = await page.evaluate(() => {
+          const ov = document.querySelector('.table-empty-overlay');
+          const txt = ov && ov.querySelector('.table-empty-overlay-text');
+          const out = {};
+          window.TableUtils.renderEmpty('空态文案变更测试', 23);
+          out.txtAfterRenderEmpty = txt ? txt.textContent : null;
+          out.shownAfterRenderEmpty = !!ov && ov.hidden === false;
+          window.TableUtils.hideEmptyOverlay();
+          out.hiddenAfterHide = !!ov && ov.hidden === true;
+          return out;
+        });
+        process.stdout.write(`  空态浮层(${tag}): ${JSON.stringify(r)} 显示/隐藏: ${JSON.stringify(r2)}\n`);
+        if (r.overlayHidden !== false) fails.push(`${tag}页空态浮层应可见`);
+        if (Math.abs(r.textCenterOffset) > 1) {
+          fails.push(`${tag}页空态文案应水平居中，实际偏 ${r.textCenterOffset}px`);
+        }
+        // 上沿贴表头下沿：差值应在 [0, 2] 内（0=正好，2=像素舍入）。负数说明盖住了表头。
+        if (r.overlayTopVsHeadBottom < 0 || r.overlayTopVsHeadBottom > 2) {
+          fails.push(`${tag}页浮层上沿应对齐表头下沿（差值 ${r.overlayTopVsHeadBottom}px，负数=盖住了表头）`);
+        }
+        if (Math.abs(r.overlayBottomVsScrollBottom) > 2) {
+          fails.push(`${tag}页浮层应铺到容器底部（差值 ${r.overlayBottomVsScrollBottom}px）`);
+        }
+        if (!/请输入条件后点击/.test(r.text)) fails.push(`${tag}页空态文案不符：${r.text}`);
+        if (r2.txtAfterRenderEmpty !== '空态文案变更测试') {
+          fails.push(`${tag}页 renderEmpty 应同步浮层文案，实际 ${JSON.stringify(r2.txtAfterRenderEmpty)}`);
+        }
+        if (r2.shownAfterRenderEmpty !== true) fails.push(`${tag}页 renderEmpty 后浮层应可见`);
+        if (r2.hiddenAfterHide !== true) fails.push(`${tag}页 hideEmptyOverlay 后浮层应隐藏（否则会盖住数据行）`);
       }
     } catch (e) {
-      fails.push(`空态居中段异常：${e.message}`);
+      fails.push(`空态浮层段异常（${tag}）：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;

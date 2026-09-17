@@ -1124,6 +1124,31 @@ tbody tr.unsubscribed-row:hover td {
   font-size: var(--fs-base);
 }
 
+/* ── 宽表空态浮层（订阅页 / 任务单页）──────────────────
+   这两页的表格设了很大的 min-width（订阅页 3046px、任务单页 1346px，都超过视口），
+   <td colspan> 里的空态文案没法真正居中：按 3046px 的单元格居中会跑到视口右侧外面，
+   按容器居中又做不到（colgroup 的列宽会把表格撑住，塌不下去）。
+   所以用一层覆盖在「表格可见区」上的浮层来显示文案：
+     · 上沿对齐到表头下沿（top 由 js/ui/table-utils.js 实测表头高度写入），不盖住表头；
+     · 数据加载后由 hideEmptyOverlay() 隐藏。
+   页面若没放 .table-empty-overlay，这些规则不生效，功能自然跳过。 */
+.tbl-scroll.has-empty-overlay { position: relative; }
+.table-empty-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 0;                 /* 运行时会被改写成表头高度，避免盖住吸顶表头 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border-radius: inherit;
+  z-index: 1;             /* 与吸顶表头同层，table 在浮层之后 → 表头仍在其上 */
+}
+.table-empty-overlay[hidden] { display: none; }
+.table-empty-overlay .empty-hint { padding: var(--sp5) 0; }
+
 /* ── 分页 ─────────────────────────────────────────── */
 .pagination {
   display: flex;

@@ -451,15 +451,11 @@
     renderCount();
   }
 
-  // colspan 23 = 订阅页表格列数（22 个数据列 + 操作列）；空状态与分页条显隐统一走 TableUtils
+  // colspan 23 = 订阅页表格列数（22 个数据列 + 操作列）。
+  // 空状态、分页条显隐、宽表空态浮层统一走 TableUtils ——
+  // 「浮层上沿对齐表头下沿」的逻辑也在那边，别在本页另写一份。
   function renderEmpty(text) {
     window.TableUtils.renderEmpty(text, 23);
-    // 空态文案不放进 3046px 的表格里居中（会跑到视口外），
-    // 而是显示 .tbl-scroll 上的覆盖层，让它在卡片可见区内居中。
-    const txt = $('#subqEmptyText');
-    const overlay = $('#subqEmptyOverlay');
-    if (txt) txt.textContent = text;
-    if (overlay) overlay.hidden = false;
   }
 
   function renderCount() {
@@ -506,8 +502,8 @@
       renderEmpty(emptyText('none', '订阅关系', '没有匹配的订阅关系'));
       return;
     }
-    const overlay = $('#subqEmptyOverlay');
-    if (overlay) overlay.hidden = true;
+    // 有数据了：收起宽表空态浮层，否则它会盖在数据行上
+    window.TableUtils.hideEmptyOverlay();
     V.renderTable($('#resultBody'), rows, {
       onJump: (row) => jumpToServiceSearch(row),
       onCopy: (text) => copyToClipboard(text),
@@ -852,6 +848,11 @@
     loadDicts();
     initBatchTimes();            // 兜底再试一次（脚本顺序被打乱时，加载期那次会落空）
     loadBatchTimes();            // 批次时间本地配置（弹窗打开时用它预填）
+
+    // 首屏就是空态：显示宽表空态浮层并对齐到表头下沿。
+    // （静态 HTML 里浮层是 hidden 的 —— 页面没加载完表头高度还测不准，先不显示，
+    //   免得浮层按 top:0 盖住表头。）
+    if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
   }
 
   if (document.readyState === 'loading') {
