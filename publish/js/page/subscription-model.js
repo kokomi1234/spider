@@ -181,25 +181,8 @@
   // 分页数学
   // ═══════════════════════════════════════════════════
 
-  /**
-   * 页码条：首页 + 当前页 ±2 + 末页，中间用省略号。
-   * 当前页带 `aria-current="page"`：只靠 .is-current 的视觉样式，读屏用户听不出
-   * 自己在第几页（清单 A9）。样式仍只认 .is-current，两者互不影响。
-   */
-  function buildPageNumbers(pages, cur) {
-    const set = new Set([1, pages, cur, cur - 1, cur + 1, cur - 2, cur + 2]);
-    const nums = [...set].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
-    let out = '';
-    let prev = 0;
-    nums.forEach((n) => {
-      const isCur = n === cur;
-      if (prev && n - prev > 1) out += '<li class="page-ellipsis">…</li>';
-      out += `<li><button type="button" data-page="${n}" class="${isCur ? 'is-current' : ''}"`
-        + `${isCur ? ' aria-current="page"' : ''}>${n}</button></li>`;
-      prev = n;
-    });
-    return out;
-  }
+  // 注：页码条 HTML 的构造已移到 js/ui/table-utils.js 的 buildPageNumbers ——
+  // 首页也要用它，和 renderEmpty / resetTableScroll 一样属跨页共用的表格 UI 逻辑。
 
   /**
    * 整批拉取的页数（窗口扇出 / 单批次全局排序共用）：按每页 BULK_PAGE_SIZE 算，
@@ -481,8 +464,7 @@
     isEhrSplit,
     validateQuery,
     hasSpecificFilter,
-    // 分页数学
-    buildPageNumbers,
+    // 分页数学（页码条 HTML 见 js/ui/table-utils.js 的 buildPageNumbers）
     planPageFetches,
     slicePage,
     overdueCount,

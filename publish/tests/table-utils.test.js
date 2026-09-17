@@ -65,3 +65,44 @@ test('syncEmptyOverlay / hideEmptyOverlay：页面没有浮层时静默跳过，
   assert.strictEqual(T.syncEmptyOverlay(), false, '没有 .table-empty-overlay 时返回 false');
   T.hideEmptyOverlay();   // 不应抛错
 });
+
+// 以下 buildPageNumbers 用例从 tests/subscription-model.test.js 搬来 ——
+// 该函数已移到 js/ui/table-utils.js（首页与订阅页共用）。
+test('buildPageNumbers：首页 + 当前页 ±2 + 末页，中间省略号', () => {
+  const btnCount = (h) => h.split('<button').length - 1;
+  const dots = (h) => h.split('page-ellipsis').length - 1;
+
+  // 只有一页：单个按钮，无省略号
+  const one = T.buildPageNumbers(1, 1);
+  assert.strictEqual(btnCount(one), 1);
+  assert.strictEqual(dots(one), 0);
+  assert.ok(one.indexOf('data-page="1" class="is-current" aria-current="page">1') > -1);
+
+  // 页数少：全列
+  assert.strictEqual(btnCount(T.buildPageNumbers(3, 2)), 3);
+  assert.strictEqual(dots(T.buildPageNumbers(3, 2)), 0);
+
+  // 首页：1~3 + 末页 10，中间一个省略号
+  const first = T.buildPageNumbers(10, 1);
+  assert.strictEqual(btnCount(first), 4);
+  assert.strictEqual(dots(first), 1);
+  assert.ok(first.indexOf('data-page="10"') > -1);
+
+  // 中间页 5：1 / …… / 3~7 / …… / 10
+  const mid = T.buildPageNumbers(10, 5);
+  assert.strictEqual(btnCount(mid), 7);
+  assert.strictEqual(dots(mid), 2);
+  assert.ok(mid.indexOf('data-page="5" class="is-current" aria-current="page">5') > -1);
+  // 当前页以外的按钮不带 is-current，也不带 aria-current（清单 A9：只该标当前页）
+  assert.strictEqual(mid.split('is-current').length - 1, 1);
+  assert.strictEqual(mid.split('aria-current="page"').length - 1, 1);
+
+  // 末页：倒数三页 + 首页
+  assert.strictEqual(btnCount(T.buildPageNumbers(10, 10)), 4);
+
+  // 乱序/越界入参不炸且不产生越界按钮
+  const weird = T.buildPageNumbers(10, 99);
+  assert.strictEqual(weird.indexOf('data-page="99"'), -1);
+  assert.strictEqual(weird.indexOf('data-page="0"'), -1);
+  assert.strictEqual(T.buildPageNumbers(1, 1).indexOf('data-page="0"'), -1);
+});

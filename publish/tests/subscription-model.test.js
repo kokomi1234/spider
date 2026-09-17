@@ -33,7 +33,7 @@ test('SubscriptionModel：暴露预期接口且冻结', () => {
   const M = fresh().SubscriptionModel;
   [
     'rowKey', 'toBatchOptions', 'buildCond', 'isEhrSplit', 'validateQuery', 'hasSpecificFilter',
-    'buildPageNumbers', 'planPageFetches', 'slicePage', 'overdueCount', 'mergeBatchRows',
+    'planPageFetches', 'slicePage', 'overdueCount', 'mergeBatchRows',
     'todayBase', 'decorateRow', 'decorateRows', 'redecorateRows', 'sortRows', 'batchWindow',
     'fetchAllPages', 'fetchBatchAllPages', 'fetchWindowAll', 'prioParts',
   ].forEach((k) => assert.strictEqual(typeof M[k], 'function', '缺少函数 ' + k));
@@ -250,45 +250,8 @@ test('hasSpecificFilter：6 类精确条件任一命中即 true', () => {
 // 分页数学
 // ═══════════════════════════════════════════════════
 
-test('buildPageNumbers：首页 + 当前页 ±2 + 末页，中间省略号', () => {
-  const M = fresh().SubscriptionModel;
-  const btnCount = (h) => h.split('<button').length - 1;
-  const dots = (h) => h.split('page-ellipsis').length - 1;
-
-  // 只有一页：单个按钮，无省略号
-  const one = M.buildPageNumbers(1, 1);
-  assert.strictEqual(btnCount(one), 1);
-  assert.strictEqual(dots(one), 0);
-  assert.ok(one.indexOf('data-page="1" class="is-current" aria-current="page">1') > -1);
-
-  // 页数少：全列
-  assert.strictEqual(btnCount(M.buildPageNumbers(3, 2)), 3);
-  assert.strictEqual(dots(M.buildPageNumbers(3, 2)), 0);
-
-  // 首页：1~3 + 末页 10，中间一个省略号
-  const first = M.buildPageNumbers(10, 1);
-  assert.strictEqual(btnCount(first), 4);
-  assert.strictEqual(dots(first), 1);
-  assert.ok(first.indexOf('data-page="10"') > -1);
-
-  // 中间页 5：1 / …… / 3~7 / …… / 10
-  const mid = M.buildPageNumbers(10, 5);
-  assert.strictEqual(btnCount(mid), 7);
-  assert.strictEqual(dots(mid), 2);
-  assert.ok(mid.indexOf('data-page="5" class="is-current" aria-current="page">5') > -1);
-  // 当前页以外的按钮不带 is-current，也不带 aria-current（清单 A9：只该标当前页）
-  assert.strictEqual(mid.split('is-current').length - 1, 1);
-  assert.strictEqual(mid.split('aria-current="page"').length - 1, 1);
-
-  // 末页：倒数三页 + 首页
-  assert.strictEqual(btnCount(M.buildPageNumbers(10, 10)), 4);
-
-  // 乱序/越界入参不炸且不产生越界按钮
-  const weird = M.buildPageNumbers(10, 99);
-  assert.strictEqual(weird.indexOf('data-page="99"'), -1);
-  assert.strictEqual(weird.indexOf('data-page="0"'), -1);
-  assert.strictEqual(M.buildPageNumbers(1, 1).indexOf('data-page="0"'), -1);
-});
+// buildPageNumbers 的用例已挪到 tests/table-utils.test.js ——
+// 该函数搬去了 js/ui/table-utils.js（首页与订阅页共用）。
 
 test('planPageFetches：按 BULK_PAGE_SIZE 算页数并对 BULK_MAX 封顶', () => {
   const M = fresh().SubscriptionModel;

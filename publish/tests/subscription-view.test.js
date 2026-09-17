@@ -1,8 +1,9 @@
 /**
  * subscription-view.js 单测：覆盖从 subscription.js 抽出的 HTML 字符串生成与渲染接线。
  *
- * 复用同一个 window 依次加载 format.js（转义）→ subscription-model.js（常量/映射）
- * → subscription-view.js，与浏览器里脚本加载顺序一致。
+ * 复用同一个 window 依次加载 format.js（转义）→ table-utils.js（页码条构造）
+ * → subscription-model.js（常量/映射）→ subscription-view.js，
+ * 与浏览器里脚本加载顺序一致（subscription.html 也是 table-utils 先于 view）。
  *
  * renderTable / renderPagination 会写 DOM，但只用到入参元素上的 innerHTML /
  * textContent / style / disabled / max / value / querySelectorAll / addEventListener，
@@ -14,6 +15,7 @@ const { loadScript, test } = require('./harness');
 const assert = require('assert');
 
 const win = loadScript('js/core/format.js');
+loadScript('js/ui/table-utils.js', {}, win);
 loadScript('js/page/subscription-model.js', {}, win);
 loadScript('js/page/subscription-view.js', {}, win);
 const V = win.SubscriptionView;
@@ -286,6 +288,7 @@ test('renderPagination：页码条 / 上下页禁用 / 跳页框同步', () => {
  */
 function stubPaginationElsWithDoc(pageNumbers, doc) {
   const win2 = loadScript('js/core/format.js');
+  loadScript('js/ui/table-utils.js', {}, win2);   // 页码条构造现在在这里
   loadScript('js/page/subscription-model.js', {}, win2);
   loadScript('js/page/subscription-view.js', { document: doc }, win2);
   return {

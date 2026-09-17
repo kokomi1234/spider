@@ -207,7 +207,7 @@
     const hadFocusInNumbers = !!(doc && pageNumbers && pageNumbers.contains
       && pageNumbers.contains(doc.activeElement));
 
-    pageNumbers.innerHTML = window.SubscriptionModel.buildPageNumbers(pages, pageNum);
+    pageNumbers.innerHTML = window.TableUtils.buildPageNumbers(pages, pageNum);
     btnPrev.disabled = pageNum <= 1;
     btnNext.disabled = pageNum >= pages;
     pageJumpInput.max = String(pages);

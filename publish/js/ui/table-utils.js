@@ -17,6 +17,30 @@
   }
 
   /**
+   * 页码条：首页 + 当前页 ±2 + 末页，中间用省略号。
+   * 当前页带 `aria-current="page"`：只靠 .is-current 的视觉样式，读屏用户听不出
+   * 自己在第几页（清单 A9）。样式仍只认 .is-current，两者互不影响。
+   *
+   * 放在这里（而不是某个页面的 model 里）：首页、订阅页都用它，
+   * 和 renderEmpty / resetTableScroll 一样是**跨页共用**的表格 UI 逻辑。
+   * 返回的是 `<li>` 片段，调用方塞进 <ul class="page-numbers">。
+   */
+  function buildPageNumbers(pages, cur) {
+    const set = new Set([1, pages, cur, cur - 1, cur + 1, cur - 2, cur + 2]);
+    const nums = [...set].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
+    let out = '';
+    let prev = 0;
+    nums.forEach((n) => {
+      const isCur = n === cur;
+      if (prev && n - prev > 1) out += '<li class="page-ellipsis">…</li>';
+      out += `<li><button type="button" data-page="${n}" class="${isCur ? 'is-current' : ''}"`
+        + `${isCur ? ' aria-current="page"' : ''}>${n}</button></li>`;
+      prev = n;
+    });
+    return out;
+  }
+
+  /**
    * 空态文案模板（全站唯一来源）。
    *
    * 为什么集中：此前散在 6 个文件里 8 种说法 ——「暂无数据」「当前筛选条件下无数据」
@@ -113,7 +137,7 @@
   }
 
   window.TableUtils = Object.freeze({
-    totalPages, renderEmpty, EMPTY_TEXT, resetTableScroll,
+    totalPages, buildPageNumbers, renderEmpty, EMPTY_TEXT, resetTableScroll,
     syncEmptyOverlay, hideEmptyOverlay,
   });
 })();
