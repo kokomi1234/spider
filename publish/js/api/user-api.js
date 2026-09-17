@@ -93,6 +93,10 @@
    * 按姓名模糊搜索用户。
    * 接口: POST /itamp-ems/alaysis/approval/common/getUserList?userName=xx&n=0.xx
    * 响应: { code:200, msg:'操作成功', data:[{ userId, userName, orgName, teamName, ... }] }
+   * ⚠️ 传参位置：抓包是「POST + **纯查询参数** + 无请求体」—— userName 和 n 都要放
+   *    request() 的**第 3 参（query）**，第 2 参（body）必须保持 undefined。
+   *    曾经把 {userName, n} 放进 body 发 JSON：后端按 query 取参，什么 都取不到，
+   *    按姓名 / 按工号全部查不到结果（且前端不报错，只是空列表，极难排查）。
    * 注意：抓包里同名多命中时后端会返回「查询失败」码 500（如 userName=郑梓），
    *       属于接口自身的模糊匹配限制，这里原样把错误抛给调用方。
    *
@@ -105,7 +109,7 @@
       return { ok: false, list: [], error: 'API 客户端未就绪' };
     }
     try {
-      const json = await request('userList', {
+      const json = await request('userList', undefined, {
         userName: String(userName || '').trim(),
         n: cacheBuster(),
       });
@@ -123,6 +127,7 @@
    * 按工号查用户详情。
    * 接口: POST /itamp-ems/alaysis/approval/common/getUserInfo?userId=xx&n=0.xx
    * 响应: { code:200, msg:'操作成功', data:{ userId, userName, orgId, orgName, ... } }
+   * ⚠️ 传参位置与 fetchUserList 相同：userId / n 放 query（第 3 参），body 保持 undefined。
    *
    * @param {string} userId 用户工号（如 4711510）
    * @returns {Promise<{ok:boolean, local?:boolean, user?:object|null, error?:string}>}
@@ -133,7 +138,7 @@
       return { ok: false, user: null, error: 'API 客户端未就绪' };
     }
     try {
-      const json = await request('userInfo', {
+      const json = await request('userInfo', undefined, {
         userId: String(userId || '').trim(),
         n: cacheBuster(),
       });

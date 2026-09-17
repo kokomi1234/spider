@@ -17,6 +17,7 @@ require('./api-client.test');
 require('./service-api.test');
 require('./data-parsers.test');
 require('./tool-api.test');
+require('./user-api.test');
 require('./publish-response.test');
 require('./publish-model.test');
 require('./publish-view.test');
