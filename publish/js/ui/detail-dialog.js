@@ -12,8 +12,12 @@
 (function () {
   'use strict';
 
-  // esc 调用时才取 window.Fmt（顶层捕获会在 format.js 排后时永久退化成弱转义）
-  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
+  // esc 调用时才取 window.Fmt（顶层捕获会在 format.js 排后时永久退化）。
+  // 这里的兜底不再是「弱转义」：原来写成 String(x ?? '') 等于零转义，
+  // format.js 一旦没加载，innerHTML 的 XSS 防护就静默失效了。字符集与 Fmt.esc 一致。
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')))(v);
 
   const overlay = document.getElementById('detailOverlay');
   const titleEl = document.getElementById('detailTitle');

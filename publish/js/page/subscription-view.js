@@ -15,9 +15,13 @@
 (function () {
   'use strict';
 
-  // 延迟取用转义函数：优先用 js/core/format.js 的 Fmt.esc，缺失时退化到内置实现。
+  // 延迟取用转义函数：优先用 js/core/format.js 的 Fmt.esc，缺失时用下面的内置兜底。
   // 用函数包一层（而非在加载时定死），避免本文件早于 format.js 加载时报错。
-  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
+  // 兜底**必须真转义**：原来写成 String(x ?? '')，等于零转义 ——
+  // format.js 一旦没加载，全站 innerHTML 的 XSS 防护就静默失效了。字符集与 Fmt.esc 一致。
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')))(v);
 
   // 数字千分位 / 兜底（与订阅页内部 num 同口径）
   const num = (v) => ((window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—')))(v);

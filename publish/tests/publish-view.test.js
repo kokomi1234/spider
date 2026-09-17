@@ -31,8 +31,9 @@ test('stateBadge：状态→徽章 HTML，空值兜底', () => {
   assert.strictEqual(V.stateBadge('正式版基线'), '<span class="badge b-run">正式版基线</span>');
   assert.strictEqual(V.stateBadge('运行中'), '<span class="badge b-run">运行中</span>');
   assert.strictEqual(V.stateBadge(''), '<span class="badge b-off">未设置</span>');
-  // 含特殊字符时转义（无 Fmt 时退化为 String，但仍验证结构）
-  assert.strictEqual(V.stateBadge('a&b').includes('a&b'), true);
+  // 含特殊字符时转义。注意本文件**没有**加载 format.js，走的就是内置兜底 ——
+  // 兜底也必须真转义（原来退化成 String(x ?? '')，等于零转义）。
+  assert.strictEqual(V.stateBadge('a&b').includes('a&amp;b'), true);
 });
 
 test('emptyRow：生成 colspan 空态行', () => {

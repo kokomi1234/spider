@@ -65,10 +65,15 @@
     if (typeof deps.toast === 'function') deps.toast(msg, duration, type);
   }
 
-  /** HTML 转义：优先用注入的实现，否则用 js/core/format.js 的 Fmt.esc（与原本地实现逐字符一致） */
+  /** HTML 转义：优先用注入的实现，其次用 js/core/format.js 的 Fmt.esc；
+      两者都没有时用内置兜底 —— 原来这里会 `f(v)` 直接抛错，把整段渲染打断。
+      字符集与 Fmt.esc 一致（& < > " '）。 */
   function esc(v) {
     const f = deps.esc || (window.Fmt && window.Fmt.esc);
-    return f(v);
+    if (f) return f(v);
+    return String(v ?? '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function batchOptions() {

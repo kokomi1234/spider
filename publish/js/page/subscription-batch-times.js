@@ -36,8 +36,12 @@
   'use strict';
 
   const $ = (s) => document.querySelector(s);
-  // 延迟取，避免又多一处「脚本加载顺序敏感」的坑
-  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')))(v);
+  // 延迟取，避免又多一处「脚本加载顺序敏感」的坑。
+  // 兜底**必须真转义**：原来写成 String(x ?? '')，等于零转义 ——
+  // format.js 一旦没加载，innerHTML 的 XSS 防护就静默失效了。字符集与 Fmt.esc 一致。
+  const esc = (v) => ((window.Fmt && window.Fmt.esc) || ((x) => String(x ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')))(v);
 
   let batchTimeData = [];   // 弹窗内的可编辑行 { batch, testDate, releaseDate }
   let batchTimes = {};      // 已落盘的配置 { '2609批次': { testDate, releaseDate } }
