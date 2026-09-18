@@ -7,8 +7,9 @@
 !.env.example
 
 # 首页「常用查询」的共享文件：含真实查询条件 / 人名 / 部门，属运行时数据，不入库
-# （代理首次写入时自动创建；要多人共享就把它指到共享盘，见 proxy.js 的 PROXY_QUERIES_FILE）
-publish/config/saved-queries.json
+# （代理首次写入时自动创建于仓库根 shared/；要跨机器共享就把 PROXY_QUERIES_FILE
+#  指到共享盘，见 shared/README.md）
+shared/saved-queries.json
 
 # Real captured internal responses / sensitive network traces
 publish/cache/
@@ -32,6 +33,10 @@ output/*.png
 # publish 前端：npm install 产生的目录不入库
 # 注意：playwright-core 已 vendoring 在 publish/vendor/（零依赖，需随项目走），不要忽略它
 publish/node_modules/
+
+# macOS 重复下载副本：资源管理器里同名文件会落成 "xxx 2.js"，vendoring 目录因此长期脏
+# （2026-09-19 清理过 104 个，共 12.8MB；只在 vendor 内忽略，避免误伤正常文件名）
+publish/vendor/**/* 2.*
 
 # Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
 .workbuddy-ai
