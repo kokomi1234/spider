@@ -343,6 +343,11 @@
       }
     }
 
+    // 任务编号（弹窗里必填）：原来填了**从不进报文**（下面 serverNo / prodTaskNo 只取 row）。
+    // 口径：行数据里 serverNo / taskNo 有值仍以行为准（真实报文里这两项 = 服务编号
+    // M-202607-11289，不是用户手填的那个），行里没有才用表单值兜底 —— 否则用户填了等于没填。
+    const formTaskNo = (form && form.taskNo != null) ? String(form.taskNo).trim() : '';
+
     // 用 row / form 数据填充关键字段
     pubSub.id                         = row.id || null;
     pubSub.publishId                  = row.publishId || null;
@@ -359,15 +364,16 @@
     pubSub.documentName               = row.documentName || null;
     pubSub.documentNumber             = row.documentNumber || null;
     pubSub.subscriberComponentName    = row.subscriberComponentName || '';
-    pubSub.serverNo                   = row.serverNo || row.taskNo || null;
+    pubSub.serverNo                   = row.serverNo || row.taskNo || formTaskNo || null;
     pubSub.version                    = row.version || null;
     pubSub.prodBatch                  = row.prodBatch || null;
     // prodBatchList：行数据里这个字段恒为空（40/40 样本），而降级用的 offerVersionBatch 也是空的。
     // 两次真实成功报文里 prodBatchList 都等于 prodBatch（订阅的来源批次），所以按这个口径补，
     // 而不是发 null 让后端去猜。
     pubSub.prodBatchList              = row.prodBatchList || row.prodBatch || null;
-    // prodTaskNo：行里为空，两次真实报文里它都等于 serverNo（服务编号 M-YYYYMM-xxxxx）
-    pubSub.prodTaskNo                 = row.prodTaskNo || row.taskNo || row.serverNo || null;
+    // prodTaskNo：行里为空，两次真实报文里它都等于 serverNo（服务编号 M-YYYYMM-xxxxx）；
+    // 行与 serverNo 都拿不到时才退回表单里的任务编号
+    pubSub.prodTaskNo                 = row.prodTaskNo || row.taskNo || row.serverNo || formTaskNo || null;
     pubSub.assemblyNo                 = row.assemblyNo || row.provideSystemNumber || null;
     pubSub.assemblyName               = row.assemblyName || row.provideComponentName || null;
     pubSub.deptId                     = row.deptId || null;

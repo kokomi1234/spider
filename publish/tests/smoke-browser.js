@@ -1335,14 +1335,27 @@ const PAGES = [
           fails.push(`确认订阅应一并发出订阅与评委两个写请求，实际 ${JSON.stringify((vc.writesAll || []).map((w) => w.ep))}`);
         }
         if (subWrite && subWrite.body && subWrite.body.publishSubcription) {
-          if (subWrite.body.publishSubcription.serverCoding !== 'E00301TO1197') {
-            fails.push(`订阅报文里 serverCoding 应为行上的编码，实际 ${subWrite.body.publishSubcription.serverCoding}`);
+          const pub = subWrite.body.publishSubcription;
+          if (pub.serverCoding !== 'E00301TO1197') {
+            fails.push(`订阅报文里 serverCoding 应为行上的编码，实际 ${pub.serverCoding}`);
+          }
+          // 任务编号口径：行数据（taskNo=SMOKE-1）有值就以行为准，弹窗手填的 SMOKE-T1 不顶掉它
+          if (pub.serverNo !== 'SMOKE-1' || pub.prodTaskNo !== 'SMOKE-1') {
+            fails.push(`行数据有任务编号时应以行为准（serverNo/prodTaskNo=SMOKE-1），实际 ${pub.serverNo}/${pub.prodTaskNo}`);
           }
         }
         if (reviewWrite && reviewWrite.body) {
           const jl = reviewWrite.body.judgeInfoList || [];
           if (!jl.length || jl[0].judgeName !== '冒烟评委') {
             fails.push(`subscriptionReview 的 judgeInfoList 应带上填写的评委，实际 ${JSON.stringify(reviewWrite.body)}`);
+          }
+          // 抓包口径：每条评委 7 个键，角色名要映射出 judgeRoleId
+          const keys = jl.length ? Object.keys(jl[0]).sort().join(',') : '';
+          if (keys !== 'involvedProduct,judgeDeptId,judgeDeptName,judgeName,judgeRoleId,judgeRoleName,judgeUserId') {
+            fails.push(`judgeInfoList 的字段集应与抓包一致（7 个键），实际 ${keys}`);
+          }
+          if (jl.length && jl[0].judgeRoleId !== '03') {
+            fails.push(`「调用方产品负责人」应映射 judgeRoleId=03，实际 ${jl.length ? jl[0].judgeRoleId : 'MISSING'}`);
           }
           if (!reviewWrite.body.publishId) {
             fails.push('subscriptionReview 报文缺 publishId');

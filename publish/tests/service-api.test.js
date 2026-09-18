@@ -174,6 +174,35 @@ test('字段来源对齐真实报文：prodBatchList / prodTaskNo / isBackup 不
   assert.strictEqual(pub.isBackup, '否', '弹窗无此输入项，默认「否」');
 });
 
+test('任务编号（弹窗必填）在行数据没有 serverNo / taskNo 时兜底进报文', async () => {
+  // 弹窗里任务编号是必填，但原实现只把它收进 form、从不进报文（serverNo/prodTaskNo 只取 row）：
+  // 用户填了等于没填。口径 = 行里有值以行为准，行里没有才用表单值。
+  const { captured } = await captureBody((api) => api.subscribeWithForm(
+    { serverCoding: 'C1' }, { callerSystem: 'E00406', taskNo: 'T-2026-777' }));
+  const pub = captured.opts.body.publishSubcription;
+  assert.strictEqual(pub.serverNo, 'T-2026-777', '行里没有 serverNo/taskNo → 用表单的任务编号');
+  assert.strictEqual(pub.prodTaskNo, 'T-2026-777', 'prodTaskNo 同样兜底到表单值');
+});
+
+test('任务编号：行数据有 serverNo / taskNo 时仍以行为准（不被表单值顶掉）', async () => {
+  const withServerNo = await captureBody((api) => api.subscribeWithForm(
+    { serverCoding: 'C1', serverNo: 'M-202607-11289' }, { taskNo: 'T-2026-777' }));
+  const pub1 = withServerNo.captured.opts.body.publishSubcription;
+  assert.strictEqual(pub1.serverNo, 'M-202607-11289', '真实报文里 serverNo 就是行数据里的服务编号');
+  assert.strictEqual(pub1.prodTaskNo, 'M-202607-11289', 'prodTaskNo 跟随 serverNo');
+
+  const withRowTaskNo = await captureBody((api) => api.subscribeWithForm(
+    { serverCoding: 'C1', taskNo: 'M-202606-00001' }, { taskNo: 'T-2026-777' }));
+  const pub2 = withRowTaskNo.captured.opts.body.publishSubcription;
+  assert.strictEqual(pub2.serverNo, 'M-202606-00001', '行里的 taskNo 优先于表单值');
+  assert.strictEqual(pub2.prodTaskNo, 'M-202606-00001');
+
+  // 两边都没有 + 表单也空 → null（不编造）
+  const none = await captureBody((api) => api.subscribeWithForm({ serverCoding: 'C1' }, { taskNo: '   ' }));
+  assert.strictEqual(none.captured.opts.body.publishSubcription.serverNo, null);
+  assert.strictEqual(none.captured.opts.body.publishSubcription.prodTaskNo, null);
+});
+
 test('documents：优先用完整明细（真实报文里是 6 个字段）', async () => {
   const { captured } = await captureBody((api) => api.subscribeWithForm(ROW, {
     callerSystem: 'E00406',

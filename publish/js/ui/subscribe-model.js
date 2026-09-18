@@ -270,19 +270,33 @@
 
   /** getJudgeInfo（har/userinfo.har）返回行的候选字段名 */
   const JUDGE_API_KEYS = {
-    role: ['judgeRoleName', 'roleName', 'role'],
-    no:   ['judgeUserId', 'userId', 'empNo'],
-    name: ['judgeName', 'userName', 'name'],
-    dept: ['judgeDeptName', 'orgName', 'teamName', 'dept'],
+    role:   ['judgeRoleName', 'roleName', 'role'],
+    roleId: ['judgeRoleId', 'roleId'],
+    no:     ['judgeUserId', 'userId', 'empNo'],
+    name:   ['judgeName', 'userName', 'name'],
+    dept:   ['judgeDeptName', 'orgName', 'teamName', 'dept'],
+    deptId: ['judgeDeptId', 'teamId', 'deptId'],
   };
 
-  /** 评委接口行 → 表格要填的四元组 */
+  /**
+   * 角色名 → judgeRoleId。抓包（analysis/har/订阅.json 的两次 subscriptionReview）里
+   * 「调用方产品负责人 = 03」「服务方产品负责人 = 05」两次完全一致，正好覆盖弹窗的角色字典。
+   * 字典外的角色**不猜**：留空交给后端（宁可少发一个字段，也不要发错的角色号）。
+   */
+  const JUDGE_ROLE_IDS = {
+    调用方产品负责人: '03',
+    服务方产品负责人: '05',
+  };
+
+  /** 评委接口行 → 表格要填的字段（含提交报文要用的两个 id） */
   function judgeFieldsFromApi(it) {
     return {
-      role: pickField(it, JUDGE_API_KEYS.role),
-      no:   pickField(it, JUDGE_API_KEYS.no),
-      name: pickField(it, JUDGE_API_KEYS.name),
-      dept: pickField(it, JUDGE_API_KEYS.dept),
+      role:   pickField(it, JUDGE_API_KEYS.role),
+      roleId: pickField(it, JUDGE_API_KEYS.roleId),
+      no:     pickField(it, JUDGE_API_KEYS.no),
+      name:   pickField(it, JUDGE_API_KEYS.name),
+      dept:   pickField(it, JUDGE_API_KEYS.dept),
+      deptId: pickField(it, JUDGE_API_KEYS.deptId),
     };
   }
 
@@ -350,14 +364,24 @@
     return '';
   }
 
-  /** 评委行 → 提交接口的 judgeInfoList */
+  /**
+   * 评委行 → 提交接口的 judgeInfoList。
+   * 字段集与抓包（subscriptionReview）逐字对齐：每条评委 7 个键 ——
+   * judgeName / judgeUserId / judgeDeptName / involvedProduct / judgeRoleName
+   * / judgeRoleId / judgeDeptId（原先只发前 5 个，缺两个 id）。
+   * judgeRoleId 优先按**当前角色名**查抓包映射（角色被改过也不会残留旧 id），
+   * 映射里没有才退回接口带来的 roleId；judgeDeptId 由调用方从
+   * 「拉取评委」的 judgeDeptId 或选中人员的 teamId 一路带下来。
+   */
   function toJudgeInfoList(judges) {
     return (judges || []).map((j) => ({
-      judgeName:      j.name,
-      judgeUserId:    j.empNo,
-      judgeDeptName:  j.dept,
+      judgeName:       j.name,
+      judgeUserId:     j.empNo,
+      judgeDeptName:   j.dept,
       involvedProduct: '',
-      judgeRoleName:  j.role,
+      judgeRoleName:   j.role,
+      judgeRoleId:     JUDGE_ROLE_IDS[j.role] || j.roleId || '',
+      judgeDeptId:     j.deptId || '',
     }));
   }
 
@@ -540,6 +564,7 @@
     pickField,
     normalizeDigits,
     JUDGE_API_KEYS,
+    JUDGE_ROLE_IDS,
     judgeFieldsFromApi,
     roleOptionsWith,
     toServiceNoOptions,

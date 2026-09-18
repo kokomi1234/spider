@@ -26,6 +26,7 @@ test('SubscribeModel：暴露预期接口且冻结', () => {
   assert.strictEqual(typeof SM.PLACEHOLDER_TEXT, 'string');
   assert.strictEqual(typeof SM.JUDGE_ROW_TEMPLATE, 'string');
   assert.strictEqual(typeof SM.JUDGE_API_KEYS, 'object');
+  assert.deepStrictEqual(SM.JUDGE_ROLE_IDS, { 调用方产品负责人: '03', 服务方产品负责人: '05' });
   assert.strictEqual(Object.isFrozen(SM), true);   // 禁止外部改写
 });
 
@@ -192,12 +193,17 @@ test('pickField / judgeFieldsFromApi：接口行候选字段名', () => {
 
   const f = SM.judgeFieldsFromApi({
     judgeRoleName: '调用方产品负责人', judgeUserId: 'U1', judgeName: '张三', judgeDeptName: '某部',
+    judgeRoleId: '03', judgeDeptId: 'K4229',
   });
-  assert.deepStrictEqual(f, { role: '调用方产品负责人', no: 'U1', name: '张三', dept: '某部' });
-  // 兜底字段名
-  const g = SM.judgeFieldsFromApi({ role: 'R', empNo: 'E', userName: '李四', teamName: 'T' });
-  assert.deepStrictEqual(g, { role: 'R', no: 'E', name: '李四', dept: 'T' });
-  assert.deepStrictEqual(SM.judgeFieldsFromApi({}), { role: '', no: '', name: '', dept: '' });
+  assert.deepStrictEqual(f, {
+    role: '调用方产品负责人', roleId: '03', no: 'U1', name: '张三', dept: '某部', deptId: 'K4229',
+  });
+  // 兜底字段名（提交报文要的两个 id：roleId / teamId）
+  const g = SM.judgeFieldsFromApi({ role: 'R', roleId: '09', empNo: 'E', userName: '李四', teamName: 'T', teamId: 'D1' });
+  assert.deepStrictEqual(g, { role: 'R', roleId: '09', no: 'E', name: '李四', dept: 'T', deptId: 'D1' });
+  assert.deepStrictEqual(SM.judgeFieldsFromApi({}), {
+    role: '', roleId: '', no: '', name: '', dept: '', deptId: '',
+  });
 });
 
 test('roleOptionsWith：字典里没有该角色时才并入（命中时返回原数组本身）', () => {
@@ -229,15 +235,40 @@ test('deriveCallerServiceNo：调用方系统 + 服务编号尾部 TO 序号', (
   assert.strictEqual(SM.deriveCallerServiceNo(null, null), '');
 });
 
-test('toJudgeInfoList：评委行 → 提交接口结构', () => {
+test('toJudgeInfoList：评委行 → 提交接口结构（7 字段，与抓包一致）', () => {
   assert.deepStrictEqual(
-    SM.toJudgeInfoList([{ name: '张三', empNo: 'U1', dept: '某部', role: '调用方产品负责人' }]),
+    SM.toJudgeInfoList([{ name: '张三', empNo: 'U1', dept: '某部', role: '调用方产品负责人', deptId: 'K4229' }]),
     [{
       judgeName: '张三', judgeUserId: 'U1', judgeDeptName: '某部',
       involvedProduct: '', judgeRoleName: '调用方产品负责人',
+      judgeRoleId: '03', judgeDeptId: 'K4229',
     }],
   );
+  // 角色名 → judgeRoleId 按抓包映射（两份 subscriptionReview 里 03/05 两次都一致）
+  assert.strictEqual(
+    SM.toJudgeInfoList([{ name: '李四', role: '服务方产品负责人' }])[0].judgeRoleId, '05',
+  );
+  // 字典外的角色不猜：映射里没有，才退回接口给的 roleId；都没有就留空
+  assert.strictEqual(
+    SM.toJudgeInfoList([{ name: '王五', role: '某新角色', roleId: '09' }])[0].judgeRoleId, '09',
+  );
+  assert.strictEqual(
+    SM.toJudgeInfoList([{ name: '赵六', role: '某新角色' }])[0].judgeRoleId, '',
+  );
+  // 角色被改过时以当前角色名为准，不会残留接口带来的旧 id
+  assert.strictEqual(
+    SM.toJudgeInfoList([{ name: '李四', role: '服务方产品负责人', roleId: '03' }])[0].judgeRoleId, '05',
+  );
+  // 「拉取评委」来的行：deptId 直接透传
+  assert.strictEqual(
+    SM.toJudgeInfoList([{ name: '魏甜甜', role: '服务方产品负责人', deptId: '1465A' }])[0].judgeDeptId, '1465A',
+  );
   assert.deepStrictEqual(SM.toJudgeInfoList([]), []);
+  // 报文键集固定为抓包那 7 个（多一个少一个都要在这里失败）
+  assert.deepStrictEqual(
+    Object.keys(SM.toJudgeInfoList([{ name: 'A', empNo: 'U', dept: 'D', role: '调用方产品负责人', deptId: 'X' }])[0]).sort(),
+    ['involvedProduct', 'judgeDeptId', 'judgeDeptName', 'judgeName', 'judgeRoleId', 'judgeRoleName', 'judgeUserId'],
+  );
 });
 
 test('validateSubscribe：行 → 编码 → 已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS → 评委 → 任务编号', () => {

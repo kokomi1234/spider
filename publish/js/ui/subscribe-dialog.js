@@ -697,6 +697,10 @@
     const noKey = 'judge-no-' + judgeSeq;
     tr._noKey = noKey;
     tr._userMap = {};   // userId -> 用户对象，选中工号后联动姓名/部门
+    // 提交报文要用的两个 id：judgeRoleId / judgeDeptId（抓包 7 字段口径）。
+    // 角色 id 由 toJudgeInfoList 按角色名查映射，这里只需记住部门 id ——
+    // 来源两条：「拉取评委」的 judgeDeptId，或选中人员的 teamId（抓包样本里两者相等）。
+    tr._judgeDeptId = '';
     if (typeof window.createSearchableSelect === 'function') {
       tr._noInstance = window.createSearchableSelect(noSel, [], {});
       bindTypedCapture(noKey, noSel);
@@ -834,6 +838,9 @@
       // 部门要的是小组级的 teamName（如「中国银行软件中心（深圳）开发三部」），
       // orgName 只有到软件中心一级，所以 teamName 优先。
       if (deptEl) deptEl.value = u.teamName || u.orgName || deptEl.value;
+      // 提交报文里的 judgeDeptId 就是该用户的 teamId（抓包样本：吴树海 teamId=K4229
+      // 与 subscriptionReview 的 judgeDeptId=K4229 一致）
+      tr._judgeDeptId = u.teamId || u.deptId || tr._judgeDeptId || '';
     });
   }
 
@@ -889,10 +896,15 @@
       const deptEl = tr.querySelector('.judge-dept');
       if (f.name) nameEl.value = f.name;
       if (f.dept) deptEl.value = f.dept;
-      if (tr._userMap) tr._userMap[f.no] = { userId: f.no, userName: f.name, orgName: f.dept, teamName: f.dept };
+      // 提交报文要的两个 id 直接来自接口（抓包：judgeRoleId='05'、judgeDeptId='1465A'）
+      tr._judgeRoleId = f.roleId || '';
+      tr._judgeDeptId = f.deptId || '';
+      if (tr._userMap) tr._userMap[f.no] = { userId: f.no, userName: f.name, orgName: f.dept, teamName: f.dept, teamId: f.deptId };
       // 顺手沉淀到共享缓存：后面新增的评委行也能即时搜到这批人
       if (f.no) {
-        judgeUserCache.cacheUsers([{ userId: f.no, userName: f.name, orgName: f.dept, teamName: f.dept }]);
+        judgeUserCache.cacheUsers([{
+          userId: f.no, userName: f.name, orgName: f.dept, teamName: f.dept, teamId: f.deptId,
+        }]);
       }
       if (f.no && tr._noInstance) {
         try {
@@ -1015,12 +1027,17 @@
       const noInst = tr._noInstance;
       const noPicked = noInst ? String(noInst.getValue() || '').trim() : String((noEl && noEl.value) || '');
       const noVal = noPicked || searchableText(tr._noKey, noEl);
+      const empNo = String(noVal || '').trim();
+      // judgeDeptId 兜底：行上没记（手输工号、没经过选中）就从已搜到的用户缓存里取 teamId
+      const cached = empNo ? judgeUserCache.get(empNo) : null;
       out.push({
         role: roleVal,
         roleText: roleVal,  // DICT.judgeRole 里 value === label
-        empNo: String(noVal || '').trim(),
+        roleId: tr._judgeRoleId || '',
+        empNo,
         name: (tr.querySelector('.judge-name').value || '').trim(),
         dept: (tr.querySelector('.judge-dept').value || '').trim(),
+        deptId: tr._judgeDeptId || (cached && cached.teamId) || '',
       });
     });
     return out;
