@@ -351,6 +351,51 @@ const PAGES = [
           return out;
         });
 
+        // 导出 / 导入：跨浏览器、跨电脑交换常用查询的唯一通路（本机 localStorage 不共享）
+        const ioCheck = await page.evaluate(() => {
+          const out = {};
+          const S = window.SavedQuery;
+          if (!S) return { err: 'SavedQuery 未加载' };
+          S.clear();
+          out.hasButtons = !!document.getElementById('btnExportQueries')
+            && !!document.getElementById('btnImportQueries');
+          if (!S.importJson || !S.exportJson) return { err: '缺少 exportJson / importJson' };
+
+          S.save({ page: 'publish', name: '本机查询', fields: {}, owner: null });
+          const text = S.exportJson();
+          out.exportHasApp = /"app":\s*"spider-saved-queries"/.test(text);
+          out.exportCount = (JSON.parse(text).items || []).length;
+
+          // 模拟「同事发来的文件」：导入后应新增
+          const incoming = JSON.stringify({
+            app: 'spider-saved-queries',
+            items: [{
+              id: 'from-peer', page: 'task', name: '同事的查询', fields: {},
+              owner: { userId: '1001', userName: '李四', orgId: '1645A', orgName: '中国银行软件中心（深圳）', teamId: 'M2534', teamName: '中国银行软件中心（深圳）开发一部' },
+              hits: 4, saves: 2,
+            }],
+          });
+          const r1 = S.importJson(incoming);
+          out.firstImport = { ok: r1.ok, added: r1.added, total: r1.total };
+          const r2 = S.importJson(incoming);   // 重复导入应幂等
+          out.secondImport = { added: r2.added, merged: r2.merged, total: r2.total };
+          out.renderedCount = (window.HomePage.render(), document.querySelectorAll('#savedList .saved-item').length);
+
+          S.clear();
+          return out;
+        });
+        process.stdout.write(`  导出/导入: ${JSON.stringify(ioCheck)}\n`);
+        const ioOk = !ioCheck.err && ioCheck.hasButtons && ioCheck.exportHasApp
+          && ioCheck.exportCount === 1
+          && ioCheck.firstImport && ioCheck.firstImport.ok && ioCheck.firstImport.added === 1
+          && ioCheck.firstImport.total === 2
+          && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 2
+          && ioCheck.renderedCount === 2;
+        if (!ioOk) {
+          process.stdout.write(`    [FAIL] 导出/导入异常：${JSON.stringify(ioCheck)}\n`);
+          anyFail = true;
+        }
+
         process.stdout.write(`  当前用户/部门排行: ${JSON.stringify(deptCheck)}\n`);
         const deptOk = !deptCheck.err
           && deptCheck.emptyHintHasGuide === true && deptCheck.deptCountBefore === 0

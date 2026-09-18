@@ -365,6 +365,58 @@
   }
 
   // ══════════════════════════════════════════════════════
+  // 导出 / 导入（跨浏览器、跨电脑的唯一通路）
+  // ══════════════════════════════════════════════════════
+  //
+  // 为什么需要：记录在本机 localStorage。「同团队互相看到」在**同一台机器**上才自然成立，
+  // 换电脑/换浏览器就是两份互不相干的数据（不是权限问题）。没有后端接口的前提下，
+  // 只能靠文件交换：这边导出 JSON，那边导入合并。
+
+  function exportQueries() {
+    const S = window.SavedQuery;
+    if (!S) { showToast('常用查询模块未加载', 2600, 'error'); return; }
+    const items = S.list();
+    if (!items.length) { showToast('还没有常用查询可以导出', 2600, 'warn'); return; }
+
+    const blob = new Blob([S.exportJson()], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = (window.Fmt && typeof window.Fmt.stamp === 'function') ? window.Fmt.stamp() : '';
+    a.href = url;
+    a.download = `常用查询${stamp ? '_' + stamp : ''}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast(`已导出 ${items.length} 条，发给同团队的人让他「导 入」即可合并`, 3600, 'success');
+  }
+
+  function importQueries() {
+    const S = window.SavedQuery;
+    if (!S) { showToast('常用查询模块未加载', 2600, 'error'); return; }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.style.display = 'none';
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (!file) { input.remove(); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const r = S.importJson(String(reader.result || ''));
+        input.remove();
+        if (!r.ok) { showToast(r.error || '导入失败', 3800, 'error'); return; }
+        render();
+        showToast(`已导入：新增 ${r.added} 条、合并 ${r.merged} 条，本机现有 ${r.total} 条`, 4000, 'success');
+      };
+      reader.onerror = () => { input.remove(); showToast('读取文件失败', 3000, 'error'); };
+      reader.readAsText(file, 'utf-8');
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  // ══════════════════════════════════════════════════════
   // 装配
   // ══════════════════════════════════════════════════════
 
@@ -382,6 +434,8 @@
     if (CU && e.key === CU.STORAGE_KEY) renderUser();
   });
 
+  if ($('#btnExportQueries')) $('#btnExportQueries').addEventListener('click', exportQueries);
+  if ($('#btnImportQueries')) $('#btnImportQueries').addEventListener('click', importQueries);
   if ($('#btnUserSearch')) $('#btnUserSearch').addEventListener('click', doUserSearch);
   if ($('#btnUserChange')) $('#btnUserChange').addEventListener('click', switchUser);
   if (userKeywordEl) {

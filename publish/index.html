@@ -300,7 +300,15 @@
     <div class="card">
       <div class="card-head">
         <h2>常用查询</h2>
-        <span class="result-count" id="savedCount" aria-live="polite"></span>
+        <div class="toolbar">
+          <span class="result-count" id="savedCount" aria-live="polite"></span>
+          <!-- 数据在本机 localStorage：换浏览器/换电脑就看不到别人的，
+               同团队要对齐就用这两个按钮交换（导出的是本机全部，不只本部门） -->
+          <button type="button" class="outlined btn-xs" id="btnExportQueries"
+                  title="把本机全部常用查询导出成 JSON，发给同团队的人">导 出</button>
+          <button type="button" class="outlined btn-xs" id="btnImportQueries"
+                  title="导入他人导出的 JSON（按 id 或同页面同名合并，重复导入不会翻倍）">导 入</button>
+        </div>
       </div>
       <div class="card-body">
         <div class="saved-list" id="savedList"></div>
@@ -329,7 +337,9 @@
         <div class="saved-list" id="deptList"></div>
         <div class="home-empty" id="deptEmpty" hidden></div>
         <p class="home-note">
-          本机口径：只统计这台电脑上保存/打开过的查询，按打开次数排序，未上传到服务端。
+          <strong>本机口径</strong>：只统计<strong>这台电脑、这个浏览器</strong>里保存/打开过的查询，
+          按打开次数排序，未上传到服务端。换电脑或换浏览器<b>看不到别人的记录</b>（数据不共享）——
+          要和同团队的人对齐，用上方「导 出 / 导 入」交换一次即可。
           设置「当前用户」后，你自己保存的查询会自动归入所在部门。
         </p>
       </div>

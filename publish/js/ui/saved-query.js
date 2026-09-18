@@ -298,6 +298,66 @@
     return writeRaw([]);
   }
 
+  /**
+   * 导出成可交换的 JSON 文本。
+   * 为什么需要：数据在本机 localStorage 里，**换浏览器 / 换电脑就看不到别人的**
+   * （不是权限问题，是物理上不共享）。同团队要对齐常用查询时，
+   * 至少能一键导出、对方一键导入合并。
+   */
+  function exportJson() {
+    return JSON.stringify({
+      app: 'spider-saved-queries',
+      v: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      items: list(),
+    }, null, 2);
+  }
+
+  /**
+   * 导入他人导出的 JSON（按 id 或「同页面同名」合并，幂等）。
+   * 计数取 max 而不是相加 —— 反复导入同一个文件不该把「高频」刷上去。
+   * @returns {{ok:boolean, added?:number, merged?:number, total?:number, error?:string}}
+   */
+  function importJson(text) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(text || ''));
+    } catch (_) {
+      return fail('不是合法的 JSON 文件');
+    }
+    const incoming = Array.isArray(parsed)
+      ? parsed
+      : (parsed && Array.isArray(parsed.items) ? parsed.items : null);
+    if (!incoming) return fail('文件里没有 items 数组（确认是本页「导出」出来的文件？）');
+
+    const valid = incoming.map(sanitize).filter(Boolean);
+    if (!valid.length) return fail('文件里没有可用的常用查询');
+
+    const items = list();
+    let added = 0;
+    let merged = 0;
+    valid.forEach((inc) => {
+      const same = items.find((it) => it.id === inc.id
+        || (it.page === inc.page && it.name === inc.name));
+      if (same) {
+        same.hits = Math.max(same.hits || 0, inc.hits || 0);
+        same.saves = Math.max(same.saves || 1, inc.saves || 1);
+        same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
+        if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
+        merged += 1;
+      } else {
+        items.push(inc);
+        added += 1;
+      }
+    });
+
+    if (items.length > MAX_ITEMS) {
+      return fail(`合并后共 ${items.length} 条，超过上限 ${MAX_ITEMS} 条，请先清理一些再导入`);
+    }
+    const w = writeRaw(items);
+    return w.ok ? { ok: true, added, merged, total: items.length } : w;
+  }
+
   /** 各页跳转地址（与 proxy.js 的干净路由一致） */
   function hrefFor(page, id) {
     const base = page === 'task' ? '/task' : page === 'subscription' ? '/subscription' : '/publish';
@@ -317,6 +377,8 @@
     hit,
     listByDept,
     deptKeyOf,
+    exportJson,
+    importJson,
     remove,
     clear,
     hrefFor,

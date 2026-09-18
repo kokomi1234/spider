@@ -440,3 +440,101 @@ test('saved-query：新增的保存排在最前（首页按最近使用展示）
   assert.ok(ids.includes(a.item.id) && ids.includes(b.item.id));
   if (b.item.at > a.item.at) assert.strictEqual(ids[0], b.item.id, '最近保存的应排最前');
 });
+
+// ══════════════════════════════════════════════════════════
+// 6) 导出 / 导入（跨浏览器、跨电脑的唯一通路）
+// ══════════════════════════════════════════════════════════
+
+test('saved-query：导出 → 导入 往返，记录与归属都在', () => {
+  const a = load(fakeStorage());
+  a.save({ page: 'publish', name: '甲', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611批次', owner: OWNER_A, labels: { f_prodBatch: '2611批次' } });
+  const text = a.exportJson();
+  const parsed = JSON.parse(text);
+  assert.strictEqual(parsed.app, 'spider-saved-queries', '要带标识，导入方好判断文件来源');
+  assert.strictEqual(parsed.items.length, 1);
+
+  const b = load(fakeStorage());
+  const r = b.importJson(text);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.added, 1);
+  assert.strictEqual(r.merged, 0);
+  const got = b.list()[0];
+  assert.strictEqual(got.name, '甲');
+  assert.strictEqual(got.owner.userName, '张三', '归属要跟着走，否则导入后不进部门排行');
+  assert.deepStrictEqual(got.labels, { f_prodBatch: '2611批次' });
+});
+
+test('saved-query：同 id / 同页面同名 视为同一条合并，不重复堆积', () => {
+  const S = load(fakeStorage());
+  const mine = S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
+  S.hit(mine.item.id);
+  S.hit(mine.item.id);   // 本机打开 2 次
+
+  const other = {
+    app: 'spider-saved-queries', v: 2,
+    items: [{
+      id: '别人的id', page: 'publish', name: '共同查询',
+      fields: { a: '1' }, owner: OWNER_B, hits: 5, saves: 3, lastAt: Date.now(),
+    }],
+  };
+  const r = S.importJson(JSON.stringify(other));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.added, 0, '同页面同名要合并，不能再加一条');
+  assert.strictEqual(r.merged, 1);
+  assert.strictEqual(S.list().length, 1);
+  assert.strictEqual(S.list()[0].hits, 5, '打开次数取较大值（本机 2 次 vs 对方 5 次）');
+  assert.strictEqual(S.list()[0].owner.userName, '张三', '本地已有归属时不覆盖');
+});
+
+test('saved-query：重复导入同一文件幂等 —— 不会把「高频」刷上去', () => {
+  const S = load(fakeStorage());
+  const payload = JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{ id: 'q1', page: 'task', name: '甲', fields: {}, hits: 3, saves: 2, owner: OWNER_A }],
+  });
+  S.importJson(payload);
+  S.importJson(payload);
+  S.importJson(payload);
+  assert.strictEqual(S.list().length, 1);
+  assert.strictEqual(S.list()[0].hits, 3, '反复导入不该累加，否则排行会被刷');
+});
+
+test('saved-query：本地没归属时，导入能把 owner 补上', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'task', name: '甲', fields: {} });   // 没设当前用户 → owner 为 null
+  assert.strictEqual(S.list()[0].owner, null);
+  S.importJson(JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{ id: 'q9', page: 'task', name: '甲', fields: {}, owner: OWNER_A }],
+  }));
+  assert.strictEqual(S.list()[0].owner.userName, '张三');
+});
+
+test('saved-query：导入脏文件一律报错，不破坏现有数据', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'task', name: '原有', fields: {} });
+  const bad = [
+    ['坏 JSON', '{不是 json'],
+    ['不是本工具的结构', '{"hello":"world"}'],
+    ['items 全是不合法项', '{"items":[{"id":""},{"page":"不存在"}]}'],
+    ['空文本', ''],
+  ];
+  bad.forEach(([label, text]) => {
+    const r = S.importJson(text);
+    assert.strictEqual(r.ok, false, `${label} 应报错`);
+    assert.ok(r.error, `${label} 要给出原因`);
+  });
+  assert.strictEqual(S.list().length, 1, '失败的导入不能动到已有记录');
+});
+
+test('saved-query：合并后超过上限 → 拒绝并保留原数据', () => {
+  const S = load(fakeStorage());
+  const items = [];
+  for (let i = 0; i < S.MAX_ITEMS + 5; i += 1) {
+    items.push({ id: 'x' + i, page: 'task', name: 'q' + i, fields: {} });
+  }
+  const r = S.importJson(JSON.stringify({ app: 'spider-saved-queries', items }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(/上限/.test(r.error), '要说清为什么拒绝：' + r.error);
+  assert.strictEqual(S.list().length, 0, '拒绝时不能只写一半');
+});
