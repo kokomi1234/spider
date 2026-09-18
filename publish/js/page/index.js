@@ -541,7 +541,14 @@
       return;
     }
     const summary = buildSnapshotSummary(fields);
-    const suggest = (fields.f_prodBatch || '') + (fields.f_provideSystemNumber ? ` ${fields.f_provideSystemNumber}` : '');
+    // 默认名一律用人类可读文本（「2706批次 BOCNET-G-IFS」），不要把 2706pc / E00301
+    // 这种编号当名字塞给用户 —— 编号只用于回填表单，展示层不出现。
+    // 取法固定为「先批次、再系统」：这两个是定位一组发布数据的主要维度，
+    // 也是用户口头描述时最自然的顺序。
+    const suggest = ['f_prodBatch', 'f_provideSystemNumber']
+      .filter((id) => fields[id])
+      .map((id) => displayTextFor(id, fields[id]))
+      .join(' ');
 
     let name = '';
     try {

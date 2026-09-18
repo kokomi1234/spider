@@ -110,6 +110,7 @@ publish/
 ├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）、
 │                        #   模块化方案评估.md（ESM/注册表的结论与顺序约定）
 ├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）
+│                        #   + live-probe-saved-query.js（联调诊断，需代理与后端可达）
 ├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
 └── tools/               # 开发工具，不参与页面加载
     ├── har-import.js        # HAR → cache/（离线回放的数据来源）
