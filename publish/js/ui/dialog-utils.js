@@ -11,6 +11,9 @@
  *   DialogUtils.unlockScroll()            关闭弹窗时调用（计数归零才真正解锁）
  *   DialogUtils.forceUnlockAll()         兜底：关闭最外层弹窗时一次性解锁
  *   DialogUtils.makeDraggable(dialog, handle)  让标题栏可以拖动整个弹窗
+ *   DialogUtils.openUtilDialog(cfg)       通用弹窗骨架（promptText / confirmBox 都基于它）
+ *   DialogUtils.promptText(opts)          替代 window.prompt
+ *   DialogUtils.confirmBox(opts)          替代 window.confirm
  *
  * ── 滚动锁定的做法 ────────────────────────────────────
  * CSS 侧只有一条 `body.dialog-open { overflow: hidden }`（在 theme.css）。
@@ -373,6 +376,7 @@
       unlockScroll,
       forceUnlockAll,
       makeDraggable,
+      openUtilDialog,
       promptText,
       confirmBox,
     };
