@@ -23,7 +23,10 @@
     // 首页：三个查询页入口 + 常用查询。它不依赖任何查询模块，
     // 少了谁都不能让它白屏，所以把 SavedQuery 点名在这里（渲染列表要用）。
     home: [
-      ['SavedQuery', () => has(window.SavedQuery, 'list') && has(window.SavedQuery, 'save')],
+      ['SavedQuery', () => has(window.SavedQuery, 'list') && has(window.SavedQuery, 'save')
+        && has(window.SavedQuery, 'listByDept')],
+      ['CurrentUser', () => has(window.CurrentUser, 'get') && has(window.CurrentUser, 'lookup')],
+      ['UserApi', () => has(window.UserApi, 'fetchUserList')],
       ['toast', () => typeof window.toast === 'function'],
     ],
     // 服务发布数据查询页（publish.html，旧 index.html 迁过来的）

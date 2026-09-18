@@ -59,7 +59,7 @@ function startServer() {
 const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'SavedQuery', 'HomePage', 'DialogUtils', 'PopupPosition'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition'] },
   { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
@@ -285,6 +285,85 @@ const PAGES = [
             || JSON.stringify(labelCheck.multiLabels) === JSON.stringify(['2611批次', '2608批次']));
         if (!labelOk) {
           process.stdout.write(`    [FAIL] 下拉/多选取人类可读文本异常：${JSON.stringify(labelCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'index.html') {
+        // 当前用户 + 部门常用查询（本机口径）。
+        // 用一个假的 UserApi 顶掉真接口（冒烟没有后端），验完整链路：
+        // 填姓名 → 查到人 → 落到 localStorage → 保存的查询带上归属 → 部门区出现排行。
+        const deptCheck = await page.evaluate(async () => {
+          const out = {};
+          const S = window.SavedQuery;
+          const CU = window.CurrentUser;
+          if (!S || !CU) return { err: 'SavedQuery / CurrentUser 未加载' };
+
+          const ME = {
+            userId: '4711510', userName: '张三',
+            orgId: '1645A', orgName: '中国银行软件中心（深圳）',
+            teamId: 'K4229', teamName: '中国银行软件中心（深圳）开发三部',
+          };
+          window.UserApi = {
+            fetchUserList: async () => ({ ok: true, list: [ME] }),
+            fetchUserDetail: async () => ({ ok: true, user: ME }),
+          };
+
+          S.clear(); CU.clear(); window.HomePage.render();
+
+          // ① 未设置用户：部门区要给引导，不能显示成「本部门暂无」
+          out.emptyHintHasGuide = /当前用户/.test(document.getElementById('deptEmpty').textContent);
+          out.deptCountBefore = document.querySelectorAll('#deptList .saved-item').length;
+
+          // ② 填姓名 → 查到唯一一人 → 自动成为当前用户，且被记住
+          document.getElementById('userKeyword').value = '张三';
+          document.getElementById('btnUserSearch').click();
+          await new Promise((r) => setTimeout(r, 250));
+          out.userLabel = document.getElementById('userLabel').textContent;
+          out.userPersisted = !!(CU.get() && CU.get().teamId === 'K4229');
+          out.formHidden = document.getElementById('userForm').hidden;
+
+          // ③ 保存一条（走真实保存链路，owner 自动取当前用户）
+          const s = S.save({
+            page: 'publish', name: '部门冒烟查询',
+            fields: { f_prodBatch: '2706pc' }, labels: { f_prodBatch: '2706批次' },
+            summary: '变更批次：2706批次',
+          });
+          out.saved = s.ok;
+          window.HomePage.render();
+
+          out.deptTitle = document.getElementById('deptTitle').textContent;
+          out.deptCount = document.querySelectorAll('#deptList .saved-item').length;
+          const meta = document.querySelector('#deptList .saved-item .saved-meta');
+          out.deptMeta = meta ? meta.textContent : '';
+          out.deptHasOps = document.querySelectorAll('#deptList .saved-ops').length; // 只读视图，应为 0
+          out.deptHref = (document.querySelector('#deptList a.saved-main') || {}).getAttribute
+            ? document.querySelector('#deptList a.saved-main').getAttribute('href') : '';
+
+          // ④ 条数切换要记住在 localStorage
+          const sel = document.getElementById('deptTopN');
+          sel.value = '5';
+          sel.dispatchEvent(new Event('change'));
+          out.topNSaved = localStorage.getItem('spider.deptTopN.v1');
+          out.topNSelected = document.getElementById('deptTopN').value;
+
+          S.clear(); CU.clear();
+          return out;
+        });
+
+        process.stdout.write(`  当前用户/部门排行: ${JSON.stringify(deptCheck)}\n`);
+        const deptOk = !deptCheck.err
+          && deptCheck.emptyHintHasGuide === true && deptCheck.deptCountBefore === 0
+          && /张三/.test(deptCheck.userLabel || '') && /开发三部/.test(deptCheck.userLabel || '')
+          && deptCheck.userPersisted === true && deptCheck.formHidden === true
+          && deptCheck.saved === true && deptCheck.deptCount === 1
+          && /开发三部/.test(deptCheck.deptTitle || '')
+          && /张三/.test(deptCheck.deptMeta || '') && /打开 0 次/.test(deptCheck.deptMeta || '')
+          && deptCheck.deptHasOps === 0
+          && /\/publish\?saved=/.test(deptCheck.deptHref || '')
+          && deptCheck.topNSaved === '5' && deptCheck.topNSelected === '5';
+        if (!deptOk) {
+          process.stdout.write(`    [FAIL] 当前用户 / 部门常用查询异常：${JSON.stringify(deptCheck)}\n`);
           anyFail = true;
         }
       }

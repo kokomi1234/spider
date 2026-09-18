@@ -122,7 +122,8 @@
       padding: 2px 8px;
       font-weight: 500;
     }
-    .saved-item .saved-summary {
+    .saved-item .saved-summary,
+    .saved-item .saved-meta {
       margin-top: 3px;
       font-size: var(--fs-nano);
       color: var(--muted);
@@ -139,6 +140,64 @@
       gap: 6px;
       flex-shrink: 0;
       padding: 10px 12px;
+    }
+
+    /* 当前用户 */
+    .home-user { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .home-user .user-label {
+      font-size: var(--fs-md);
+      font-weight: 600;
+      color: var(--on-surface);
+      word-break: break-all;
+    }
+    .home-user-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .home-input {
+      flex: 1 1 260px;
+      min-width: 0;
+      padding: 8px 12px;
+      font-size: var(--fs-md);
+      font-family: inherit;
+      color: var(--on-surface);
+      background: var(--surface);
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      min-height: 38px;
+    }
+    .home-input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-c);
+    }
+    .home-user-cands { margin-top: 10px; display: grid; gap: 6px; }
+    .home-user-cands .cand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      background: var(--surface);
+      cursor: pointer;
+      text-align: left;
+      font-family: inherit;
+      font-size: var(--fs-sm);
+      color: var(--on-surface);
+      width: 100%;
+    }
+    .home-user-cands .cand:hover { border-color: var(--primary); background: var(--surface-1); }
+    .home-user-cands .cand .cand-id { color: var(--muted); font-size: var(--fs-nano); }
+
+    /* 部门排行：条数切换 */
+    .dept-topn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
+    .dept-topn select {
+      padding: 4px 8px;
+      font-size: var(--fs-xs);
+      font-family: inherit;
+      color: var(--on-surface);
+      background: var(--surface);
+      border: 1px solid var(--outline);
+      border-radius: var(--r-xs);
+      min-height: 30px;
     }
 
     .home-empty {
@@ -212,6 +271,30 @@
       </a>
     </div>
 
+    <!-- ═══ 当前用户（查询人）═══ -->
+    <div class="card" id="userCard">
+      <div class="card-head">
+        <h2>当前用户</h2>
+        <span class="result-count" id="userHint" aria-live="polite"></span>
+      </div>
+      <div class="card-body">
+        <div class="home-user" id="userSet" hidden>
+          <span class="user-label" id="userLabel"></span>
+          <button type="button" class="outlined btn-xs" id="btnUserChange">切换</button>
+        </div>
+        <div class="home-user-form" id="userForm">
+          <input type="text" id="userKeyword" class="home-input"
+                 placeholder="输入工号或姓名，如 4711510 / 张三" aria-label="工号或姓名">
+          <button type="button" class="filled btn-sm" id="btnUserSearch">查 询</button>
+        </div>
+        <div class="home-user-cands" id="userCands" hidden></div>
+        <p class="field-note">
+          用于把常用查询归到你的部门（可在首页看本部门的常用查询）。
+          只保存在这台电脑上，不上传。
+        </p>
+      </div>
+    </div>
+
     <!-- ═══ 常用查询（快捷入口）═══ -->
     <div class="card">
       <div class="card-head">
@@ -227,9 +310,33 @@
       </div>
     </div>
 
+    <!-- ═══ 部门常用查询（本机口径的排行）═══ -->
+    <div class="card" id="deptCard">
+      <div class="card-head">
+        <h2 id="deptTitle">部门常用查询</h2>
+        <div class="toolbar">
+          <label class="dept-topn" for="deptTopN">显示
+            <select id="deptTopN">
+              <option value="5">5 条</option>
+              <option value="10" selected>10 条</option>
+              <option value="20">20 条</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="saved-list" id="deptList"></div>
+        <div class="home-empty" id="deptEmpty" hidden></div>
+        <p class="home-note">
+          本机口径：只统计这台电脑上保存/打开过的查询，按打开次数排序，未上传到服务端。
+          设置「当前用户」后，你自己保存的查询会自动归入所在部门。
+        </p>
+      </div>
+    </div>
+
     <p class="home-note">
       数据来自 ITAMP 内网服务，需通过本地代理（<code>node proxy.js</code>）访问；
-      常用查询只存在本机浏览器（localStorage），不上传、不共享。
+      常用查询与当前用户只存在本机浏览器（localStorage），不上传、不共享。
     </p>
   </div>
 
@@ -248,6 +355,9 @@
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/ui/toast.js"></script>
   <script src="js/ui/token-manager.js"></script>
+  <script src="js/core/api-client.js"></script>
+  <script src="js/api/user-api.js"></script>
+  <script src="js/ui/current-user.js"></script>
   <script src="js/ui/saved-query.js"></script>
   <script src="js/core/bootstrap.js"></script>
   <script src="js/page/home.js"></script>

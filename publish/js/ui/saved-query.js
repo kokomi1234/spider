@@ -73,6 +73,36 @@
     return null;
   }
 
+  /** 查询人信息只收字符串字段：它会被渲染到首页卡片上，不能有任意结构 */
+  function cleanOwner(owner) {
+    if (!owner || typeof owner !== 'object') return null;
+    // 后端有时把工号给成数字，这里统一成字符串再存（否则会被当成脏值丢掉）
+    const pick = (k) => {
+      const v = owner[k];
+      if (typeof v === 'string') return v.trim();
+      if (typeof v === 'number' && isFinite(v)) return String(v);
+      return '';
+    };
+    const o = {
+      userId: pick('userId'), userName: pick('userName'),
+      orgId: pick('orgId'), orgName: pick('orgName'),
+      teamId: pick('teamId'), teamName: pick('teamName'),
+    };
+    return (o.userId || o.userName || o.orgId || o.orgName || o.teamId || o.teamName) ? o : null;
+  }
+
+  /**
+   * 部门主键：**team 优先，org 兜底**。
+   * 依据真实报文（2026-09-18 实测 getUserInfo）：
+   *   orgName  = "中国银行软件中心（深圳）"      ← 整个一级单位，几百人
+   *   teamName = "…（深圳）开发三部"            ← 用户口语里的「我们部门」
+   * 拿 orgName 当部门会让整个软件中心算一个部门，排行就没意义了。
+   */
+  function deptKeyOf(u) {
+    if (!u || typeof u !== 'object') return '';
+    return String(u.teamId || u.teamName || u.orgId || u.orgName || '').trim();
+  }
+
   /** labels 只收 string（展示用），空值丢弃 */
   function cleanLabels(labels) {
     const out = {};
@@ -117,10 +147,46 @@
       name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '未命名查询',
       summary: typeof item.summary === 'string' ? item.summary : '',
       labels,
+      owner: cleanOwner(item.owner),
+      hits: Number.isFinite(item.hits) && item.hits > 0 ? Math.floor(item.hits) : 0,
+      saves: Number.isFinite(item.saves) && item.saves > 0 ? Math.floor(item.saves) : 1,
+      lastAt: typeof item.lastAt === 'number' ? item.lastAt : 0,
       v: typeof item.v === 'number' ? item.v : 1,   // 缺省 1 = 升级前的旧格式
       at: typeof item.at === 'number' ? item.at : 0,
       fields,
     };
+  }
+
+  /**
+   * 某个部门的常用查询排行（**本机口径**：只统计这台浏览器上记录过的查询）。
+   * 排序：打开次数降序 → 最近打开时间降序 → 保存时间降序。
+   * @param {{orgId?:string, orgName?:string}} user 当前用户（用它的部门做过滤）
+   * @param {number} [limit] 取前几条（首页的 5/10/20）
+   */
+  function listByDept(user, limit) {
+    const key = deptKeyOf(user);
+    if (!key) return [];
+    const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+    return list()
+      .filter((it) => deptKeyOf(it.owner) === key)
+      .sort((a, b) =>
+        (b.hits - a.hits)
+        || ((b.lastAt || b.at) - (a.lastAt || a.at))
+        || (b.at - a.at))
+      .slice(0, n);
+  }
+
+  /** 从首页点开一次 → 计一次打开（「高频」的依据；纯本地计数，不上报） */
+  function hit(id) {
+    if (!id) return fail('缺少 id');
+    const items = list();
+    const target = items.find((it) => it.id === id);
+    if (!target) return fail('该查询已不存在');
+    const next = items.map((it) => (it.id === id
+      ? { ...it, hits: it.hits + 1, lastAt: Date.now() }
+      : it));
+    const w = writeRaw(next);
+    return w.ok ? { ok: true, item: next.find((it) => it.id === id) } : w;
   }
 
   function list() {
@@ -143,7 +209,7 @@
    * 保存一份常用查询。
    * 同名同页视为「更新」（保留原 id 与排序位置），否则新增；超过上限报错。
    */
-  function save({ page, name, fields, summary, labels }) {
+  function save({ page, name, fields, summary, labels, owner }) {
     if (!page || !PAGES[page]) return fail('未知的页面类型');
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
@@ -162,6 +228,13 @@
       name: title,
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
+      // 谁保存的（用于部门排行）。没显式传就取「当前用户」——
+      // 三个查询页因此不必各自接一次线，少三处漏传的可能。
+      owner: cleanOwner(owner || (window.CurrentUser && window.CurrentUser.get())),
+      // 同名同页覆盖时累加保存次数，而不是重置——「高频」既看打开也看保存
+      saves: exists ? (exists.saves || 1) + 1 : 1,
+      hits: exists ? (exists.hits || 0) : 0,
+      lastAt: exists ? (exists.lastAt || 0) : 0,
       v: SCHEMA_VERSION,
       at: Date.now(),
       fields: cleanedFields,
@@ -241,6 +314,9 @@
     save,
     rename,
     update,
+    hit,
+    listByDept,
+    deptKeyOf,
     remove,
     clear,
     hrefFor,

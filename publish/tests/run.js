@@ -37,6 +37,7 @@ require('./boundary-transport.test');
 require('./boundary-ui.test');
 // 首页 + 常用查询（2026-09-18 新增）
 require('./saved-query.test');
+require('./current-user.test');
 require('./home-page.test');
 
 runAll();

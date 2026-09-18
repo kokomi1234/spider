@@ -297,7 +297,130 @@ test('saved-query：update 不存在的 id → 报错', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// 5) 跳转地址（首页卡片直达用的就是这个）
+// 5) 查询人 / 打开计数 / 部门排行
+// ══════════════════════════════════════════════════════════
+
+// 与真实报文一致：orgName 是一级单位，teamName 才是「部门」
+const OWNER_A = {
+  userId: '4711510', userName: '张三',
+  orgId: '1645A', orgName: '中国银行软件中心（深圳）',
+  teamId: 'K4229', teamName: '中国银行软件中心（深圳）开发三部',
+};
+const OWNER_B = {
+  userId: '1001', userName: '李四',
+  orgId: '1645A', orgName: '中国银行软件中心（深圳）',
+  teamId: 'M2534', teamName: '中国银行软件中心（深圳）开发一部',
+};
+
+test('saved-query：owner 只收字符串字段，脏结构不落库', () => {
+  const S = load(fakeStorage());
+  const r = S.save({ page: 'publish', name: '甲', fields: {}, owner: { ...OWNER_A, extra: { x: 1 }, userId: 4711510 } });
+  assert.deepStrictEqual(
+    Object.keys(r.item.owner).sort(),
+    ['orgId', 'orgName', 'teamId', 'teamName', 'userId', 'userName'],
+  );
+  assert.strictEqual(r.item.owner.userId, '4711510', '数字工号要转成字符串');
+  assert.strictEqual(S.save({ page: 'publish', name: '乙', fields: {}, owner: {} }).item.owner, null);
+});
+
+test('saved-query：没显式传 owner 时回落到「当前用户」', () => {
+  const win = { localStorage: fakeStorage() };
+  win.CurrentUser = { get: () => OWNER_A };
+  loadScript('js/ui/saved-query.js', {}, win);
+  const r = win.SavedQuery.save({ page: 'task', name: '甲', fields: {} });
+  assert.strictEqual(r.item.owner.orgName, '中国银行软件中心（深圳）', '页面忘了传也不能丢归属');
+});
+
+test('saved-query：新记录 hits=0 / saves=1；同名覆盖时 saves 累加、hits 保留', () => {
+  const S = load(fakeStorage());
+  const a = S.save({ page: 'publish', name: '甲', fields: {} });
+  assert.strictEqual(a.item.saves, 1);
+  assert.strictEqual(a.item.hits, 0);
+  S.hit(a.item.id);
+  S.hit(a.item.id);
+  const b = S.save({ page: 'publish', name: '甲', fields: {} });
+  assert.strictEqual(b.item.saves, 2, '重复保存要累加，而不是重置');
+  assert.strictEqual(b.item.hits, 2, '打开次数不能被保存重置');
+});
+
+test('saved-query：hit 累加打开次数并记最近打开时间', () => {
+  const S = load(fakeStorage());
+  const r = S.save({ page: 'publish', name: '甲', fields: {} });
+  assert.strictEqual(S.get(r.item.id).lastAt, 0);
+  S.hit(r.item.id);
+  const after = S.get(r.item.id);
+  assert.strictEqual(after.hits, 1);
+  assert.ok(after.lastAt > 0, '要记最近打开时间，作为排序的次判据');
+  assert.strictEqual(S.hit('不存在').ok, false);
+});
+
+test('saved-query：listByDept 只返回同部门的记录，按打开次数降序', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '本部门常用', fields: {}, labels: {}, owner: OWNER_A });
+  S.save({ page: 'task', name: '本部门少用', fields: {}, owner: OWNER_A });
+  S.save({ page: 'publish', name: '别的部门', fields: {}, owner: OWNER_B });
+  S.save({ page: 'publish', name: '没有归属', fields: {} });
+
+  const 常用 = S.list().find((x) => x.name === '本部门常用');
+  S.hit(常用.id);
+  S.hit(常用.id);
+
+  const list = S.listByDept(OWNER_A, 10);
+  assert.deepStrictEqual(list.map((x) => x.name), ['本部门常用', '本部门少用'], '别的部门与无归属的都不能混进来');
+  assert.strictEqual(list[0].hits, 2);
+});
+
+test('saved-query：listByDept 的 limit 就是首页的 5 / 10 / 20，非法值退回 10', () => {
+  const S = load(fakeStorage());
+  for (let i = 0; i < 12; i += 1) {
+    S.save({ page: 'publish', name: 'q' + i, fields: {}, owner: OWNER_A });
+  }
+  assert.strictEqual(S.listByDept(OWNER_A, 5).length, 5);
+  assert.strictEqual(S.listByDept(OWNER_A, 10).length, 10);
+  assert.strictEqual(S.listByDept(OWNER_A, 20).length, 12, '不足 20 条时给全部');
+  assert.strictEqual(S.listByDept(OWNER_A, 0).length, 10, '非法 limit 退回默认 10');
+  assert.strictEqual(S.listByDept(OWNER_A, NaN).length, 10);
+});
+
+test('saved-query：listByDept 对「没设置用户」返回空，不误报全量', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A });
+  assert.deepStrictEqual(S.listByDept(null, 10), []);
+  assert.deepStrictEqual(S.listByDept({}, 10), []);
+  assert.deepStrictEqual(S.listByDept({ orgId: '', orgName: '' }, 10), []);
+});
+
+test('saved-query：同一个一级单位、不同团队 → 算不同部门（team 优先）', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '三部的查询', fields: {}, owner: OWNER_A });
+  S.save({ page: 'publish', name: '一部的查询', fields: {}, owner: OWNER_B });
+
+  const a = S.listByDept(OWNER_A, 10);
+  assert.deepStrictEqual(a.map((x) => x.name), ['三部的查询'],
+    'orgId 相同但 teamId 不同，不能混成一个部门（否则整个单位算一个部门）');
+  const b = S.listByDept(OWNER_B, 10);
+  assert.deepStrictEqual(b.map((x) => x.name), ['一部的查询']);
+});
+
+test('saved-query：没有 team 信息的人按其一级单位归类（org 兜底）', () => {
+  const S = load(fakeStorage());
+  S.save({
+    page: 'publish', name: '无团队的查询', fields: {},
+    owner: { userId: '9', userName: '王五', orgId: '1645A', orgName: '中国银行软件中心（深圳）' },
+  });
+  const list = S.listByDept({ userName: '赵六', orgId: '1645A', orgName: '中国银行软件中心（深圳）' }, 10);
+  assert.strictEqual(list.length, 1, 'team 缺失时按 org 归组');
+});
+
+test('saved-query：没有 orgId 时用部门名兜底匹配', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '甲', fields: {}, owner: { userName: '张三', orgName: '某部门' } });
+  const list = S.listByDept({ userName: '别人', orgId: '', orgName: '某部门' }, 10);
+  assert.strictEqual(list.length, 1, '部门名相同也算同部门（orgId 缺失时的兜底）');
+});
+
+// ══════════════════════════════════════════════════════════
+// 6) 跳转地址（首页卡片直达用的就是这个）
 // ══════════════════════════════════════════════════════════
 
 test('saved-query：hrefFor 三个页面各自对应干净路由，且 id 被转义', () => {

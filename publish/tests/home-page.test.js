@@ -49,6 +49,7 @@ function fakeEl(tag) {
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     removeEventListener() {},
     click() { (this.listeners.click || []).slice().forEach((fn) => fn({ target: this })); },
+    focus() {},   // 真实 DOM 有；缺了会让「切换用户」这类回调抛 TypeError
     querySelector(sel) { return findIn(this, (e) => e.id === String(sel).replace(/^[#.]/, '')); },
   };
   Object.defineProperty(el, 'firstChild', {
@@ -105,6 +106,24 @@ function makeSavedQuery(seed) {
     list() { return store.slice(); },
     get(id) { return store.find((it) => it.id === id) || null; },
     save(item) { store = [item, ...store]; return { ok: true, item }; },
+    hit(id) {
+      const t = store.find((it) => it.id === id);
+      if (!t) return { ok: false, error: '该查询已不存在' };
+      t.hits = (t.hits || 0) + 1;
+      t.lastAt = Date.now();
+      return { ok: true, item: t };
+    },
+    // 与真实实现同口径：按部门（orgId 优先、否则 orgName）过滤，按 hits 降序取前 n 条
+    deptKeyOf: (u) => String((u && (u.teamId || u.teamName || u.orgId || u.orgName)) || ''),
+    listByDept(user, limit) {
+      const key = String((user && (user.teamId || user.teamName || user.orgId || user.orgName)) || '');
+      if (!key) return [];
+      const n = Number.isFinite(limit) && limit > 0 ? limit : 10;
+      return store
+        .filter((it) => String((it.owner && (it.owner.teamId || it.owner.teamName || it.owner.orgId || it.owner.orgName)) || '') === key)
+        .sort((a, b) => ((b.hits || 0) - (a.hits || 0)) || ((b.lastAt || b.at) - (a.lastAt || a.at)))
+        .slice(0, n);
+    },
     rename(id, name) {
       const t = store.find((it) => it.id === id);
       if (!t) return { ok: false, error: '该查询已不存在' };
@@ -138,20 +157,59 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
  */
 function buildEnv(opts = {}) {
   innerHTMLWrites = 0;
-  const savedList = fakeEl('div'); savedList.id = 'savedList';
-  const savedEmpty = fakeEl('div'); savedEmpty.id = 'savedEmpty';
-  const savedCount = fakeEl('div'); savedCount.id = 'savedCount';
-  const els = { savedList, savedEmpty, savedCount };
+  const mk = (id, tag) => { const e = fakeEl(tag || 'div'); e.id = id; return e; };
+  const savedList = mk('savedList');
+  const savedEmpty = mk('savedEmpty');
+  const savedCount = mk('savedCount');
+  // 当前用户 + 部门排行所需的节点
+  const userSet = mk('userSet'); userSet.hidden = true;
+  const userLabel = mk('userLabel');
+  const userForm = mk('userForm'); userForm.hidden = false;
+  const userKeyword = mk('userKeyword', 'input');
+  const userCands = mk('userCands');
+  const userHint = mk('userHint');
+  const btnUserSearch = mk('btnUserSearch', 'button');
+  const btnUserChange = mk('btnUserChange', 'button');
+  const deptTitle = mk('deptTitle');
+  const deptList = mk('deptList');
+  const deptEmpty = mk('deptEmpty');
+  const deptTopN = mk('deptTopN', 'select'); deptTopN.value = '10';
+
+  const els = {
+    savedList, savedEmpty, savedCount,
+    userSet, userLabel, userForm, userKeyword, userCands, userHint, btnUserSearch, btnUserChange,
+    deptTitle, deptList, deptEmpty, deptTopN,
+  };
   const doc = fakeDocument(els);
 
   const sq = makeSavedQuery(opts.items || []);
 
   const toasts = [];
+  const ls = new Map(Object.entries(opts.localStorage || {}));
   const win = {
     addEventListener() {}, // 吞掉 storage 监听，不触发
     toast: (msg) => toasts.push(msg),
+    localStorage: {
+      getItem: (k) => (ls.has(k) ? ls.get(k) : null),
+      setItem: (k, v) => ls.set(k, String(v)),
+      removeItem: (k) => ls.delete(k),
+    },
   };
   if (opts.loadSavedQuery !== false) win.SavedQuery = sq;
+
+  // 可控的当前用户：null = 未设置
+  const cuState = { user: opts.currentUser || null };
+  win.CurrentUser = {
+    STORAGE_KEY: 'spider.currentUser.v1',
+    get: () => cuState.user,
+    set: (u) => { cuState.user = u; return { ok: true, user: u }; },
+    clear: () => { cuState.user = null; return { ok: true }; },
+    label: (u) => (u ? `${u.userName}（${u.userId}） · ${u.teamName || u.orgName}` : ''),
+    deptLabel: (u) => (u ? (u.teamName || u.orgName || '') : ''),
+    lookup: async (kw) => (opts.lookupResult
+      ? opts.lookupResult
+      : { ok: true, list: [], mode: /^\d+$/.test(String(kw).trim()) ? 'id' : 'name', empty: true }),
+  };
 
   // DialogUtils 可控：confirmBox / promptText 返回我们设定的值
   win.DialogUtils = {
@@ -161,7 +219,7 @@ function buildEnv(opts = {}) {
 
   loadScript('js/page/home.js', { document: doc }, win);
 
-  return { win, doc, els, sq, toasts };
+  return { win, doc, els, sq, toasts, ls, cuState };
 }
 
 /** 在 savedList 子树里按 data-id 找卡片 */
@@ -373,4 +431,110 @@ test('window.HomePage.count() 与列表实际子节点数一致', () => {
   });
   assert.strictEqual(win.HomePage.count(), 3, 'count 应为 3');
   assert.strictEqual(win.HomePage.count(), els.savedList.children.length, 'count 应与 children.length 一致');
+});
+
+// ══════════════════════════════════════════════════════════
+// 当前用户 + 部门常用查询（本机口径）
+// ══════════════════════════════════════════════════════════
+
+const ME = {
+  userId: '4711510', userName: '张三',
+  orgId: '1645A', orgName: '中国银行软件中心（深圳）',
+  teamId: 'K4229', teamName: '中国银行软件中心（深圳）开发三部',
+};
+const OTHER = {
+  userId: '1001', userName: '李四',
+  orgId: '1645A', orgName: '中国银行软件中心（深圳）',
+  teamId: 'M2534', teamName: '中国银行软件中心（深圳）开发一部',
+};
+
+test('当前用户：未设置时部门区给引导，标题回到默认', () => {
+  const { win, els } = buildEnv({ currentUser: null, items: [] });
+  win.HomePage.render();
+  assert.strictEqual(els.deptTitle.textContent, '部门常用查询');
+  assert.strictEqual(els.deptEmpty.hidden, false, '空态要显示');
+  assert.ok(/当前用户/.test(els.deptEmpty.textContent), '要指明去哪里设置，而不是只说「没有数据」');
+  assert.strictEqual(els.userForm.hidden, false);
+  assert.strictEqual(els.userSet.hidden, true);
+  assert.strictEqual(win.HomePage.deptCount(), 0);
+});
+
+test('当前用户：已设置时显示身份、隐藏表单、标题带部门名', () => {
+  const { win, els } = buildEnv({ currentUser: ME, items: [] });
+  win.HomePage.render();
+  assert.strictEqual(els.userSet.hidden, false);
+  assert.strictEqual(els.userForm.hidden, true);
+  assert.ok(/张三/.test(els.userLabel.textContent) && /开发三部/.test(els.userLabel.textContent),
+    '要能看出是谁、哪个部门（团队优先）：' + els.userLabel.textContent);
+  assert.ok(/开发三部/.test(els.deptTitle.textContent), '标题要写明是哪个部门（teamName 优先于 orgName）');
+});
+
+test('部门排行：只列本部门的记录，且是只读视图（无重命名/删除）', () => {
+  const items = [
+    { id: 'd1', page: 'publish', name: '本部门A', at: 3, owner: ME, hits: 1 },
+    { id: 'd2', page: 'task', name: '别的部门', at: 2, owner: OTHER, hits: 9 },
+    { id: 'd3', page: 'publish', name: '无归属', at: 1, owner: null, hits: 5 },
+  ];
+  const { win, els } = buildEnv({ currentUser: ME, items });
+  win.HomePage.render();
+  assert.strictEqual(win.HomePage.deptCount(), 1, '只应出现本部门那一条');
+  const card = els.deptList.children[0];
+  const name = findIn(card, (e) => e.textContent === '本部门A');
+  assert.ok(name, '本部门记录要渲染出来');
+  assert.strictEqual(findIn(card, (e) => e.className === 'saved-ops'), null, '部门排行不应有操作按钮');
+  assert.ok(findIn(card, (e) => e.className === 'saved-meta'), '要显示查询人与次数');
+});
+
+test('部门排行：按打开次数降序，条数受 TopN 限制', () => {
+  const items = [];
+  for (let i = 0; i < 8; i += 1) {
+    items.push({ id: 'q' + i, page: 'publish', name: 'q' + i, at: i, owner: ME, hits: i });
+  }
+  const { win, els } = buildEnv({ currentUser: ME, items, localStorage: { 'spider.deptTopN.v1': '5' } });
+  win.HomePage.render();
+  assert.strictEqual(win.HomePage.deptCount(), 5, 'TopN=5 时只渲染 5 条');
+  assert.strictEqual(els.deptTopN.value, '5', '下拉要回显记住的值');
+  const ids = els.deptList.children.map((c) => c.dataset.id);
+  assert.deepStrictEqual(ids, ['q7', 'q6', 'q5', 'q4', 'q3'], '打开次数多的排前面');
+});
+
+test('部门排行：TopN 非法/缺省时退回 10', () => {
+  const items = [];
+  for (let i = 0; i < 12; i += 1) items.push({ id: 'q' + i, page: 'publish', name: 'q' + i, at: i, owner: ME, hits: i });
+  const a = buildEnv({ currentUser: ME, items });
+  a.win.HomePage.render();
+  assert.strictEqual(a.win.HomePage.deptCount(), 10, '默认 10 条');
+
+  const b = buildEnv({ currentUser: ME, items, localStorage: { 'spider.deptTopN.v1': '99' } });
+  b.win.HomePage.render();
+  assert.strictEqual(b.win.HomePage.deptCount(), 10, '非法值（99）也要退回默认 10');
+});
+
+test('部门排行：切换条数会记住选择', () => {
+  const { win, els, ls } = buildEnv({ currentUser: ME, items: [] });
+  els.deptTopN.value = '20';
+  els.deptTopN.listeners.change[0]();      // 假 DOM 没有 dispatchEvent，直接调监听器
+  assert.strictEqual(ls.get('spider.deptTopN.v1'), '20', '选择要落 localStorage');
+  assert.strictEqual(els.deptTopN.value, '20', '重渲染后仍回显 20');
+});
+
+test('打开计数：点卡片主体会记一次打开（「高频」的判据）', () => {
+  const items = [{ id: 'h1', page: 'publish', name: '甲', at: 1, owner: ME, hits: 0 }];
+  const { win, els, sq } = buildEnv({ currentUser: ME, items });
+  win.HomePage.render();
+  const link = findIn(els.savedList, (e) => e.className === 'saved-main');
+  assert.ok(link, '卡片主体应是 <a>');
+  link.click();
+  assert.strictEqual(sq.get('h1').hits, 1, '点一次应 +1');
+  link.click();
+  assert.strictEqual(sq.get('h1').hits, 2);
+});
+
+test('切换用户：清空当前用户后回到输入表单', () => {
+  const { win, els } = buildEnv({ currentUser: ME, items: [] });
+  win.HomePage.render();
+  els.btnUserChange.click();
+  assert.strictEqual(win.CurrentUser.get(), null);
+  assert.strictEqual(els.userForm.hidden, false);
+  assert.strictEqual(els.userSet.hidden, true);
 });
