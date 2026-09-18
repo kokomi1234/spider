@@ -209,6 +209,8 @@
 
   /** 把优先级写回行对象（下划线前缀，避免和报文字段撞名） */
   function decorate(row, now) {
+    // 脏行（null / 非对象）原样返回，不写 _prio —— 否则整批行的渲染会一起崩。
+    if (!row || typeof row !== 'object') return row;
     const p = evaluate(row, now);
     row._prio = p;
     row._prioText = p.text;

@@ -206,7 +206,8 @@
 
   /** 当前页逾期条数（行内 _prio.overdue 由优先级模块算好） */
   function overdueCount(rows) {
-    return (rows || []).filter((r) => r._prio && r._prio.overdue).length;
+    // 脏行（null）直接跳过：报文里混入 null 是真实存在的，一次就把统计拖崩不值当。
+    return (rows || []).filter((r) => r && r._prio && r._prio.overdue).length;
   }
 
   /**
@@ -247,6 +248,9 @@
    *   逐行各取一次"今天"的话，跨零点时同一屏结果会出现两种天数、排序也会错乱。
    */
   function decorateRow(row, now) {
+    // 非对象行（null / 字符串）原样返回：给它赋 _prio 会当场抛 TypeError，
+    // 而 decorateRows 是渲染前的必经路径，一崩整屏就没了。
+    if (!row || typeof row !== 'object') return row;
     if (window.Priority && typeof window.Priority.decorate === 'function') {
       return window.Priority.decorate(row, now);
     }

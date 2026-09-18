@@ -137,17 +137,22 @@
   function applyLocalFilters(rows, conds) {
     conds = conds || [];
     if (!conds.length) return rows;
-    return rows.filter((row) => conds.every(({ keys, value, exact, date }) => {
-      const needle = String(value == null ? '' : value).toLowerCase();
-      return keys.some((k) => {
-        const v = row[k];
-        if (v == null || v === '') return false;
-        const s = String(v);
-        if (date)  return s.slice(0, 10) === needle;      // 变更时间按 YYYY-MM-DD 比对
-        if (exact) return s === value;                    // 部门用 deptId 精确匹配
-        return s.toLowerCase().includes(needle);
+    // 守卫：rows 为 null/undefined、或数组里混入非对象（如 null）的脏数据时，
+    // 不抛 TypeError，直接当成「不满足任何条件」过滤掉（视为无数据，不造假）。
+    return (rows || []).filter((row) => {
+      if (!row || typeof row !== 'object') return false;
+      return conds.every(({ keys, value, exact, date }) => {
+        const needle = String(value == null ? '' : value).toLowerCase();
+        return keys.some((k) => {
+          const v = row[k];
+          if (v == null || v === '') return false;
+          const s = String(v);
+          if (date)  return s.slice(0, 10) === needle;      // 变更时间按 YYYY-MM-DD 比对
+          if (exact) return s === value;                    // 部门用 deptId 精确匹配
+          return s.toLowerCase().includes(needle);
+        });
       });
-    }));
+    });
   }
 
   /**
@@ -176,7 +181,9 @@
    */
   function countByStatus(rows) {
     const counts = {};
+    // 守卫：rows 为 null 或混入 null 元素时不抛，直接跳过脏行（视为无数据）。
     (rows || []).forEach((r) => {
+      if (!r || typeof r !== 'object') return;
       const s = r.offerServerState || '未设置';
       counts[s] = (counts[s] || 0) + 1;
     });
@@ -208,8 +215,13 @@
   /** 按页码顺序把各页行拼成一条数组（并发完成顺序不确定，不能边拉边 concat —— 既乱序又 O(n²)） */
   function flattenPages(pages, byPage) {
     const out = [];
+    // byPage 由并发取数层构造，取数整体失败时会是 null；普通对象（无 .get）也要兜住。
+    // 少了这层守卫，一次失败就把整页查询拖成 TypeError。
+    const get = (byPage && typeof byPage.get === 'function')
+      ? (p) => byPage.get(p)
+      : (p) => (byPage ? byPage[p] : null);
     (pages || []).forEach((p) => {
-      const rows = byPage.get(p);
+      const rows = get(p);
       if (rows) out.push(...rows);
     });
     return out;
@@ -241,7 +253,9 @@
    */
   function pageCount(total, size, maxPages) {
     const sz = size > 0 ? size : 1;
-    const totalPages = Math.ceil((total || 0) / sz);
+    // total 来自后端报文，出现负数（脏数据/接口异常）时不能给出负页数——
+    // 下游的「第 X / -10 页」与跳页夹取都会跟着错，所以这里 clamp 到 ≥ 0。
+    const totalPages = Math.max(0, Math.ceil((Number(total) || 0) / sz));
     return (maxPages != null) ? Math.min(totalPages, maxPages) : totalPages;
   }
 

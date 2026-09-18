@@ -19,11 +19,19 @@ class SubscribeManager {
     this._index = new Set(this.services);
   }
 
-  /** 从 localStorage 加载 */
+  /**
+   * 从 localStorage 加载。
+   * 存量数据不可信（旧版本、手工改过、别的页面写坏过）：非数组或含非字符串元素时
+   * 一律过滤成空/合法列表 —— 否则 `new Set(非可迭代对象)` 会在构造函数里抛错，
+   * 整个订阅管理模块建不出来，「已订阅」判定全线失效。
+   */
   _load() {
     try {
       const data = localStorage.getItem(SUBSCRIBE_STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
+      if (!data) return [];
+      const parsed = JSON.parse(data);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((s) => typeof s === 'string' && s !== '');
     } catch (e) {
       console.warn('加载已订阅列表失败:', e);
       return [];

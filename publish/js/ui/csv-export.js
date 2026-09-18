@@ -10,9 +10,15 @@
     '批次', '服务状态', '是否已核对', '所属部门', '订阅标记',
   ];
 
+  // CSV 公式注入：以 = + - @ 以及制表符/回车开头的值，Excel/WPS 打开时会当公式执行
+  // （经典载荷 =cmd|'/c calc'!A1）。导出的数据全部来自后端报文，属于不可信输入，
+  // 所以在单元格层面统一加前导单引号中和。数字不走这条规则，否则负数会被转成文本。
+  const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+
   function csvCell(value) {
     const text = value == null ? '' : String(value);
-    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    const safe = (typeof value === 'number') ? text : (FORMULA_PREFIX.test(text) ? "'" + text : text);
+    return /[",\n\r]/.test(safe) ? '"' + safe.replace(/"/g, '""') + '"' : safe;
   }
 
   function exportRows(rows, getSubscribeStatus, notify) {

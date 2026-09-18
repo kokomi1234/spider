@@ -24,8 +24,7 @@
 
   const TARGET_URL = 'https://itamp.bocsys.cn/asserInstruments/serviceSearchView';
 
-  /** 目标页的「数组型」表单字段：URL query 里用逗号拼接 */
-  const ARRAY_FIELDS = ['sysServeNoList', 'serverCodingList', 'prodSysServeNoList'];
+  // （已删）ARRAY_FIELDS：全库零引用，buildUrl() 用 Array.isArray 统一处理所有数组字段，无需此白名单。
 
   /** 把参数对象拼成目标页 URL（空值 / 空数组自动跳过；数组按逗号拼接） */
   function buildUrl(params) {
@@ -56,7 +55,6 @@
 
   window.AppNavigator = window.AppNavigator || {};
   window.AppNavigator.TARGET_URL = TARGET_URL;
-  window.AppNavigator.ARRAY_FIELDS = ARRAY_FIELDS;
   window.AppNavigator.buildUrl = buildUrl;
   window.AppNavigator.openServiceSearch = openServiceSearch;
 })();

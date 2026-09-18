@@ -138,7 +138,9 @@
     const COLUMNS = M.COLUMNS;
     const FIXED_COL_CLASS = M.FIXED_COL_CLASS;
 
-    bodyEl.innerHTML = (rows || []).map((r, i) => {
+    // 脏行（null / 非对象）先滤掉再渲染：r[k] / r._prio 会当场抛 TypeError，
+    // 而 renderTable 是整屏渲染的入口，一行脏数据不该让整张表消失。
+    bodyEl.innerHTML = (rows || []).filter((r) => r && typeof r === 'object').map((r, i) => {
       const overdue = r._prio && r._prio.overdue ? ' is-overdue' : '';
       const cells = COLUMNS.map(([k, , mono]) => {
         const raw = r[k];

@@ -278,7 +278,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 
 /* <a> 形态的按钮（如「任务单查询」「返回首页」跳转链接）
    与 <button> 保持同一套外观：圆角胶囊、字体、居中布局 */
-a.outlined, a.filled, a.tonal-btn, a.text-btn {
+a.outlined, a.filled, a.text-btn {
   border-radius: var(--r-pill);
   font-family: inherit;
   font-size: var(--fs-md);
@@ -1011,7 +1011,7 @@ tbody tr.unsubscribed-row:hover td {
 /* 弹窗宽度三档：宽度是「弹窗外观」的一部分，收在这里统一管理。
    页面里**不要**再用 #id 覆盖 max-width —— ID 权重高于 class，会让全局调整改不动
    （此前 index 用 #detailDialog 写 640、task 用 #taskDetailDialog 写 860，与默认 520 并存）。 */
-.dialog--sm { max-width: 520px; }   /* 与 .dialog 默认一致，显式声明便于对照 */
+/* （已删）.dialog--sm：全库零引用（无 html/js 使用），.dialog 默认即 520px，无需此档 */
 .dialog--md { max-width: 640px; }   /* 服务详情（index） */
 .dialog--lg { max-width: 860px; }   /* 任务单详情（task） */
 

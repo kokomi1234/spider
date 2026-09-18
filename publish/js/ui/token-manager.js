@@ -211,8 +211,6 @@
     // 暴露给测试 / 其他页面复用
     openDialog: openDialog,
     loadStatus: loadStatus,
-    getState: function () {
-      return { preview: currentPreview || NOT_SET, hasToken: currentHasToken, envPath: currentEnvPath };
-    },
+    // （已删）getState：全库零引用（无测试/页面调用 TokenManager.getState）
   };
 })();

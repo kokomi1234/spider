@@ -18,6 +18,9 @@
    * @returns {Promise<{data:object, rows:Array, total:number, loose:boolean}>}
    */
   async function parse(resp) {
+    // resp 为 null 说明请求本身就没拿到响应（网络层已吞掉异常）——
+    // 这里必须给出可读文案，而不是在 !resp.ok 处抛 TypeError 让上层误判成代码 bug。
+    if (!resp) throw { response: resp, message: '接口未返回结果，请检查网络或代理后重试' };
     if (!resp.ok) throw { response: resp, message: `HTTP ${resp.status}` };
     let json;
     try {

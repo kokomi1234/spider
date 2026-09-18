@@ -31,5 +31,9 @@ require('./module-order.test');
 require('./token-manager.test');
 require('./toast-queue.test');
 require('./query-feedback.test');
+// 2026-09-18 全项目补测：核心逻辑 / 传输层 / UI 组件 三块的边界场景
+require('./boundary-core.test');
+require('./boundary-transport.test');
+require('./boundary-ui.test');
 
 runAll();

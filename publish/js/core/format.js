@@ -32,11 +32,7 @@
     return new Date(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate());
   }
 
-  /** 'YYYY-MM-DD'（业务时区日历日） */
-  function ymd(d) {
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  }
+  // （已删）ymd()：全库零引用（date-rules.test.js 用的是本地助手 ymdOf 而非 Fmt.ymd）；日期格式化走 stamp()。
 
   /**
    * 文件名用的时间戳 'YYYY-MM-DD-HH-MM-SS'（业务时区）。
@@ -72,7 +68,6 @@
     esc, num,
     BUSINESS_TZ_OFFSET_MIN,
     businessToday,
-    ymd,
     stamp,
   };
 })();
