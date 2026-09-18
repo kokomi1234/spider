@@ -28,6 +28,7 @@ require('./subscription-model.test');
 require('./subscription-view.test');
 require('./bootstrap.test');
 require('./module-order.test');
+require('./token-manager.test');
 require('./toast-queue.test');
 require('./query-feedback.test');
 
