@@ -257,6 +257,23 @@
       getValues() { return Array.from(selected); },
       clear() { selected.clear(); renderList(); paintLabel(); },
       /**
+       * 回填已选值（常用查询恢复用）。
+       * 与 searchable-select 的 setValue 对齐：传 string[] 即可。
+       * 关键：当前选项里没有的值也补进 list（用 value 当 label），
+       * 否则 paintLabel 只渲染 list 里命中的项、补的值会「选了却显示不出来」；
+       * 选项本来就是 {value,label} 结构，缺失项补成 value===label 即可。
+       */
+      setValue(values) {
+        const arr = Array.isArray(values) ? values.map(String) : [];
+        arr.forEach((v) => {
+          if (!list.some((o) => String(o.value) === v)) list.push({ value: v, label: v });
+        });
+        selected.clear();
+        arr.forEach((v) => selected.add(v));
+        renderList();
+        paintLabel();
+      },
+      /**
        * 销毁：解绑监听、把可能已浮动到 body 的面板收回 host、再移除自身。
        * 与 createSearchableSelect.destroy() 对齐 —— 两个组件都要有回收口，
        * 否则在面板打开时移除 host，面板会孤零零留在 body 里。

@@ -427,10 +427,160 @@
   // 初始化
   // ═══════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════
+  // 常用查询（保存到首页 / 从首页一键直达回填）
+  // 存储层 window.SavedQuery 已在 saved-query.js 实现，本页只做「收集条件 → 存」和
+  // 「启动读 ?saved= → 回填 → 自动查询」的胶水。所有 window.* 都在函数体内取，
+  // 避免顶层捕获随脚本顺序变化静默降级（项目铁律 1）。
+  // ═══════════════════════════════════════════════════
+
+  // 筛选字段 id → 中文名（仅用于生成人类可读摘要；key 即表单元素 id，回填时按 id 找控件）
+  const SAVED_LABELS = {
+    t_taskNo: '任务单编号', t_taskName: '任务单名称', t_demandNo: '软需编号',
+    t_leadDept: '牵头部门', t_leadProduct: '牵头产品', t_relationProducts: '关联产品',
+    msel_batch: '排期批次', msel_classify: '任务分类', t_projectType: '项目分类',
+    t_taskType: '任务类型', t_taskPerformStatue: '执行状态', t_tieVersion: '投产版本',
+    t_belongYear: '所属年份', t_projectNo: '项目编号', t_projectName: '项目名称',
+    t_projLeadDept: '项目牵头部门', t_prodPracDeptName: '生产实施部门', t_reviewerRole: '评委角色',
+    t_funcTestStart: '功能测试日期', t_funcTestEnd: '功能测试日期',
+    t_archiveStart: '归档日期', t_archiveEnd: '归档日期',
+  };
+  // 收集顺序：决定摘要里字段出现的先后
+  const SAVED_ORDER = ['t_taskNo', 't_taskName', 't_demandNo', 't_leadDept', 't_leadProduct',
+    't_relationProducts', 'msel_batch', 'msel_classify', 't_projectType', 't_taskType',
+    't_taskPerformStatue', 't_tieVersion', 't_belongYear', 't_projectNo', 't_projectName',
+    't_projLeadDept', 't_prodPracDeptName', 't_reviewerRole'];
+
+  // 收集当前筛选条件（只收有值的，空值不存）。fields 用「表单元素 id」做 key，
+  // 值与 SavedQuery 契约一致：string / string[]（多选）。控件分四类分别取值。
+  function collectSavedFields() {
+    const fields = {};
+    // 1) 原生文本输入
+    ['t_taskNo', 't_taskName', 't_demandNo', 't_leadProduct', 't_relationProducts',
+      't_taskType', 't_taskPerformStatue', 't_tieVersion', 't_belongYear', 't_projectNo',
+      't_projectName', 't_projLeadDept', 't_prodPracDeptName'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el && String(el.value || '').trim() !== '') fields[id] = String(el.value).trim();
+    });
+    // 2) searchable-select 实例（牵头部门 / 项目分类 / 评委角色）
+    const ss = { t_leadDept: deptSelect, t_projectType: projectTypeSelect, t_reviewerRole: reviewerRoleSelect };
+    Object.keys(ss).forEach((id) => {
+      const v = ss[id] ? String(ss[id].getValue() || '').trim() : '';
+      if (v) fields[id] = v;
+    });
+    // 3) 多选控件（排期批次 / 任务分类）
+    const ms = { msel_batch: multiSelects.batch, msel_classify: multiSelects.classify };
+    Object.keys(ms).forEach((id) => {
+      const arr = ms[id] && ms[id].getValues ? ms[id].getValues() : [];
+      if (arr && arr.length) fields[id] = arr;
+    });
+    // 4) 日期选择器（功能测试日期 / 归档日期区间）
+    const dp = { t_funcTestStart: datePickers.funcTestStart, t_funcTestEnd: datePickers.funcTestEnd,
+      t_archiveStart: datePickers.archiveStart, t_archiveEnd: datePickers.archiveEnd };
+    Object.keys(dp).forEach((id) => {
+      const v = dp[id] && dp[id].getValue ? dp[id].getValue() : '';
+      if (v) fields[id] = v;
+    });
+    return fields;
+  }
+
+  // 把 fields 拼成一句人能读的摘要，例：「排期批次：2611批次 · 任务分类：需求」
+  function buildSavedSummary(fields) {
+    const parts = [];
+    // 日期区间合并成「起~止」一条，避免拆成起、止两条
+    const range = (startKey, endKey, label) => {
+      if (fields[startKey] || fields[endKey]) {
+        parts.push(`${label}：${fields[startKey] || '*'}~${fields[endKey] || '*'}`);
+      }
+    };
+    range('t_funcTestStart', 't_funcTestEnd', '功能测试日期');
+    range('t_archiveStart', 't_archiveEnd', '归档日期');
+    SAVED_ORDER.forEach((id) => {
+      // 已合并的区间字段跳过
+      if (id === 't_funcTestStart' || id === 't_funcTestEnd' || id === 't_archiveStart' || id === 't_archiveEnd') return;
+      if (!fields[id]) return;
+      const v = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
+      parts.push(`${SAVED_LABELS[id]}：${v}`);
+    });
+    return parts.join(' · ');
+  }
+
+  // 点「⭐ 保存到首页」：收集 → 命名 → 存 → toast
+  async function onSaveQuery() {
+    const SQ = window.SavedQuery;
+    if (!SQ) { toast('⚠️ 存储模块未加载', 2500); return; }
+    const fields = collectSavedFields();
+    if (!Object.keys(fields).length) {
+      toast('⚠️ 请先填写至少一个筛选条件', 2500);
+      return;
+    }
+    const summary = buildSavedSummary(fields);
+    // 优先用统一的 DialogUtils.promptText（与全站弹窗同款）；缺失再退回原生 prompt
+    let name = null;
+    if (window.DialogUtils && typeof window.DialogUtils.promptText === 'function') {
+      name = await window.DialogUtils.promptText({
+        title: '保存到首页',
+        label: '查询名称',
+        placeholder: '给这组筛选条件起个名字',
+        value: summary ? summary.slice(0, 30) : '',
+        message: summary ? `将保存：${summary}` : '',
+      });
+    } else {
+      name = window.prompt('给这组筛选条件起个名字（将保存到首页）：', summary ? summary.slice(0, 30) : '');
+    }
+    if (name == null) return;                 // 用户取消
+    name = String(name).trim();
+    if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
+    const res = SQ.save({ page: 'task', name, fields, summary });
+    if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
+    toast('已保存到首页', 2000);
+  }
+
+  // 启动恢复：仅当 URL 带 ?saved=<id> 时回填并自动查询。
+  // 必须挂在 loadDicts() 之后：下拉/多选的选项要等接口返回建好，否则 setValue 选中的项
+  // 不在选项里会静默失效（searchable-select 找不到该 value 的 opt，multi-select 同理）。
+  async function restoreSavedQuery() {
+    const SQ = window.SavedQuery;
+    if (!SQ) return;
+    const id = new URLSearchParams(location.search).get('saved');
+    if (!id) return;
+    const item = SQ.get(id);
+    if (!item || !item.fields) return;
+    const f = item.fields;
+    // 1) 原生文本输入
+    ['t_taskNo', 't_taskName', 't_demandNo', 't_leadProduct', 't_relationProducts',
+      't_taskType', 't_taskPerformStatue', 't_tieVersion', 't_belongYear', 't_projectNo',
+      't_projectName', 't_projLeadDept', 't_prodPracDeptName'].forEach((idp) => {
+      if (f[idp] != null) { const el = document.getElementById(idp); if (el) el.value = String(f[idp]); }
+    });
+    // 2) searchable-select 实例：直接 setValue
+    const ss = { t_leadDept: deptSelect, t_projectType: projectTypeSelect, t_reviewerRole: reviewerRoleSelect };
+    Object.keys(ss).forEach((idp) => {
+      if (f[idp] != null && ss[idp]) ss[idp].setValue(String(f[idp]));
+    });
+    // 3) 多选控件：setValue(string[])（multi-select 已支持，会自动把缺失值补进选项）
+    const ms = { msel_batch: multiSelects.batch, msel_classify: multiSelects.classify };
+    Object.keys(ms).forEach((idp) => {
+      if (f[idp] != null && ms[idp] && Array.isArray(f[idp])) ms[idp].setValue(f[idp]);
+    });
+    // 4) 日期选择器：setValue(字符串)
+    const dp = { t_funcTestStart: datePickers.funcTestStart, t_funcTestEnd: datePickers.funcTestEnd,
+      t_archiveStart: datePickers.archiveStart, t_archiveEnd: datePickers.archiveEnd };
+    Object.keys(dp).forEach((idp) => {
+      if (f[idp] != null && dp[idp]) dp[idp].setValue(String(f[idp]));
+    });
+    toast(`已载入常用查询：${item.name}`, 2000);
+    // 回填完成后复用页面查询入口，自动执行一次查询
+    await query(1);
+  }
+
   function bindEvents() {
     $('#btnQuery').addEventListener('click', () => query(1));
     $('#btnReset').addEventListener('click', resetForm);
     $('#btnExportCsv').addEventListener('click', exportCsv);
+    // 常用查询：把当前筛选条件保存到首页
+    const saveBtn = $('#btnSaveQuery');
+    if (saveBtn) saveBtn.addEventListener('click', onSaveQuery);
     // 失败常驻条上的「重试」：重跑当前页码（首次失败时 pageNum 仍为 1）
     const retryBtn = $('#btnRetryQuery');
     if (retryBtn) retryBtn.addEventListener('click', () => query(state.pageNum || 1));
@@ -601,6 +751,9 @@
     }
 
     await loadDicts();
+
+    // 常用查询恢复：必须等 loadDicts() 之后，下拉/多选选项才建好，setValue 才不丢值
+    await restoreSavedQuery();
 
     // 首屏就是空态：显示宽表空态浮层并对齐到表头下沿。
     // （静态 HTML 里浮层是 hidden 的 —— 表头高度要等布局完成才测得准，先不显示。）

@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="yl0hA0p66EGAm65qK5CXHa">
+<head data-page-node-id="AmrUzoFps4tuKd4SIGTrxd">
+  <meta charset="UTF-8" data-page-node-id="M5EixtJ1FnI9NbKilwfW0V">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="EPVPtO1rzFGG0YfcLSKeR2">
+  <title>服务发布数据查询</title>
+  <link rel="stylesheet" href="theme.css" data-page-node-id="uVYbCompFnKqZLiPKW09ZP">
+  <style>
+    /* ── 页面专属微调 ─────────────────────────────── */
+    .search-bar { display: flex; align-items: flex-end; gap: var(--sp2); flex-wrap: wrap; }
+    /* 两行统计卡之间用统一的 16px 节奏，读起来是一组而不是两块 */
+    .stat-row { margin-bottom: var(--sp2); }
+
+    /* 结果卡片与筛选卡片同宽（共用 .wrap 的 --page-w）。
+       此前用 width:calc(100vw - 48px) + translateX(-50%) 破框居中：
+       100vw 含滚动条宽度，一旦页面出现纵向滚动条就会横向溢出，
+       且左右边缘与筛选卡片错开。改为统一宽度后两者严格对齐。 */
+    .results-card { min-width: 0; }
+
+    /* 查询结果表格：合并重复的编码/接口列，把空间还给重要内容 */
+    .result-table {
+      /* 列宽集中成变量，窄屏统一压缩，避免整表被挤出横向滚动条 */
+      --c-index: 40px;
+      --c-code: 270px;
+      --c-name: 240px;
+      --c-comp: 105px;
+      --c-batch: 80px;
+      --c-status: 115px;
+      --c-check: 82px;
+      --c-dept: 175px;
+      --c-sub: 100px;
+      --c-op: 145px;
+      table-layout: fixed;
+      width: 100%;
+      min-width: calc(var(--c-index) + var(--c-code) + var(--c-name) + var(--c-comp)
+                    + var(--c-batch) + var(--c-status) + var(--c-check) + var(--c-dept)
+                    + var(--c-sub) + var(--c-op));
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .result-table th,
+    .result-table td {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 10px 9px;
+      font-size: var(--fs-sm);
+      border-bottom: 1px solid var(--outline-soft);
+    }
+    .result-table thead th {
+      background: var(--surface-1);
+      color: var(--muted);
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      letter-spacing: .02em;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    .result-table tbody td {
+      vertical-align: middle;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.4;
+    }
+    .result-table tbody tr:last-child td { border-bottom: none; }
+    .result-table tbody tr:hover td { background: var(--surface-1); }
+    /* 操作列固定在可视区域右侧，横向空间不足时“详情/订阅”仍然可见 */
+    .result-table thead th:last-child,
+    .result-table tbody td:last-child {
+      position: sticky;
+      right: 0;
+      z-index: 2;
+      box-shadow: -6px 0 8px -8px rgba(26, 28, 30, .45);
+    }
+    .result-table thead th:last-child {
+      z-index: 3;
+      background: var(--surface-1);
+    }
+    .result-table tbody td:last-child { background: var(--surface); }
+    .result-table tbody tr.unsubscribed-row td:last-child {
+      background: color-mix(in srgb, var(--amber-c) 30%, var(--surface));
+    }
+    .result-table tbody tr:hover td:last-child,
+    .result-table tbody tr.unsubscribed-row:hover td:last-child {
+      background: var(--surface-1);
+    }
+    .result-table td[colspan] { text-align: center; padding: 40px 0; color: var(--muted); }
+
+    /* 宽屏优先展示服务名/接口名；低信息量列保持紧凑 */
+    .result-table .col-index  { width: var(--c-index); }
+    .result-table .col-code   { width: var(--c-code); }
+    .result-table .col-name   { width: var(--c-name); }
+    .result-table .col-comp   { width: var(--c-comp); }
+    .result-table .col-batch  { width: var(--c-batch); }
+    .result-table .col-status { width: var(--c-status); }
+    .result-table .col-check  { width: var(--c-check); }
+    .result-table .col-dept   { width: var(--c-dept); }
+    .result-table .col-sub    { width: var(--c-sub); }
+    .result-table .col-op     { width: var(--c-op); }
+
+    /* 窄屏（≤1460px）：按信息密度等比压缩列宽，总宽 1160px，
+       1280 / 1366 / 1440 这些常见分辨率下都不再出现横向滚动条 */
+    @media (max-width: 1460px) {
+      .result-table {
+        --c-code: 224px;
+        --c-name: 196px;
+        --c-comp: 90px;
+        --c-batch: 76px;
+        --c-status: 100px;
+        --c-check: 78px;
+        --c-dept: 134px;
+        --c-sub: 92px;
+        --c-op: 136px;
+      }
+    }
+
+    .result-table .cell-code,
+    .result-table .cell-comp {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: var(--fs-nano);
+      white-space: normal;
+      word-break: break-all;
+    }
+    .result-table .cell-code {
+      line-height: 1.35;
+    }
+    .result-table .cell-primary-code,
+    .result-table .cell-secondary-code {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .result-table .cell-primary-code {
+      color: var(--on-surface);
+      font-weight: 600;
+    }
+    .result-table .cell-secondary-code {
+      margin-top: 3px;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: var(--fs-nano);
+    }
+    .result-table .cell-secondary-code.is-same {
+      color: var(--faint);
+      font-family: inherit;
+    }
+    .result-table .cell-clamp {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+    }
+    .result-table .cell-status,
+    .result-table .cell-check,
+    .result-table .cell-sub {
+      text-align: center;
+      white-space: nowrap;
+    }
+    .result-table .col-op {
+      text-align: center;
+      white-space: nowrap;
+    }
+    /* 表头必须跟着内容一起居中：这 4 列的数据格是居中的（见上），
+       而表头默认走 theme.css 的 `thead th { text-align: left }`，
+       不给 th 加类就会「表头左对齐 + 内容居中」左右错位。 */
+    .result-table thead th.col-status,
+    .result-table thead th.col-check,
+    .result-table thead th.col-sub,
+    .result-table thead th.col-op {
+      text-align: center;
+    }
+    /* 操作列是每行最高频的两个操作（详情 / 订阅）。原来 25px 高、间距 2px，
+       鼠标从「详情」滑到「订阅」很容易点错，点错就得关掉再重来。 */
+    .result-table .col-op .text-btn {
+      padding: 5px 10px;
+      min-height: 32px;
+      font-size: var(--fs-nano);
+    }
+    .result-table .col-op .action-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .result-table .col-op .action-row .btn-subscribe {
+      color: var(--on-amber-c);
+    }
+
+    /* 结果条数靠左、导出/筛选按钮组靠右，中间留白 */
+    .results-card .card-head .toolbar { flex: 1 1 auto; justify-content: flex-end; }
+    .result-count {
+      font-size: var(--fs-sm);
+      color: var(--muted);
+      margin-right: auto;
+    }
+
+    /* 订阅筛选按钮组（外观与全站胶囊按钮一致，颜色走主题变量） */
+    .subscribe-filter-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .subscribe-filter-group button {
+      padding: 4px 12px;
+      font-size: var(--fs-xs);
+      min-height: 30px;
+      border-radius: var(--r-pill);
+      border: 1px solid var(--outline);
+      background: var(--surface);
+      color: var(--on-variant);
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .subscribe-filter-group button:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+    .subscribe-filter-group button.active {
+      background: var(--primary);
+      color: var(--on-primary);
+      border-color: var(--primary);
+    }
+
+    /* 表格视口限高：thead 的 position:sticky 只有在滚动容器里才生效，
+       此前没有高度约束，一页 50 行会把分页条顶到屏幕外。
+       限高后表头吸顶、分页条常驻可见，长列表不用反复上下滚页面。 */
+    .tbl-scroll {
+      overflow: auto;
+      overscroll-behavior-x: contain;
+      max-height: clamp(320px, 68vh, 820px);
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-sm);
+      background: var(--surface);
+      scrollbar-width: thin;
+      scrollbar-color: var(--outline) transparent;
+    }
+    /* 空状态时不留一大块空白 */
+    .tbl-scroll:has(tbody tr:only-child td[colspan]) { max-height: none; }
+    .tbl-scroll::-webkit-scrollbar { height: 8px; }
+    .tbl-scroll::-webkit-scrollbar-thumb {
+      background: var(--outline);
+      border-radius: var(--r-pill);
+    }
+    .tbl-scroll::-webkit-scrollbar-track { background: transparent; }
+
+    /* 部门下拉的标题行：标签 + 上下页 */
+    .dept-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .dept-label label { margin: 0; }
+    .field-note {
+      display: block;
+      margin-top: 4px;
+      font-size: var(--fs-nano);
+      color: var(--muted);
+    }
+
+    /* 必填项星号 .required 已移到 theme.css（订阅页查询表单也要用，三页共用一份） */
+
+    /* 详情弹窗：宽度改由 theme.css 的 .dialog--md 统一提供，
+       页面里不再用 ID 选择器覆盖（ID 权重高于 class，会让全局改不动） */
+    /* 详情状态行：接口加载中 / 失败回退本地时的提示 */
+    .detail-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: calc(var(--sp2) * -1) 0 var(--sp2);
+      font-size: var(--fs-xs);
+      color: var(--muted);
+      min-height: 0;
+    }
+    .detail-status[hidden] { display: none; }
+    .detail-status.is-loading::before {
+      content: '';
+      width: 13px;
+      height: 13px;
+      border: 2px solid var(--outline);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      flex-shrink: 0;
+    }
+    .detail-status.is-error {
+      color: var(--on-red-c);
+      background: color-mix(in srgb, var(--red-c) 55%, transparent);
+      padding: 6px 10px;
+      border-radius: var(--r-xs);
+    }
+    .detail-body {
+      max-height: 60vh;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: 168px 1fr;
+      gap: 1px;
+      background: var(--outline-soft);
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      font-size: var(--fs-md);
+    }
+    .detail-body dt, .detail-body dd {
+      background: var(--surface);
+      padding: 7px 12px;
+      word-break: break-all;
+    }
+    .detail-body dt { color: var(--muted); font-size: var(--fs-sm); }
+    .detail-body dd { font-family: monospace; font-size: var(--fs-xs); }
+    .detail-body .empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 24px 0; }
+
+    /* 订阅弹窗 / 关联文档子弹窗的样式统一放在 theme.css 的「订阅弹窗」小节。
+       之前内联在这里时用了 #subscribeOverlay / #subscribeDialog 这类 ID 选择器，
+       优先级高于 theme.css 的 .sub-* 类规则，改主题改不动，所以整体迁出。 */
+
+    /* 视觉基线「台账纸」（令牌 / 页头印章竖条 / 卡片账簿线 / 对账摘要带 /
+       三页表格线型）已上提到 theme.css 末尾的「全站视觉基线」区块，
+       三个页面共用同一套语言，这里不再重复定义。 */
+  </style>
+</head>
+<body data-page-node-id="ylh8Pb5NHTDixM9kbfxJTy">
+  <div class="wrap" data-page-node-id="kVcLvjtst7ZYQ6rORDLMMZ">
+
+    <!-- ═══ 页面标题 ═══ -->
+    <div class="page-header" data-page-node-id="FPYoXuuCWbBl5BcZuPWDmq">
+      <h1 data-page-node-id="Vs6PSQHztyrq1Pz3b1FCGl">服务发布数据查询</h1>
+      <div class="toolbar" data-page-node-id="1i97TQGjWUfhcJ3s98xG11">
+        <a class="outlined btn-sm" href="/" id="navHome" title="返回首页（三个查询页入口 + 常用查询）">← 首页</a>
+        <button class="outlined btn-sm" id="btnSubscribePanel" data-page-node-id="SOtRYG9cXoPuN2nWwAS4BD">已订阅 (0)</button>
+        <a class="outlined btn-sm" href="/task" data-page-node-id="navTaskPage">任务单查询</a>
+        <a class="outlined btn-sm" href="/subscription">服务订阅关系查询</a>
+        <button class="outlined btn-sm" id="btnTokenManager" title="代理 Token 管理">🔑 Token</button>
+      </div>
+    </div>
+
+    <!-- ═══ 筛选条件卡片 ═══ -->
+    <div class="card collapsible" id="filterCard" data-page-node-id="djQVX8q5Iy4dnsqICX7ABg">
+      <div class="card-head" data-page-node-id="hxPymJ9K8Vcq74VHnerenY">
+        <h2 data-page-node-id="h3Gb5a6EKPqSBH2TGw5MxW">筛选条件</h2>
+        <button type="button" class="chevron" id="filterToggle"
+                aria-expanded="true" aria-controls="filterBody"
+                title="展开 / 收起筛选条件" data-page-node-id="EkCLsFLbDjnEOSyrFbVOBk">▼</button>
+      </div>
+      <div class="card-body" id="filterBody" data-page-node-id="uhuc21QWUublfCg3WACHZ1">
+        <div class="form-grid" data-page-node-id="74KwzqXAEROJxkABCamTdr">
+          <div class="form-group" data-page-node-id="wtrAXosdpVIRwZTDUFIjHs">
+            <label for="f_provideSystemNumber" class="required" data-page-node-id="I1xBP0R6XFcCW1EPBepsgt">提供方系统</label>
+            <select id="f_provideSystemNumber" placeholder="请输入或选择系统" data-page-node-id="wyxAYoieQqnNnHwHjlYcW7">
+              <option value="" data-page-node-id="vCs8Jvefr6m8X9PdLYdcpO">加载中…</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="YdM3mtGSLFS5eX4ScGEb4h">
+            <label for="f_prodBatch" class="required" data-page-node-id="KDEEOMZOkRSMqo4WNulHNp">提供方最新变更批次</label>
+            <select id="f_prodBatch" placeholder="请输入或选择批次" data-page-node-id="DOPL2Dl7DJfGrqy66RZVeF">
+              <option value="" data-page-node-id="7E2Ula8qVpMKIj0JzGv4kz">加载中…</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="BqgS8Nm8P0HoCqXfiIQb6V">
+            <label for="f_checkoutInStatus" data-page-node-id="Z2gM6Eile36yvwzhzidat8">CHECKOUT/IN状态</label>
+            <select id="f_checkoutInStatus" disabled
+                    title="当前版本暂不支持该筛选" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
+              <option value="" data-page-node-id="eDnxbLswcJilBSqNufn4uh">全部</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="JEzZa0TS6TFECgDjphW4hn">
+            <label for="f_sysServeNo" data-page-node-id="bcdvU6VFo2NtGLrKsID4Va">提供方应用系统服务编号</label>
+            <input type="text" id="f_sysServeNo" placeholder="如 E00301TP0460" data-page-node-id="EEC7iIM4DTsE4S277G1ZCD">
+          </div>
+          <div class="form-group" data-page-node-id="lhli1ZTywyz4FH6eNwerNb">
+            <label for="f_serviceName" data-page-node-id="8l65VCF6nFBHdrw34S43zR">提供方应用系统服务中文名称</label>
+            <input type="text" id="f_serviceName" placeholder="模糊搜索" data-page-node-id="2SOGeEavmeeJL4Nm1C8QB8">
+          </div>
+          <div class="form-group" data-page-node-id="yAyHWUF5VRmLtpe6VSRhib">
+            <label for="f_interfaceCode" data-page-node-id="YiepuhRx6gitLKEWuMbtPr">接口编码</label>
+            <input type="text" id="f_interfaceCode" placeholder="如 PsnGlobalRemittanceAccountsQuery" data-page-node-id="EC5yQPsvjOXjt0PhSkqAQ7">
+          </div>
+          <div class="form-group" data-page-node-id="lNYHXbSWd9cOk5XYPwVJRo">
+            <label for="f_changeTime" data-page-node-id="7wiEIBGOSpflqCccgL0n7w">变更时间</label>
+            <input type="text" id="f_changeTime" placeholder="选择日期" readonly data-page-node-id="56aMgjthBJzbXyep0FIljh">
+          </div>
+          <div class="form-group" data-page-node-id="MukTeJzscl4qrQhthofavT">
+            <label for="f_sendOutSide" data-page-node-id="4B4mfPjZl3yuCM3HGGsz2y">是否发送行外系统</label>
+            <select id="f_sendOutSide" placeholder="请选择" data-page-node-id="OIE1A08KFluzEEbbVKrAVw">
+              <option value="" data-page-node-id="wLWFDvoAyVY7PxmUHj3lSc">全部</option>
+              <option value="是" data-page-node-id="btbk9AdLqxNpMqbm7Ejy4e">是</option>
+              <option value="否" data-page-node-id="Ad4lpfhdm1dQBK8cJ9XZ8L">否</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="tQUvlM8XNdRVYHoffV07hw">
+            <label for="f_principalName" data-page-node-id="4gpkfGFo2NE46ofrk05ew9">提供方接口负责人</label>
+            <input type="text" id="f_principalName" placeholder="请输入" data-page-node-id="3ibETllLl0FrDH0STAegaj">
+          </div>
+          <div class="form-group" data-page-node-id="asvIqB6Gfk2MrjdYpUT7hQ">
+            <label for="f_serviceStatus" data-page-node-id="uDRlNuHoxSKtq2o99aZvq7">服务状态</label>
+            <select id="f_serviceStatus" placeholder="请选择" data-page-node-id="dPb0DPGcHwUEYQ5rotcAxV">
+              <option value="" data-page-node-id="Mh7MPq1qevkDr1vVAi1P8D">全部</option>
+              <option value="编辑中" data-page-node-id="ix5HteAI8770DW8cSts22y">编辑中</option>
+              <option value="功能测试基线" data-page-node-id="Qnfrx9Tk7m30GaCaytAkHD">功能测试基线</option>
+              <option value="开发基线" data-page-node-id="0gfIh9CDfWAu51ABoGEZ0A">开发基线</option>
+              <option value="正式版基线" data-page-node-id="RtPSgZkkTblzv19HEXCWXd">正式版基线</option>
+            </select>
+          </div>
+          <div class="form-group" data-page-node-id="xA2UdQynvm7BrEQCJfnOcM">
+            <label for="f_deptName" data-page-node-id="wKzUHm1geEuL5C5BDXKnsR">部门名称</label>
+            <input type="text" id="f_deptName" placeholder="请输入或选择部门" data-page-node-id="iMmtHK0OiAeaY0BmSF12yo">
+          </div>
+          <div class="form-group" data-page-node-id="27FwD6DPGGHxqu1VLCOAXE">
+            <label for="f_productImplementUnit" data-page-node-id="64OV76nhH2KyUvjkXo15KU">产品实施单元</label>
+            <input type="text" id="f_productImplementUnit" placeholder="请输入" data-page-node-id="ci9HfB1vOkdXJuXqLe3YZW">
+          </div>
+        </div>
+
+        <!-- 筛选区操作行：查询在前、重置在后（三页统一） -->
+        <div class="filter-actions">
+          <button class="filled btn-sm" id="btnQuery" data-page-node-id="vaEGNr3BFuyiYPBT1BJAbB">查 询</button>
+          <button class="outlined btn-sm" id="btnReset" data-page-node-id="A5yxcZ2T76YIiWoSLHq21z">重 置</button>
+          <button class="outlined btn-sm" id="btnSaveQuery" title="把当前筛选条件保存到首页，之后可从常用查询一键直达">⭐ 保存到首页</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 结果表格卡片 ═══ -->
+    <div class="card results-card" data-page-node-id="e02ynM6owII9h6cMOBNhPk">
+      <div class="card-head" data-page-node-id="jHnRssp0NpGJ4Q3ij2eG7y">
+        <h2 data-page-node-id="aFim5sIg2dzpBW12FIFNCE">查询结果</h2>
+        <div class="toolbar" data-page-node-id="lhASXTOeb4PzCaSlcEBJTX">
+          <span id="resultCount" class="result-count" aria-live="polite" data-page-node-id="UKoxmhVdYF0lxdFd0eNgh9"></span>
+          <div class="subscribe-filter-group" data-page-node-id="MJOz303eAOtDJTUVqhpN4s">
+            <button id="btnFilterAll" class="active" data-page-node-id="KJL2cbia4lVdETyEZvXvz1">全部</button>
+            <button id="btnFilterUnsubscribed" data-page-node-id="iqWaA3UYkniD3yxQDmJ0XB">未订阅</button>
+            <button id="btnFilterSubscribed" data-page-node-id="wQHUfg8BdqDZbFCMVe2XWT">已订阅</button>
+          </div>
+          <button class="filled btn-xs" id="btnExportCsv" title="导出当前筛选结果（全部，不限当前页）">导出 CSV</button>
+
+
+
+        </div>
+      </div>
+
+    <!-- ═══ 统计卡片 ═══ -->
+    <div class="stats stat-row" id="statsRow" style="display:none;margin:0 0 var(--sp2);" data-page-node-id="Jgr7Q082B7LJ4ImbpuzvxT">
+      <div class="stat info" data-page-node-id="eHV05QdVwG6Mp6LsgWrC3o">
+        <div class="lbl" data-page-node-id="xiVJy38wQGwvwbfxPUqbs7">总数</div>
+        <div class="val" id="statTotal" data-page-node-id="nOAhI84ChF7nPC8B1KTAjv">0</div>
+      </div>
+      <div class="stat ok" data-page-node-id="28lGBbh9sqHRGezq2n68Rs">
+        <div class="lbl" data-page-node-id="Qr8OlAwyFS4iCsZlBa9AiE">已发布</div>
+        <div class="val" id="statPublished" data-page-node-id="iX5w4P6YDnTBSIMLw2ZObO">0</div>
+      </div>
+      <div class="stat warn" data-page-node-id="6JTz8NUi7hPPQZAC8CaH7p">
+        <div class="lbl" data-page-node-id="bnc608m3VNBlDGErXZELSB">待发布</div>
+        <div class="val" id="statPending" data-page-node-id="b9DeuEJ47yf0jr0fDZUZFX">0</div>
+      </div>
+      <div class="stat neutral" data-page-node-id="D2DLzRzHTlHpcT0iWwCkME">
+        <div class="lbl" data-page-node-id="xno1myiEFOBEUcTV9s58Yu">失败</div>
+        <div class="val" id="statFailed" data-page-node-id="LiFgZDwrmZgcER41WxmggL">0</div>
+      </div>
+      <div class="stat neutral" data-page-node-id="956ZojeNI6aQ0n6E2Qjuyr">
+        <div class="lbl" data-page-node-id="FPsleqH56EkoggqfpODqCr">组件编号</div>
+        <div class="val" id="statCompNum" style="font-size: var(--fs-base);" data-page-node-id="y14ggmDIBgCuYriDiSVkbx">—</div>
+      </div>
+    </div>
+    <!-- ═══ 订阅对比统计（查询后自动显示） ═══ -->
+    <div class="stats stat-row" id="subscribeStats" style="display:none;margin:0 0 var(--sp2);" data-page-node-id="SW4WhyJZfiI8oApFluU2JK">
+      <div class="stat ok" data-page-node-id="BngItYgDQYUf1tyl87BNWP">
+        <div class="lbl" data-page-node-id="56dHOYT5BIwxw74QEEaYnf">已订阅</div>
+        <div class="val" id="subCountSubscribed" data-page-node-id="3yMeE9uyZbrvwnn3xWG3Vu">0</div>
+      </div>
+      <div class="stat warn" data-page-node-id="UxPTi0948JXsPAuGbGowhi">
+        <div class="lbl" data-page-node-id="IWSEKBQldJ0dIGDI3V7eGR">未订阅</div>
+        <div class="val" id="subCountUnsubscribed" data-page-node-id="BwTiSAOZZ1emrxU3SSCuHh">0</div>
+      </div>
+      <div class="stat neutral" data-page-node-id="QAkFkXtNjKAEubb10GCNTB">
+        <div class="lbl" data-page-node-id="zowy3tEPXRHScqN0xgSlWZ">订阅率</div>
+        <div class="val" id="subRate" data-page-node-id="KrMQe4kT5DWm10pUB3fBBm">0%</div>
+      </div>
+    </div>
+      <!-- 缓存回放告警：本地代理用旧录制数据顶替当前查询时出现，避免把回放数据当成真实结果 -->
+      <div class="cache-replay-bar" id="cacheReplayBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="cacheReplayBar">
+        <span id="cacheReplayText"></span>
+      </div>
+      <!-- 失败分页重试条：仅部分后端分页拉取失败时出现。
+           放在**表格上方**（原来在分页条下面，几乎没人注意到，失败了也不知道可以重试） -->
+      <div class="retry-bar" id="retryBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="retryBar">
+        <span class="retry-text" id="retryText"></span>
+        <button class="outlined btn-xs retry-btn" id="btnRetryFailed" type="button">重试失败分页</button>
+      </div>
+      <div class="tbl-scroll" data-page-node-id="mZ4UTzMgVjEc2rN4OyyYOx">
+        <table class="result-table" data-page-node-id="0gd3Noy1wWBN9tmHD6RpIR">
+          <colgroup data-page-node-id="lnn4GUrdjBWsmE5mwJeEc2">
+            <col class="col-index" data-page-node-id="8mkMwNz18tZaE99cBgbVBy">
+            <col class="col-code" data-page-node-id="qi5vS9xpnz4yoblRu6b5OV">
+            <col class="col-name" data-page-node-id="4Z821bHwrCwk7pGhF6r4HO">
+            <col class="col-comp" data-page-node-id="ZJes6qknWzDZ1FwE2pFxUc">
+            <col class="col-batch" data-page-node-id="GLAfmRt9l83tb3bmR6q0T4">
+            <col class="col-status" data-page-node-id="OCuDPCwaoZ5YI84YZAvkuy">
+            <col class="col-check" data-page-node-id="DSqB7TmKAODS3wkUfyVLjC">
+            <col class="col-dept" data-page-node-id="FFpBlph0m20Ikl8v7sQwXC">
+            <col class="col-sub" data-page-node-id="fQbGRCfejvyW6X1sZHlPGp">
+            <col class="col-op" data-page-node-id="59oMfSzhLMpJZCAigXYLIP">
+          </colgroup>
+          <thead data-page-node-id="vhBGLmjVLYMowZVkCfa4AI">
+            <tr data-page-node-id="LcCTSeHwUY3PSMNqvMqZvO">
+          <th scope="col" class="col-index" data-page-node-id="XTMzAWixkoYLya1rjFTwsU">#</th>
+          <th scope="col" class="col-code" data-page-node-id="kJBUOi0qB6UaEx1tXqUu0X">服务编码 / 接口名</th>
+          <th scope="col" class="col-name" data-page-node-id="ZOSUjmKnsaC9ZjBtCYRHRL">服务名称</th>
+          <th scope="col" class="col-comp" data-page-node-id="HbhVQ46HfrGhxGEu6mfNPt">服务编号</th>
+          <th scope="col" class="col-batch" data-page-node-id="pgKZaIDqyZ1U3YHQ2sHCNW">批次</th>
+          <th scope="col" class="col-status" data-page-node-id="ejUAwVTHap5I0da1Ttjmlx">服务状态</th>
+          <th scope="col" class="col-check" data-page-node-id="TBdjvB0gDeGwa5Jkzy2QBu">是否已核对</th>
+          <th scope="col" class="col-dept" data-page-node-id="aeXRear2uwnrqtmz2XOp7K">所属部门</th>
+          <th scope="col" class="col-sub" data-page-node-id="ZY25pA4j6o2FgZHEC83DXy">订阅标记</th>
+          <th scope="col" class="col-op" data-page-node-id="wSNSneb4Vf94HZqIIxq6Ux">操作</th>
+            </tr>
+          </thead>
+          <tbody id="resultBody" data-page-node-id="cC7UHYtMGe1WWBhrJOjrSC">
+            <tr data-page-node-id="vwYC3RRA5TuixCG4xjYEIR"><td colspan="10" class="empty-hint">请输入条件后点击「查询」</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 分页：语义上是「导航」，用 <nav> + aria-label 让读屏能念出这是一组分页控件（清单 A9）。
+           首页原来只有「上一页 / 下一页 / 第 X / Y 页」—— 翻到第 20 页要点 19 次；
+           现补齐页码按钮 + 首页/末页 + 跳页，与订阅页 / 任务单页一致（清单 A5）。
+           样式（.page-numbers / .page-jump 等）全在 theme.css，三页共用。 -->
+      <nav class="pagination" id="pagination" aria-label="分页" style="display:none;" data-page-node-id="BkUdATmB5ZgBdFTpU5AvhR">
+        <button class="outlined btn-xs" id="btnFirst" title="首页" data-page-node-id="a2FstIdx2026PageHome">« 首页</button>
+        <button class="outlined btn-xs" id="btnPrev" data-page-node-id="4VrosZipJvq5czA43p1NyU">‹ 上一页</button>
+        <!-- 页码按钮：由 PublishView.updatePagination 整体重建，点击走 index.js 的事件委托 -->
+        <ul class="page-numbers" id="pageNumbers" data-page-node-id="a2PageNumbersUl"></ul>
+        <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
+        <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="a2LastIdx2026PageEnd">末页 »</button>
+        <!-- role=status + aria-live：与同页 #resultCount 同口径，翻页后读屏能念出新的页码 -->
+        <span class="page-info" id="pageInfo" role="status" aria-live="polite" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
+        <span class="page-jump">跳至 <input type="number" id="pageJump" min="1" value="1" aria-label="跳转到页码" data-page-node-id="a2PageJumpInput"> 页</span>
+      </nav>
+    </div>
+  </div>
+
+  <!-- 详情弹窗 -->
+  <div class="overlay" id="detailOverlay" role="presentation" data-page-node-id="mNpDiuC6QMQfG655iXYrVs">
+    <div class="dialog dialog--md" id="detailDialog" role="dialog" aria-modal="true" aria-labelledby="detailTitle" tabindex="-1" data-page-node-id="bGCCegV8JaUJ3xkNGgfhio">
+      <!-- 右上角 ✕：与订阅页详情弹窗同款（.sub-close），绝对定位适配本页无 .sub-head 的旧结构 -->
+      <button type="button" class="sub-close" id="btnDetailCloseX" aria-label="关闭">✕</button>
+      <h2 id="detailTitle" data-page-node-id="6nXAIEDcDasHaUz6uGNSIp">服务详情</h2>
+      <!-- 详情接口预留：加载中 / 接口失败回退本地的状态提示 -->
+      <div class="detail-status" id="detailStatus" role="status" aria-live="polite" hidden></div>
+      <dl class="detail-body" id="detailBody" data-page-node-id="BdItznhCtOoBBRWpAPwG4b"></dl>
+      <div class="foot" data-page-node-id="EonAmNCPPdNvryKq1Gd8Y2">
+        <button class="outlined btn-sm" id="btnDetailClose" type="button" data-page-node-id="crPBGE9pxRZwh19P1tj5ZF">关 闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 订阅弹窗 ═══ -->
+  <div class="overlay sub-overlay" id="subscribeOverlay" role="presentation">
+    <div class="dialog sub-dialog" id="subscribeDialog" role="dialog" aria-modal="true" aria-labelledby="subDialogTitle" tabindex="-1">
+      <!-- 顶部标题栏 -->
+      <div class="sub-head">
+        <h2 id="subDialogTitle">订阅</h2>
+        <button type="button" class="sub-close" id="btnSubClose" aria-label="关闭">✕</button>
+      </div>
+
+      <!-- 主体：长滚动区 -->
+      <div class="sub-body">
+
+        <!-- ====== 必要信息 ====== -->
+        <div class="sub-sec">
+          <h3 class="sub-sec-title">必要信息</h3>
+          <!-- 依赖顺序：调用方系统 → 关联文档（按系统编号查文档） → 调用方应用系统服务编号（由系统 + 文档带出） -->
+          <div class="sub-grid">
+            <div class="sub-row">
+              <label for="sub_callerSystem" class="req">调用方系统</label>
+              <select id="sub_callerSystem" class="sub-ctl" placeholder="请输入或选择调用方系统"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_relDoc" class="req">关联文档</label>
+              <div class="sub-ctl-group">
+                <input type="text" id="sub_relDoc" class="sub-input" placeholder="请选择关联文档" disabled>
+                <input type="hidden" id="sub_relDocIds">
+                <button type="button" class="outlined btn-xs sub-pick-btn" id="btnSelectDoc">选 择</button>
+              </div>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_callerServiceNo" class="req" title="由「调用方系统」自动拼接，选定「关联文档」后会再按文档带出候选">调用方应用系统服务编号</label>
+              <select id="sub_callerServiceNo" class="sub-ctl" placeholder="请输入或选择服务编号"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_callerBatch" class="req">调用方投产/变更批次</label>
+              <select id="sub_callerBatch" class="sub-ctl" placeholder="请输入或选择批次"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_tpsPeak" class="req">TPS（峰值）</label>
+              <input type="text" id="sub_tpsPeak" class="sub-input" placeholder="必填">
+            </div>
+          </div>
+        </div>
+
+        <!-- B. 评委信息表格区 -->
+        <div class="sub-sec">
+          <div class="sub-sec-head">
+            <h3 class="sub-sec-title">评委信息</h3>
+            <div class="sub-sec-actions">
+              <button type="button" class="outlined btn-xs" id="btnFetchJudges"
+                      title="按当前组件编号 + 调用方系统拉取评委信息（getJudgeInfo）">⤓ 拉取评委</button>
+              <button type="button" class="outlined btn-xs" id="btnSubmitJudges"
+                      title="把下方评委表格提交为订阅评委信息（subscriptionReview）">↑ 提交评委信息</button>
+              <button type="button" class="outlined btn-xs" id="btnAddJudge">＋ 新增</button>
+              <button type="button" class="outlined btn-xs danger" id="btnRemoveJudge">－ 删除</button>
+            </div>
+          </div>
+          <!-- 评委信息操作提示（始终显示在评委表格下方） -->
+          <div class="sub-tbl-wrap">
+            <table class="sub-tbl">
+              <thead>
+                <tr>
+                  <th class="c-chk"><label class="chk-hit"><input type="checkbox" id="judgeCheckAll" aria-label="全选评委"></label></th>
+                  <th class="c-idx">序号</th>
+                  <th>评委角色</th>
+                  <th>评委工号</th>
+                  <th>评委姓名</th>
+                  <th>评委部门</th>
+                </tr>
+              </thead>
+              <tbody id="judgeTableBody"></tbody>
+            </table>
+            <div class="judge-empty-hint" id="judgeEmptyHint">还没有评委信息：可点「＋ 新增」手工添加，或点「⤓ 拉取评委」从接口获取</div>
+
+          </div>
+        </div>
+
+        <!-- ====== 基础信息 ====== -->
+        <div class="sub-sec">
+          <h3 class="sub-sec-title">基础信息</h3>
+          <div class="sub-grid">
+            <div class="sub-row">
+              <label for="sub_serviceCnName">应用系统服务中文名称</label>
+              <input type="text" id="sub_serviceCnName" class="sub-input" placeholder="请输入应用系统服务中文名称">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_taskNo" class="req">任务编号</label>
+              <input type="text" id="sub_taskNo" class="sub-input" placeholder="请输入任务编号">
+            </div>
+
+            <!-- ↓ 服务方式是通道类字段的上游：直接调用→网关服务编码，通过MCIS→MCIS交易码，通过IPS→IPS交易码 -->
+            <div class="sub-row">
+              <label for="sub_serviceMode">服务方式</label>
+              <select id="sub_serviceMode" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_gatewayCode">网关服务编码</label>
+              <select id="sub_gatewayCode" class="sub-ctl" placeholder="请输入或选择网关服务编码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_mcisCode">MCIS交易码</label>
+              <select id="sub_mcisCode" class="sub-ctl" placeholder="请输入或选择MCIS交易码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_ipsCode">IPS交易码</label>
+              <select id="sub_ipsCode" class="sub-ctl" placeholder="请输入或选择IPS交易码"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_ifaceMode">接口方式</label>
+              <select id="sub_ifaceMode" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_groupContext">分组CONTEXT</label>
+              <select id="sub_groupContext" class="sub-ctl" placeholder="请输入或选择分组CONTEXT"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_protocol">通讯协议</label>
+              <input type="text" id="sub_protocol" class="sub-input" placeholder="请输入通讯协议">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_msgSpec">报文规范</label>
+              <input type="text" id="sub_msgSpec" class="sub-input" placeholder="请输入报文规范">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_codeSystem">码制</label>
+              <input type="text" id="sub_codeSystem" class="sub-input" placeholder="请输入码制">
+            </div>
+
+            <!-- ↓ 消息中间件是消息类字段的上游：选了 TDMQ 才要填集群编码 -->
+            <div class="sub-row">
+              <label for="sub_mq">消息中间件</label>
+              <select id="sub_mq" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_tdmqCluster">订阅方TDMQ集群编码</label>
+              <input type="text" id="sub_tdmqCluster" class="sub-input" placeholder="请输入订阅方TDMQ集群编码">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_topicName">消息主题名</label>
+              <input type="text" id="sub_topicName" class="sub-input" placeholder="请输入消息主题名">
+            </div>
+
+            <!-- ↓ 归属方决定下面两个消息字段怎么填 -->
+            <div class="sub-row">
+              <label for="sub_msgOwner">是否消息资源归属方</label>
+              <select id="sub_msgOwner" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_msgCommType">消息通信类型</label>
+              <select id="sub_msgCommType" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_subName">消息订阅名</label>
+              <input type="text" id="sub_subName" class="sub-input" placeholder="请输入消息订阅名">
+            </div>
+
+            <!-- ↓ 先定幂等，再填原因 -->
+            <div class="sub-row">
+              <label for="sub_idempotent">是否已进行业务幂等</label>
+              <select id="sub_idempotent" class="sub-ctl"></select>
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_noIdemReason">无需幂等原因</label>
+              <input type="text" id="sub_noIdemReason" class="sub-input" placeholder="请输入无需幂等原因">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_implUnit">产品实施单元</label>
+              <input type="text" id="sub_implUnit" class="sub-input" placeholder="请输入产品实施单元">
+            </div>
+
+            <div class="sub-row">
+              <label for="sub_needCopy">是否做副本</label>
+              <select id="sub_needCopy" class="sub-ctl"></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="sub-grid">
+          <div class="sub-row">
+            <label for="sub_tpsDaily">TPS（日常）</label>
+            <input type="text" id="sub_tpsDaily" class="sub-input" placeholder="请输入TPS">
+          </div>
+          <div class="sub-row">
+            <label for="sub_volumeDaily">日交易量（日常）</label>
+            <input type="text" id="sub_volumeDaily" class="sub-input" placeholder="请输入日交易量">
+          </div>
+          <div class="sub-row">
+            <label for="sub_rtDaily">响应时间（日常）</label>
+            <input type="text" id="sub_rtDaily" class="sub-input" placeholder="请输入响应时间">
+          </div>
+          <div class="sub-row">
+            <label for="sub_volumePeak">日交易量（峰值）</label>
+            <input type="text" id="sub_volumePeak" class="sub-input" placeholder="请输入日交易量">
+          </div>
+          <div class="sub-row">
+            <label for="sub_rtPeak">响应时间（峰值）</label>
+            <input type="text" id="sub_rtPeak" class="sub-input" placeholder="请输入响应时间">
+          </div>
+        </div>
+
+        <div class="sub-row sub-row-full">
+          <label for="sub_remark">订阅备注</label>
+          <textarea id="sub_remark" class="sub-textarea" placeholder="请输入订阅备注"></textarea>
+        </div>
+      </div>
+
+      <!-- 底部操作栏 -->
+      <div class="sub-foot">
+        <button type="button" class="outlined btn-sm" id="btnSubCancel">取 消</button>
+        <button type="button" class="filled btn-sm" id="btnSubConfirm">确 认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 关联文档选择子弹窗 ═══ -->
+  <div class="overlay doc-overlay" id="docSelectOverlay" role="presentation">
+    <div class="dialog doc-dialog" id="docSelectDialog" role="dialog" aria-modal="true" aria-labelledby="docSelectTitle" tabindex="-1">
+      <div class="sub-head">
+        <h2 id="docSelectTitle">文档信息</h2>
+        <button type="button" class="sub-close" id="btnDocClose" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="doc-body">
+        <!-- 1. 筛选表单 -->
+        <div class="doc-filter">
+          <div class="doc-filter-item">
+            <label for="docFilterNo">文档编号</label>
+            <input type="text" id="docFilterNo" class="sub-input" placeholder="请输入文档编号">
+          </div>
+          <div class="doc-filter-item">
+            <label for="docFilterBatch">文档投产批次</label>
+            <select id="docFilterBatch" class="sub-ctl"></select>
+          </div>
+          <button type="button" class="filled btn-xs" id="btnDocSearch">查 询</button>
+          <button type="button" class="outlined btn-xs" id="btnDocReset">重 置</button>
+        </div>
+
+        <!-- 2. 数据表格 -->
+        <div class="doc-tbl-wrap">
+          <table class="sub-tbl">
+            <thead>
+              <tr>
+                <th class="c-chk"><label class="chk-hit"><input type="checkbox" id="docCheckAll" aria-label="全选文档"></label></th>
+                <th>文档编号</th>
+                <th>文档名称</th>
+                <th>文档批次</th>
+              </tr>
+            </thead>
+            <tbody id="docTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- 3. 分页 -->
+        <div class="doc-pager">
+          <span class="doc-page-total" id="docTotalInfo">共 0 条</span>
+          <button type="button" class="outlined btn-xs" id="btnDocPrev">‹ 上一页</button>
+          <span class="doc-page-num" id="docPageInfo">1 / 1</span>
+          <button type="button" class="outlined btn-xs" id="btnDocNext">下一页 ›</button>
+          <select id="docPageSize" class="doc-page-size">
+            <option value="10">10 条/页</option>
+            <option value="30">30 条/页</option>
+            <option value="50">50 条/页</option>
+          </select>
+          <span class="doc-jump">
+            跳至 <input type="number" id="docPageJump" class="doc-jump-input" min="1" value="1"> 页
+          </span>
+        </div>
+      </div>
+
+      <!-- 4. 底部按钮 -->
+      <div class="sub-foot">
+        <button type="button" class="outlined btn-sm" id="btnDocCancel">取 消</button>
+        <button type="button" class="filled btn-sm" id="btnDocConfirm">确 认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading 遮罩：role=status + aria-live 让屏幕阅读器能播报加载状态 -->
+  <div class="loading-mask" id="loadingMask" role="status" aria-live="polite" aria-busy="false" data-page-node-id="EDVlHrSzfEk3Np98kJjDgK">
+    <div class="spinner" data-page-node-id="tPFWFBfWl5V1wLWgjrgARS"></div>
+    <span class="sr-only">正在查询，请稍候</span>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" data-page-node-id="UEBkrSRybBSuS6gMq4gIBY"></div>
+
+  <!-- 隐藏的文件上传 input（批量导入用） -->
+  <input type="file" id="fileImport" accept=".txt,.csv,.json" style="display:none;">
+
+  <!--
+    脚本顺序不能随意调整：各模块是 IIFE，加载时就把 window.X 取进闭包，
+    顺序错了不会报错，只会静默降级成空实现。硬约束：
+      · debug.js 早于其它模块（否则 debugLog 取不到，日志全丢）
+      · toast.js 早于 dict-selects.js（后者加载时即取 window.toast）
+      · publish-response.js / table-utils.js 早于 index.js
+    启动时由 js/core/bootstrap.js 统一校验依赖并在控制台报缺失。
+  -->
+  <script src="js/core/runtime-config.js"></script>
+  <script src="js/core/debug.js"></script>
+  <script src="js/core/format.js"></script>
+  <script src="js/core/api-client.js"></script>
+  <script src="js/api/user-api.js"></script>
+  <script src="js/api/tool-api.js"></script>
+  <script src="js/api/service-api.js"></script>
+  <script src="js/data/batch-data.js"></script>
+  <script src="js/data/provider-data.js"></script>
+  <script src="js/ui/popup-position.js"></script>
+  <script src="js/ui/searchable-select.js"></script>
+  <script src="js/ui/date-picker.js"></script>
+  <script src="js/ui/dialog-utils.js"></script>
+  <script src="js/data/department-data.js"></script>
+  <script src="js/ui/subscribe-manager.js"></script>
+  <script src="js/ui/subscribe-ui.js"></script>
+  <script src="js/ui/subscribe-model.js"></script>
+  <script src="js/ui/doc-picker.js"></script>
+  <script src="js/ui/subscribe-dialog.js"></script>
+  <script src="js/ui/subscribe-dryrun.js"></script>
+  <script src="js/ui/csv-export.js"></script>
+  <script src="js/ui/toast.js"></script>
+  <script src="js/ui/token-manager.js"></script>
+  <script src="js/ui/dict-selects.js"></script>
+  <script src="js/ui/detail-dialog.js"></script>
+  <script src="js/ui/table-utils.js"></script>
+  <script src="js/ui/query-feedback.js"></script>
+  <script src="js/ui/saved-query.js"></script>
+  <script src="js/core/publish-response.js"></script>
+  <script src="js/page/publish-model.js"></script>
+  <script src="js/page/publish-view.js"></script>
+  <script src="js/page/publish-query.js"></script>
+  <script src="js/core/bootstrap.js"></script>
+  <script src="js/page/index.js"></script>
+</body>
+</html>

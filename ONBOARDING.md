@@ -15,7 +15,8 @@
 cd publish && node proxy.js          # 端口 3000
 
 # 2. 打开页面（代理同时提供静态服务）
-open http://localhost:3000/index.html         # 服务发布数据查询
+open http://localhost:3000/                   # 首页：三个查询页入口 + 常用查询
+open http://localhost:3000/publish.html       # 服务发布数据查询
 open http://localhost:3000/task.html          # 任务单查询
 open http://localhost:3000/subscription.html  # 服务订阅关系查询
 
@@ -46,7 +47,8 @@ spider/
 │   │   ├── ui/              # 通用组件与弹窗：searchable-select / multi-select /
 │   │   │                    #   priority（投产优先级规则） / table-resize（列宽拖拽） /
 │   │   │                    #   date-picker / csv-export / subscribe-* / people-search
-│   │   └── page/            # 页面主逻辑：index.js / task.js / subscription.js
+│   │   └── page/            # 页面主逻辑：home.js（首页）/ index.js（服务发布数据查询）/
+│   │                        #   task.js / subscription.js
 │   ├── docs/                # 设计规范（design-system.md）、订阅导入说明
 │   ├── tools/               # 开发工具：har-import（HAR→缓存）、mock-proxy
 │   └── cache/               # 代理录制的离线响应（gitignore，勿提交）
@@ -94,8 +96,9 @@ spider/
   回归用例在 `tests/module-order.test.js`（含静态扫描，加了新的顶层捕获会直接报错）。
   例外：少数**命名空间对象**（`PublishModel` / `PublishView` / `SubscriptionModel` …）有意留在顶层——
   它们下面紧跟着就解引用成员，错序会当场抛 `TypeError`（有声失败），不算隐患。
-- `publish/js/core/bootstrap.js` 是**三页共用**的启动检查（按页 `PRESETS` 点名报缺失 + 全局异常兜底），
-  改它要同时照顾 `index` / `subscription` / `task` 三页。
+- `publish/js/core/bootstrap.js` 是**四页共用**的启动检查（按页 `PRESETS` 点名报缺失 + 全局异常兜底），
+  改它要同时照顾 `home` / `publish` / `subscription` / `task` 四页；页签由 `currentPage()` 按路径判定，
+  新增页面时 `PRESETS`、`currentPage()`、`proxy.js` 的 `PAGE_ROUTES` 三处要一起改。
 
 ## 三条铁律（违反过，代价很高）
 

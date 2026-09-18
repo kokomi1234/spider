@@ -178,11 +178,14 @@ const MIME = {
 };
 
 // ── 干净路由（去掉 .html 后缀）──────────────────────────────────
-// /home → index.html、/subscription → subscription.html、/task → task.html。
+// /home → index.html（首页：三个查询页入口 + 常用查询）、
+// /publish → publish.html（服务发布数据查询）、
+// /subscription → subscription.html、/task → task.html。
 // 旧地址（带 .html）仍可直接访问（按扩展名命中静态服务），这里只新增别名，
 // 平滑迁移、不破坏书签与既有链接。要改路由改这里即可，无需动各页面文件。
 const PAGE_ROUTES = {
   '/home':         'index.html',
+  '/publish':      'publish.html',
   '/subscription': 'subscription.html',
   '/task':         'task.html',
 };
@@ -901,6 +904,6 @@ server.listen(PORT, () => {
   console.log(`   缓存列表：http://localhost:${PORT}/cache/list`);
   console.log(`   热更新 .env：修改后自动生效（约 1.5 秒），也可 curl http://localhost:${PORT}/reload 立即生效`);
   console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面`);
-  console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/index.html?dryrun=1`);
+  console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/publish.html?dryrun=1`);
   console.log(`     拦截写请求、打印完整报文，不产生任何真实写入。说明见 docs/订阅预演台使用说明.md\n`);
 });

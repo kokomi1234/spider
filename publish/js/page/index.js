@@ -429,6 +429,122 @@
 
   btnReset.addEventListener('click', resetForm);
 
+  // ── 常用查询：保存到首页 / 从首页回填并查询 ─────────
+  //
+  // 存的是「筛选控件 id → 值」的扁平快照，落在 localStorage（js/ui/saved-query.js），
+  // 不上传、不参与任何请求。两条硬约束：
+  //   1) 恢复必须等 initDictSelects 完成：批次 / 部门 / 提供方系统都是 searchable-select，
+  //      选项来自接口，选项没建好就赋值会**静默失效**（页面看着没反应）——
+  //      所以回填挂在 initDictSelects().then(...) 之后，不在 DOMContentLoaded 直接干。
+  //   2) 赋值走组件实例（setValue），不能只改原生 select 的 value，
+  //      否则组件内部的显示文本不跟着变，用户看到的还是上一次的旧值。
+  const SNAPSHOT_IDS = [
+    'f_provideSystemNumber', 'f_prodBatch', 'f_sysServeNo', 'f_serviceName',
+    'f_interfaceCode', 'f_changeTime', 'f_sendOutSide', 'f_principalName',
+    'f_serviceStatus', 'f_deptName', 'f_productImplementUnit',
+  ];
+  const SNAPSHOT_LABELS = {
+    f_provideSystemNumber: '提供方系统',
+    f_prodBatch: '变更批次',
+    f_sysServeNo: '服务编号',
+    f_serviceName: '服务名称',
+    f_interfaceCode: '接口编码',
+    f_changeTime: '变更时间',
+    f_sendOutSide: '发送行外',
+    f_principalName: '接口负责人',
+    f_serviceStatus: '服务状态',
+    f_deptName: '部门',
+    f_productImplementUnit: '产品实施单元',
+  };
+
+  /** 读取当前筛选条件（searchable-select 会把选中值同步回原生元素，所以读原生值即可） */
+  function captureSnapshotFields() {
+    const out = {};
+    SNAPSHOT_IDS.forEach((id) => {
+      const el = $(`#${id}`);
+      if (!el) return;
+      const v = (el.value || '').trim();
+      if (v) out[id] = v;
+    });
+    return out;
+  }
+
+  /** 摘要给首页卡片显示用：最多 4 个条件，避免卡片被撑爆 */
+  function buildSnapshotSummary(fields) {
+    return SNAPSHOT_IDS
+      .filter((id) => fields[id])
+      .map((id) => `${SNAPSHOT_LABELS[id] || id}：${fields[id]}`)
+      .slice(0, 4)
+      .join(' · ');
+  }
+
+  /** 控件 id → 对应的下拉/日期组件实例（没有组件就退回原生赋值） */
+  function snapshotInstanceFor(id) {
+    if (id === 'f_provideSystemNumber') return providerSelectInstance;
+    if (id === 'f_prodBatch') return batchSelectInstance;
+    if (id === 'f_deptName') return deptSelectInstance;
+    if (id === 'f_changeTime') return changeTimeInstance;
+    return null;
+  }
+
+  async function onSaveQuery() {
+    const S = window.SavedQuery;
+    if (!S) { showToast('常用查询模块未加载，无法保存', 3000, 'error'); return; }
+
+    const fields = captureSnapshotFields();
+    if (!Object.keys(fields).length) {
+      showToast('请先填写筛选条件，再保存到首页', 2600, 'warn');
+      return;
+    }
+    const summary = buildSnapshotSummary(fields);
+    const suggest = (fields.f_prodBatch || '') + (fields.f_provideSystemNumber ? ` ${fields.f_provideSystemNumber}` : '');
+
+    let name = '';
+    try {
+      const D = window.DialogUtils;
+      name = (D && typeof D.promptText === 'function')
+        ? await D.promptText({ title: '给这条查询起个名字', value: suggest.trim() })
+        : window.prompt('给这条查询起个名字', suggest.trim());
+    } catch (_) { name = ''; }
+    if (!name || !String(name).trim()) return;   // 取消 / 空输入：什么都不做
+
+    const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary });
+    if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
+    showToast(r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达', 2400, 'success');
+  }
+
+  const btnSaveQuery = $('#btnSaveQuery');
+  if (btnSaveQuery) btnSaveQuery.addEventListener('click', onSaveQuery);
+
+  /** 从首页「常用查询」进来（?saved=<id>）时回填条件并自动查一次 */
+  async function restoreSavedQuery() {
+    const S = window.SavedQuery;
+    if (!S) return null;
+    let id = null;
+    try {
+      id = new URLSearchParams(window.location.search).get('saved');
+    } catch (_) { id = null; }
+    if (!id) return null;
+
+    const item = S.get(id);
+    if (!item || item.page !== 'publish') return null;
+
+    Object.keys(item.fields || {}).forEach((fid) => {
+      const el = document.getElementById(fid);
+      if (!el) return;
+      const inst = snapshotInstanceFor(fid);
+      if (inst && typeof inst.setValue === 'function') inst.setValue(item.fields[fid]);
+      else el.value = item.fields[fid];
+    });
+
+    showToast(`已载入常用查询：${item.name}`, 2200, 'info');
+    state.pageNum = 1;
+    state.currentFilter = 'all';
+    setFilter('all');
+    PublishQuery.doQuery({ focusMissing: false });
+    return item;
+  }
+
   /**
    * 首页切页统一入口：重绘当前页 + 复位表格纵向滚动。
    * 滚动复位见 TableUtils.resetTableScroll —— 结果表在 .tbl-scroll 里自成滚动容器，
@@ -616,11 +732,14 @@
     if (s.changeTime) changeTimeInstance = s.changeTime;
   }
 
-  // 页面 DOM 就绪后异步加载各字典下拉
+  // 页面 DOM 就绪后异步加载各字典下拉；
+  // 下拉建好之后才回填「常用查询」—— 选项来自接口，早了会静默失效。
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initDictSelects, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      initDictSelects().then(restoreSavedQuery);
+    }, { once: true });
   } else {
-    initDictSelects();
+    initDictSelects().then(restoreSavedQuery);
   }
 
   // ── 初始化页面状态（网络检测等） ────────────────

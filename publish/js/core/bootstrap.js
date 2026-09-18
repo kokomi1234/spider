@@ -20,7 +20,14 @@
 
   /** 各页需要的最小依赖（按页面分组；页面由路径推断） */
   const PRESETS = {
-    index: [
+    // 首页：三个查询页入口 + 常用查询。它不依赖任何查询模块，
+    // 少了谁都不能让它白屏，所以把 SavedQuery 点名在这里（渲染列表要用）。
+    home: [
+      ['SavedQuery', () => has(window.SavedQuery, 'list') && has(window.SavedQuery, 'save')],
+      ['toast', () => typeof window.toast === 'function'],
+    ],
+    // 服务发布数据查询页（publish.html，旧 index.html 迁过来的）
+    publish: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['SubscribeManager', () => has(window.SubscribeManager, 'isSubscribed')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
@@ -57,12 +64,18 @@
     ],
   };
 
-  /** 由路径推断当前页（干净路由：/home /subscription /task；旧 /xxx.html 仍兼容） */
+  /**
+   * 由路径推断当前页（干净路由：/home /publish /subscription /task；旧 /xxx.html 仍兼容）
+   * 注意：/home 与 index.html 是**首页**（三个入口 + 常用查询），
+   * 服务发布数据查询页已迁到 publish.html —— 判据写反会把首页的依赖清单套到查询页上，
+   * 表现为「查询页报一堆缺失、首页反而什么都不报」。
+   */
   function currentPage() {
     const path = (location.pathname || '').toLowerCase();
     if (path.includes('subscription')) return 'subscription';
     if (path.includes('task')) return 'task';
-    return 'index';
+    if (path.includes('publish')) return 'publish';
+    return 'home';
   }
 
   function missingFor(page) {

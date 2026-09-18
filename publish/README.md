@@ -5,15 +5,27 @@
 
 原生 HTML/CSS/JS，无框架无构建。后端 `itamp.bocsys.cn` 在内网，本地经 `proxy.js` 转发。
 
-## 三个页面
+## 四个页面（首页 + 三个查询页）
 
 | 页面 | 用途 | 入口脚本 |
 |---|---|---|
-| `index.html` | 服务发布数据查询（含订阅管理、CSV 导出） | `js/page/index.js` |
+| `index.html` | **首页**：三个查询页入口 + 常用查询快捷卡片 | `js/page/home.js` |
+| `publish.html` | 服务发布数据查询（含订阅管理、CSV 导出） | `js/page/index.js` |
 | `task.html` | 任务单查询 | `js/page/task.js` |
 | `subscription.html` | 服务订阅关系查询（投产优先级、列宽拖拽） | `js/page/subscription.js` |
 
-三页共用 `theme.css` 与 `js/core`、`js/api`、`js/data`、`js/ui` 下的公共模块。
+四页共用 `theme.css` 与 `js/core`、`js/api`、`js/data`、`js/ui` 下的公共模块。
+
+> 2026-09-18：`index.html` 由「服务发布数据查询」改为**首页**，原查询页迁到 `publish.html`。
+> 干净路由 `/home`（首页）、`/publish`、`/task`、`/subscription` 在 `proxy.js` 的 `PAGE_ROUTES` 里维护；
+> `bootstrap.js` 的 `currentPage()` 按路径判定页签，改路由时两处要一起看。
+
+### 常用查询（保存到首页）
+
+三个查询页的筛选区都有「⭐ 保存到首页」：把当前筛选条件存一份到 `localStorage`
+（模块 `js/ui/saved-query.js`，**不上传、不参与请求**），首页渲染成卡片，
+点「打 开」跳 `/publish?saved=<id>` 并自动回填条件 + 查一次。
+同名同页视为更新；上限 50 条；存储不可用时给出提示而不是崩。
 
 ## 🚀 快速开始
 
@@ -21,7 +33,8 @@
 cd publish && node proxy.js        # 端口 3000，注入 token + CORS，并同时提供静态服务
 ```
 
-然后打开 `http://localhost:3000/index.html`（`task.html` / `subscription.html` 同理）。
+然后打开 `http://localhost:3000/`（自动跳 `/home`，即首页）；
+也可直接进 `http://localhost:3000/publish.html`（`task.html` / `subscription.html` 同理）。
 
 - **不能直连 `itamp.bocsys.cn`**（跨域会被拦），页面所有请求都走代理。
 - 直接用 `file://` 打开页面只能看静态界面，接口会失败——必须经代理。
@@ -72,7 +85,7 @@ curl http://localhost:3000/cache/clear   # 清空录制
 
 ```
 publish/
-├── index.html / task.html / subscription.html   # 三个页面
+├── index.html（首页） / publish.html / task.html / subscription.html
 ├── theme.css            # 全站唯一样式来源（令牌 + 组件 + 弹窗）
 ├── proxy.js             # 代理：转发 / 录制 / 离线回放（entry，勿挪）
 ├── README.md            # 本文
@@ -86,9 +99,10 @@ publish/
 │   ├── data/            # batch / provider / department（字典与兜底数据）
 │   ├── ui/              # searchable-select / multi-select / priority / table-resize /
 │   │                    #   date-picker / dialog-utils / csv-export / table-utils /
-│   │                    #   detail-dialog / dict-selects / toast / subscribe-* / people-search
-│   └── page/            # index.js / task.js / subscription.js /
-│                        #   subscription-batch-times.js（批量改批次时间）
+│   │                    #   detail-dialog / dict-selects / toast / subscribe-* / people-search /
+│   │                    #   saved-query（常用查询存储：首页快捷入口的数据源）
+│   └── page/            # home.js（首页）/ index.js（服务发布数据查询）/ task.js /
+│                        #   subscription.js / subscription-batch-times.js（批量改批次时间）
 ├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）、
 │                        #   模块化方案评估.md（ESM/注册表的结论与顺序约定）
 ├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）

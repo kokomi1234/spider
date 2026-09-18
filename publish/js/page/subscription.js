@@ -714,10 +714,149 @@
   // 初始化
   // ═══════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════
+  // 常用查询（保存到首页 / 从首页一键直达回填）
+  // 存储层 window.SavedQuery 已在 saved-query.js 实现，本页只做「收集条件 → 存」和
+  // 「启动读 ?saved= → 回填 → 自动查询」的胶水。所有 window.* 都在函数体内取
+  // （项目铁律 1：顶层捕获会随脚本顺序变化静默降级成空实现）。
+  // ═══════════════════════════════════════════════════
+
+  // 单选下拉 / 文本 / 多选三类控件的 key 清单（key 即表单元素 id，回填时按 id 找实例/元素）
+  const SAVED_SELECT_KEYS = ['f_callerCompNum', 'f_callerBatch', 'f_providerBatch',
+    'f_providerCompNum', 'f_deptId', 'f_prodDeptId', 'f_status', 'f_isSendOutside'];
+  const SAVED_TEXT_KEYS = ['f_providerServiceNameAndId', 'f_subscriberName'];
+  const SAVED_MULTI_KEYS = ['msel_sysServeNo', 'msel_serverCoding', 'msel_prodSysServeNo'];
+
+  // 字段 id → 中文名（仅用于生成可读摘要）；顺序决定摘要里字段先后
+  const SAVED_LABELS = {
+    f_callerCompNum: '调用方系统', f_callerBatch: '调用方批次', f_providerCompNum: '提供方系统',
+    f_providerBatch: '提供方批次', f_providerServiceNameAndId: '提供方服务名称', f_deptId: '提供方部门',
+    f_prodDeptId: '调用方部门', f_subscriberName: '订阅人', f_status: '基线状态',
+    f_isSendOutside: '发往行外', msel_sysServeNo: '提供方服务编号', msel_serverCoding: '接口编码',
+    msel_prodSysServeNo: '调用方服务编号',
+  };
+  const SAVED_ORDER = ['f_callerCompNum', 'f_callerBatch', 'f_providerCompNum', 'f_providerBatch',
+    'f_providerServiceNameAndId', 'f_deptId', 'f_prodDeptId', 'f_subscriberName',
+    'f_status', 'f_isSendOutside', 'msel_sysServeNo', 'msel_serverCoding', 'msel_prodSysServeNo'];
+
+  // 收集当前筛选条件（只收有值的，空值不存）。单选下拉走实例 getValue，
+  // 文本走原生 value，多选走实例 getValues（返回 string[]），与 SavedQuery 的字段契约一致。
+  function collectSavedFields() {
+    const fields = {};
+    SAVED_SELECT_KEYS.forEach((key) => {
+      if (selects[key]) { const v = String(selects[key].getValue() || '').trim(); if (v) fields[key] = v; }
+    });
+    SAVED_TEXT_KEYS.forEach((key) => {
+      const el = document.getElementById(key);
+      if (el && String(el.value || '').trim() !== '') fields[key] = String(el.value).trim();
+    });
+    SAVED_MULTI_KEYS.forEach((key) => {
+      const inst = multiSelects[key];
+      const arr = inst && inst.getValues ? inst.getValues() : [];
+      if (arr && arr.length) fields[key] = arr;
+    });
+    return fields;
+  }
+
+  // fields → 一句人能读的摘要，例：「提供方系统：BOCNETC-O-MAPSN · 调用方批次：2608批次」
+  function buildSavedSummary(fields) {
+    return SAVED_ORDER
+      .filter((id) => fields[id])
+      .map((id) => {
+        const v = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
+        return `${SAVED_LABELS[id]}：${v}`;
+      })
+      .join(' · ');
+  }
+
+  // 点「⭐ 保存到首页」：收集 → 命名 → 存 → toast
+  async function onSaveQuery() {
+    const SQ = window.SavedQuery;
+    if (!SQ) { toast('⚠️ 存储模块未加载', 2500); return; }
+    const fields = collectSavedFields();
+    if (!Object.keys(fields).length) {
+      toast('⚠️ 请先填写至少一个筛选条件', 2500);
+      return;
+    }
+    const summary = buildSavedSummary(fields);
+    // 优先用统一弹窗 DialogUtils.promptText；缺失再退回原生 prompt
+    let name = null;
+    if (window.DialogUtils && typeof window.DialogUtils.promptText === 'function') {
+      name = await window.DialogUtils.promptText({
+        title: '保存到首页',
+        label: '查询名称',
+        placeholder: '给这组筛选条件起个名字',
+        value: summary ? summary.slice(0, 30) : '',
+        message: summary ? `将保存：${summary}` : '',
+      });
+    } else {
+      name = window.prompt('给这组筛选条件起个名字（将保存到首页）：', summary ? summary.slice(0, 30) : '');
+    }
+    if (name == null) return;                 // 用户取消
+    name = String(name).trim();
+    if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
+    const res = SQ.save({ page: 'subscription', name, fields, summary });
+    if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
+    toast('已保存到首页', 2000);
+  }
+
+  // 启动恢复：仅当 URL 带 ?saved=<id> 时回填并自动查询。
+  // 必须挂在 loadDicts() 之后：单选下拉/多选的选项要等接口返回建好，否则 setValue 选中的项
+  // 不在选项里会静默失效（searchable-select 找不到该 value 的 opt、multi-select 同理）。
+  // 另外提供方/调用方系统的多选选项依赖对应「系统」选中后联动拉取，所以先回填系统、等联动
+  // 接口返回再把多选 set 进去，顺序不能反。
+  async function restoreSavedQuery() {
+    const SQ = window.SavedQuery;
+    if (!SQ) return;
+    const id = new URLSearchParams(location.search).get('saved');
+    if (!id) return;
+    const item = SQ.get(id);
+    if (!item || !item.fields) return;
+    const f = item.fields;
+
+    // 1) 无联动依赖的单选下拉 + 文本输入先回填
+    const soloSelects = ['f_callerBatch', 'f_providerBatch', 'f_deptId', 'f_prodDeptId', 'f_status', 'f_isSendOutside'];
+    soloSelects.forEach((key) => {
+      if (f[key] != null && selects[key]) selects[key].setValue(String(f[key]));
+    });
+    SAVED_TEXT_KEYS.forEach((key) => {
+      if (f[key] != null) { const el = document.getElementById(key); if (el) el.value = String(f[key]); }
+    });
+
+    // 2) 提供方系统：先回填并触发联动（拉提供方服务编号/接口编码选项），再回填其多选
+    if (f['f_providerCompNum'] != null && selects.f_providerCompNum) {
+      selects.f_providerCompNum.setValue(String(f['f_providerCompNum']));
+      await loadProviderServeNos(String(f['f_providerCompNum']));
+    }
+    if (f['msel_sysServeNo'] != null && multiSelects.sysServeNo && Array.isArray(f['msel_sysServeNo'])) {
+      multiSelects.sysServeNo.setValue(f['msel_sysServeNo']);
+    }
+    if (f['msel_serverCoding'] != null && multiSelects.serverCoding && Array.isArray(f['msel_serverCoding'])) {
+      multiSelects.serverCoding.setValue(f['msel_serverCoding']);
+    }
+
+    // 3) 调用方系统：先回填并触发联动（拉调用方服务编号选项），再回填其多选
+    if (f['f_callerCompNum'] != null && selects.f_callerCompNum) {
+      selects.f_callerCompNum.setValue(String(f['f_callerCompNum']));
+      await loadCallerServeNos(String(f['f_callerCompNum']));
+    }
+    if (f['msel_prodSysServeNo'] != null && multiSelects.prodSysServeNo && Array.isArray(f['msel_prodSysServeNo'])) {
+      multiSelects.prodSysServeNo.setValue(f['msel_prodSysServeNo']);
+    }
+
+    syncQuickButtons();   // 让「按调用方系统筛选」快捷按钮高亮与回填值一致
+    toast(`已载入常用查询：${item.name}`, 2000);
+    // 回填完成后复用页面查询入口，自动执行一次查询
+    await query(1);
+  }
+
   function bindEvents() {
     $('#btnQuery').addEventListener('click', () => query(1));
     $('#btnReset').addEventListener('click', resetForm);
     $('#btnRefresh').addEventListener('click', () => query(state.pageNum));
+    // 常用查询：把当前筛选条件保存到首页
+    const saveBtn = $('#btnSaveQuery');
+    if (saveBtn) saveBtn.addEventListener('click', onSaveQuery);
 
     // 优先级列头：点击循环 紧急在前 → 宽松在前 → 恢复默认顺序。
     // 排序入口是表头里的真 <button id="btnSortPrio">（清单 B9）——原来只在 th 上绑 click，
@@ -841,7 +980,7 @@
     });
   }
 
-  function boot() {
+  async function boot() {
     bindEvents();
     syncSortIndicator();   // 默认就是「紧急在前」，把箭头摆对
 
@@ -868,7 +1007,9 @@
     }
 
     setQuickCaller('', false);   // 默认不限定调用方（全部），用户可点快捷按钮或下拉选具体系统
-    loadDicts();
+    // 等下拉/多选选项就绪后再恢复常用查询：选项没建好时 setValue 会静默失效
+    await loadDicts();
+    await restoreSavedQuery();   // 挂在 loadDicts 之后，保证选项齐了再回填
     initBatchTimes();            // 兜底再试一次（脚本顺序被打乱时，加载期那次会落空）
     loadBatchTimes();            // 批次时间本地配置（弹窗打开时用它预填）
 

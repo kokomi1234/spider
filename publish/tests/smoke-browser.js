@@ -57,7 +57,10 @@ function startServer() {
 }
 
 const PAGES = [
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun'] },
+  // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
+  // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'SavedQuery', 'HomePage', 'DialogUtils', 'PopupPosition'] },
+  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
   { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition'] },
@@ -109,6 +112,69 @@ const PAGES = [
       realErrs.forEach((e) => process.stdout.write(`    [真报错] ${e}\n`));
 
       if (pg.file === 'index.html') {
+        // 首页（2026-09-18 新增）：三个入口 + 常用查询的端到端往返。
+        // 只断言「模块加载成功」拦不住接线掉了，所以这里真的存一条、渲染、点开、删掉。
+        const homeCheck = await page.evaluate(async () => {
+          const out = {};
+          const ids = ['entryPublish', 'entryTask', 'entrySubscription'];
+          out.entries = ids.map((id) => {
+            const el = document.getElementById(id);
+            return el ? el.getAttribute('href') : null;
+          });
+
+          // ① 空态：还没存过常用查询
+          out.emptyShown = !document.getElementById('savedEmpty').hidden;
+          out.items0 = document.querySelectorAll('#savedList .saved-item').length;
+
+          // ② 存一条（走真实模块，不直接改 DOM），再渲染
+          const S = window.SavedQuery;
+          if (!S) return Object.assign(out, { err: 'SavedQuery 未加载' });
+          const r = S.save({
+            page: 'publish',
+            name: '冒烟常用查询',
+            fields: { f_prodBatch: '2611pc', f_serviceName: '全球汇划' },
+            summary: '变更批次：2611pc · 服务名称：全球汇划',
+          });
+          out.saved = r.ok;
+          window.HomePage.render();
+          const card = document.querySelector('#savedList .saved-item');
+          out.items1 = document.querySelectorAll('#savedList .saved-item').length;
+          out.cardText = card ? card.textContent : '';
+          out.badge = card ? card.querySelector('.saved-badge').textContent : '';
+          out.href = card ? card.querySelector('a.saved-open').getAttribute('href') : '';
+          out.emptyShownAfter = !document.getElementById('savedEmpty').hidden;
+          out.countText = document.getElementById('savedCount').textContent;
+
+          // ③ 删除（确认弹窗走 DialogUtils，点「确 认」）
+          card.querySelector('.saved-ops button.danger').click();
+          await new Promise((res) => setTimeout(res, 80));
+          const ov = document.querySelector('.dlg-util-overlay');
+          out.confirmShown = !!ov;
+          if (ov) ov.querySelector('.sub-foot .filled').click();
+          await new Promise((res) => setTimeout(res, 120));
+          out.items2 = document.querySelectorAll('#savedList .saved-item').length;
+          out.storageCleared = window.SavedQuery.list().length;
+          return out;
+        });
+
+        process.stdout.write(`  首页入口: ${JSON.stringify(homeCheck.entries)}\n`);
+        process.stdout.write(`  常用查询往返: 存=${homeCheck.saved} 渲染=${homeCheck.items1} 删除后=${homeCheck.items2} 存储剩余=${homeCheck.storageCleared}\n`);
+        const homeOk = !homeCheck.err
+          && JSON.stringify(homeCheck.entries) === JSON.stringify(['/publish', '/task', '/subscription'])
+          && homeCheck.emptyShown === true && homeCheck.items0 === 0
+          && homeCheck.saved === true && homeCheck.items1 === 1
+          && homeCheck.badge === '服务发布数据查询'
+          && /\/publish\?saved=/.test(homeCheck.href || '')
+          && homeCheck.cardText.includes('冒烟常用查询')
+          && homeCheck.emptyShownAfter === false && /共 1 条/.test(homeCheck.countText || '')
+          && homeCheck.items2 === 0 && homeCheck.storageCleared === 0;
+        if (!homeOk) {
+          process.stdout.write(`    [FAIL] 首页入口 / 常用查询往返异常：${JSON.stringify(homeCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
         // 空态 colspan 必须等于表头列数，且模板占位符真的被求值过
         // （曾把 `${常量}` 写进单引号字符串里，页面会原样显示 "${RESULT_COL_COUNT}"）
         const emptyCell = await page.evaluate(() => {
@@ -158,7 +224,7 @@ const PAGES = [
         }
       }
 
-      if (pg.file === 'index.html') {
+      if (pg.file === 'publish.html') {
         // DialogUtils 的通用输入 / 确认弹窗（替代 window.prompt / confirm）：
         // 打开 → 有输入框 → 确认拿到 trim 后的值；确认框走取消返回 false。
         const dlgCheck = await page.evaluate(async () => {
@@ -191,7 +257,7 @@ const PAGES = [
         }
       }
 
-      if (pg.file === 'index.html') {
+      if (pg.file === 'publish.html') {
         // 下拉面板定位回归（searchable-select / multi-select 共用 js/ui/popup-position.js）：
         //   (a) 贴近视口底部 → 面板必须完整落在视口内（翻上，不被裁）；
         //   (b) 弹窗滚动容器内（.sub-body overflow:auto）→ 面板升到 body + fixed，不被容器裁掉；
@@ -1018,12 +1084,12 @@ const PAGES = [
       };
     `;
 
-    // 只在 index.html 上跑（订阅弹窗在首页；多选销毁在 task.js 里是长生命周期、不销毁）
+    // 只在 publish.html 上跑（订阅弹窗在服务发布数据查询页；多选销毁在 task.js 里是长生命周期、不销毁）
     {
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
       const fails = [];
       try {
-        await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+        await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
         await page.waitForTimeout(1000);
         await page.evaluate(POPUP_PROBE);
         const dz = await page.evaluate(() => window.__vp.destroyOrphans());
@@ -1074,7 +1140,7 @@ const PAGES = [
           },
         });
       });
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(1000);
       const eg = await page.evaluate(async () => {
         const out = { hasQuery: typeof window.PublishQuery === 'object' && !!window.PublishQuery };
@@ -1164,7 +1230,7 @@ const PAGES = [
         status: 200, contentType: 'application/json',
         body: JSON.stringify({ code: 200, msg: '操作成功', data: null }),
       }));
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(1000);
       const vc = await page.evaluate(async () => {
         const out = {};
@@ -1383,7 +1449,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(1000);
       const jr = await page.evaluate(async () => {
         const out = { list: [], detail: [] };
@@ -1520,7 +1586,7 @@ const PAGES = [
       page.on('request', (r) => {
         if (/setSubcription|subscriptionReview/i.test(r.url())) leaked.push(r.url());
       });
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const dr = await page.evaluate(async () => {
         if (!window.SubscribeDryRun) return { err: 'window.SubscribeDryRun 缺失' };
@@ -1579,7 +1645,7 @@ const PAGES = [
         if (/setSubcription|subscriptionReview/i.test(r.url())) leaked.push(r.url());
       });
       page.on('console', (m) => { logs.push(m.text()); });
-      await page.goto(base + 'index.html?dryrun=1', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html?dryrun=1', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const dc = await page.evaluate(async () => {
         const out = { enabled: window.SubscribeDryRun.isEnabled() };
@@ -1766,7 +1832,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(600);
       const r = await page.evaluate(() => {
         const bar = document.getElementById('pagination');
@@ -1779,11 +1845,11 @@ const PAGES = [
           prevH: prev ? prev.getBoundingClientRect().height : -1,
         };
       });
-      process.stdout.write(`  首页分页栏: ${JSON.stringify(r)}\n`);
-      if (r.justify !== 'center') fails.push(`首页分页栏应居中，实际 ${r.justify}`);
-      if (!(r.prevH >= 36)) fails.push(`首页上一页按钮高度应 ≥36px，实际 ${r.prevH}`);
+      process.stdout.write(`  发布页分页栏: ${JSON.stringify(r)}\n`);
+      if (r.justify !== 'center') fails.push(`发布页分页栏应居中，实际 ${r.justify}`);
+      if (!(r.prevH >= 36)) fails.push(`发布页上一页按钮高度应 ≥36px，实际 ${r.prevH}`);
     } catch (e) {
-      fails.push(`首页分页栏段异常：${e.message}`);
+      fails.push(`发布页分页栏段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;
@@ -1800,7 +1866,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const r = await page.evaluate(() => {
         const cs = (el, pseudo) => getComputedStyle(el, pseudo);
@@ -1917,7 +1983,7 @@ const PAGES = [
           : JSON.stringify({ code: 200, msg: '操作成功' });
         return route.fulfill({ status: 200, contentType: 'application/json', body });
       });
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(1000);
 
       // 第 1 次确认：订阅成功、评委提交失败 → 弹窗保持打开 + 明确提示
@@ -1993,7 +2059,7 @@ const PAGES = [
         await new Promise((r2) => setTimeout(r2, 900));
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ code: 0, msg: 'ok' }) });
       });
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const r = await page.evaluate(async () => {
         const out = {};
@@ -2088,7 +2154,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const r = await page.evaluate(() => {
         const box = (el) => {
@@ -2415,7 +2481,7 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 必填标记（C5）：.required 的星号规则已从 index.html 的页面样式提到 theme.css 共享。
+  // 必填标记（C5）：.required 的星号规则已从 publish.html 的页面样式提到 theme.css 共享。
   // 断言首页的星号没被改坏（回归），且订阅页查询表单的「二选一必填」有标记 + 说明。
   // ═══════════════════════════════════════════════════════════════
   {
@@ -2428,7 +2494,7 @@ const PAGES = [
       return { cls: lb.className, content: cs.content, color: cs.color };
     }, sel);
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(700);
       const idx = await star('label.required');
 
@@ -2440,11 +2506,11 @@ const PAGES = [
         const n = document.querySelector('.filter-required-note');
         return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       });
-      process.stdout.write(`  必填标记(C5): 首页=${JSON.stringify(idx)} 调用方=${JSON.stringify(caller)}`
+      process.stdout.write(`  必填标记(C5): 发布页=${JSON.stringify(idx)} 调用方=${JSON.stringify(caller)}`
         + ` 提供方=${JSON.stringify(provider)} 说明=${JSON.stringify(note)}\n`);
       const hasStar = (x) => !!x && !x.missing && String(x.content).indexOf('*') > -1;
       if (!hasStar(idx)) {
-        fails.push(`首页必填星号丢了（.required 规则搬到 theme.css 后失效？）实际 ${JSON.stringify(idx)}`);
+        fails.push(`发布页必填星号丢了（.required 规则搬到 theme.css 后失效？）实际 ${JSON.stringify(idx)}`);
       }
       if (!hasStar(caller)) fails.push(`订阅页「调用方系统/分行」应带必填星号，实际 ${JSON.stringify(caller)}`);
       if (!hasStar(provider)) fails.push(`订阅页「提供方系统」应带必填星号，实际 ${JSON.stringify(provider)}`);
@@ -2460,7 +2526,7 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // 首页分页条（A5）：原来只有「上一页 / 下一页 / 第 X / Y 页」，
+  // 发布页分页条（A5）：原来只有「上一页 / 下一页 / 第 X / Y 页」，
   // 翻到第 20 页要点 19 次。用假 state 直接驱动 PublishView.updatePagination
   // 验证渲染（页码/首末页/跳页/禁用态），再点一个页码验证事件委托真的接管了点击。
   // ═══════════════════════════════════════════════════════════════
@@ -2468,7 +2534,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(800);
       const r = await page.evaluate(() => {
         const out = {};
@@ -2506,7 +2572,7 @@ const PAGES = [
         out.pageInfoAfterClick = document.getElementById('pageInfo').textContent;
         return out;
       });
-      process.stdout.write(`  首页分页条(A5): ${JSON.stringify(r)}\n`);
+      process.stdout.write(`  发布页分页条(A5): ${JSON.stringify(r)}\n`);
       if (r.missing) {
         fails.push('首页没找到 #pagination');
       } else {
@@ -2534,7 +2600,7 @@ const PAGES = [
         }
       }
     } catch (e) {
-      fails.push(`首页分页条段异常：${e.message}`);
+      fails.push(`发布页分页条段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;
@@ -2638,7 +2704,7 @@ const PAGES = [
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
     try {
-      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(900);
       const r = await page.evaluate(async () => {
         const tick = (ms) => new Promise((res) => setTimeout(res, ms));

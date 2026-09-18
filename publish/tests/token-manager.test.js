@@ -146,10 +146,12 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
  * 或「index.js 忘了调 init」——那同样表现为点了没反应，而且测试还是绿的。
  * 这里直接对着真实入口文件断言接线。
  */
-test('接线：index.html 有按钮、index.js 会 init，且脚本顺序正确', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  assert.ok(/id="btnTokenManager"/.test(html), 'index.html 必须有 #btnTokenManager 按钮');
-  assert.ok(/js\/ui\/token-manager\.js/.test(html), 'index.html 必须引入 token-manager.js');
+// 2026-09-18：index.html 改成首页（三页入口 + 常用查询），服务发布数据查询页迁到
+// publish.html。两页都放了 Token 入口，所以两个入口都要钉住接线。
+test('接线：publish.html 有按钮、index.js 会 init，且脚本顺序正确', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'publish.html'), 'utf8');
+  assert.ok(/id="btnTokenManager"/.test(html), 'publish.html 必须有 #btnTokenManager 按钮');
+  assert.ok(/js\/ui\/token-manager\.js/.test(html), 'publish.html 必须引入 token-manager.js');
   assert.ok(
     html.indexOf('js/ui/token-manager.js') < html.indexOf('js/page/index.js'),
     'token-manager.js 必须排在 index.js 之前（否则 init 时模块还没挂上）',
@@ -157,6 +159,46 @@ test('接线：index.html 有按钮、index.js 会 init，且脚本顺序正确'
 
   const js = fs.readFileSync(path.join(ROOT, 'js/page/index.js'), 'utf8');
   assert.ok(/TokenManager\.init\(\)/.test(js), 'index.js 必须调用 TokenManager.init()');
+});
+
+test('接线：首页 index.html 也有 Token 入口且脚本顺序正确', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  assert.ok(/id="btnTokenManager"/.test(html), '首页必须有 #btnTokenManager 按钮');
+  assert.ok(/js\/ui\/token-manager\.js/.test(html), '首页必须引入 token-manager.js');
+  assert.ok(
+    html.indexOf('js/ui/token-manager.js') < html.indexOf('js/page/home.js'),
+    'token-manager.js 必须排在 home.js 之前',
+  );
+  const home = fs.readFileSync(path.join(ROOT, 'js/page/home.js'), 'utf8');
+  assert.ok(/TokenManager\.init\(\)/.test(home), 'home.js 必须调用 TokenManager.init()');
+});
+
+test('接线：首页三个入口卡指向干净的页面路由，常用查询区已就位', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  ['entryPublish', 'entryTask', 'entrySubscription'].forEach((id) => {
+    assert.ok(html.includes(`id="${id}"`), `首页必须有 #${id} 入口`);
+  });
+  assert.ok(/href="\/publish"/.test(html), '入口①必须指向 /publish');
+  assert.ok(/href="\/task"/.test(html), '入口②必须指向 /task');
+  assert.ok(/href="\/subscription"/.test(html), '入口③必须指向 /subscription');
+  ['savedList', 'savedEmpty', 'savedCount'].forEach((id) => {
+    assert.ok(html.includes(`id="${id}"`), `首页必须有 #${id}（常用查询区）`);
+  });
+  assert.ok(/js\/ui\/saved-query\.js/.test(html), '首页必须引入 saved-query.js');
+  assert.ok(
+    html.indexOf('js/ui/saved-query.js') < html.indexOf('js/page/home.js'),
+    'saved-query.js 必须排在 home.js 之前',
+  );
+});
+
+test('接线：publish.html 有「保存到首页」按钮且引入了 saved-query.js', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'publish.html'), 'utf8');
+  assert.ok(/id="btnSaveQuery"/.test(html), '查询页必须有 #btnSaveQuery');
+  assert.ok(/js\/ui\/saved-query\.js/.test(html), '查询页必须引入 saved-query.js');
+  const js = fs.readFileSync(path.join(ROOT, 'js/page/index.js'), 'utf8');
+  assert.ok(/btnSaveQuery/.test(js), 'index.js 必须接线 btnSaveQuery');
+  assert.ok(/window\.SavedQuery/.test(js) && /\.save\(/.test(js), 'index.js 必须调用 SavedQuery.save');
+  assert.ok(/restoreSavedQuery/.test(js), 'index.js 必须有从首页回填的逻辑');
 });
 
 test('dialog-utils：openUtilDialog 必须导出（Token 管理弹窗直接依赖它）', () => {
