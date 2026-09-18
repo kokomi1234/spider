@@ -796,11 +796,17 @@
         if (seq !== searchSeq || !inst2) return;
         if (readInput() !== kw) return;
 
+        // ⚠️ 结果必须核对过才能用：2026-09-18 实测该接口会**忽略查询参数**
+        // （按姓名搜时，传任意关键字甚至错误参数名，后端都返回 token 对应的登录人）。
+        // 原实现直接采信返回值，于是「在工号框里输入任何姓名，下拉里都只蹦出登录人，
+        // 选中就把评委填成了他」—— 评委是要提交给后端审批的，填错人代价很高。
         try {
           if (byEmpNo) {
-            // getUserInfo 只返回单个对象，没有「列表」可筛，命中就沉淀进缓存
+            // getUserInfo 只返回单个对象，没有「列表」可筛，所以核对工号是否就是输入的那个
             const u = r && r.ok ? r.user : null;
-            if (u && u.userId) {
+            if (u && u.userId && String(u.userId) !== kw) {
+              inst2.setBusy(`⚠️ 接口返回的是工号 ${u.userId}，与输入的 ${kw} 不一致（后端忽略了查询参数），请核对`);
+            } else if (u && u.userId) {
               judgeUserCache.cacheUsers([u]);
               inst2.updateOptions(judgeUserCache.cachedUserOptions());
             } else if (r && r.ok) {
@@ -809,8 +815,14 @@
               inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
             }
           } else if (r && r.ok && r.list.length) {
-            judgeUserCache.cacheUsers(r.list);
-            inst2.updateOptions(judgeUserCache.cachedUserOptions());
+            // 按姓名：只认「名字里真的含关键字」的人，其余一律不展示、不缓存
+            const matched = r.list.filter((u) => u && u.userName && String(u.userName).includes(kw));
+            if (matched.length) {
+              judgeUserCache.cacheUsers(matched);
+              inst2.updateOptions(judgeUserCache.cachedUserOptions());
+            } else {
+              inst2.setBusy('⚠️ 接口当前不按姓名过滤（返回的是登录人），请直接填工号');
+            }
           } else if (r && r.ok) {
             inst2.setBusy('未找到匹配姓名（接口只认完整姓名，如「郑梓辉」）');
           } else {

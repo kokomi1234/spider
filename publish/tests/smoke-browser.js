@@ -1807,6 +1807,26 @@ const PAGES = [
           out.nameOptionLabel = optName ? optName.textContent.trim() : null;
           if (optName) { optName.click(); await tick(150); }
           out.nameFilled = fill();
+
+          // ③ 负样本：接口返回的人跟关键字**无关**（真实后端忽略 userName，永远回登录人）。
+          // 期望：不展示、不缓存，并提示改填工号 —— 原实现会把无关的人塞进下拉，
+          // 用户一点就把评委填成了别人（评委是要提交审批的）。
+          window.UserApi.fetchUserList = async () => ({
+            ok: true,
+            list: [{
+              userId: '6464402', userName: '吴树海',
+              orgName: '中国银行软件中心（深圳）', teamName: '中国银行软件中心（深圳）开发三部',
+            }],
+          });
+          type('');
+          box.focus();
+          type('张三');
+          await tick(800);
+          out.irrelevantOption = options().find((o) => /吴树海/.test(o.textContent));
+          out.irrelevantOptionLabel = out.irrelevantOption ? out.irrelevantOption.textContent.trim() : null;
+          out.busyText = (panel() && panel().querySelector('.searchable-select-empty'))
+            ? panel().querySelector('.searchable-select-empty').textContent.trim()
+            : (panel() ? panel().textContent.trim().slice(0, 80) : '');
         } finally {
           window.UserApi.fetchUserList = origList;
           window.UserApi.fetchUserDetail = origDetail;
@@ -1839,6 +1859,13 @@ const PAGES = [
         }
         if (!jr.nameFilled || jr.nameFilled.name !== '郑梓辉') {
           fails.push(`选中姓名命中项后应带出姓名，实际 ${JSON.stringify(jr.nameFilled)}`);
+        }
+        // ③ 无关结果必须被挡住
+        if (jr.irrelevantOption) {
+          fails.push(`后端返回无关的人时不该出现在下拉里，实际 ${jr.irrelevantOptionLabel}`);
+        }
+        if (!/不按姓名/.test(String(jr.busyText || ''))) {
+          fails.push(`无关结果时应提示「不按姓名过滤，请填工号」，实际 ${JSON.stringify(String(jr.busyText || '').slice(0, 60))}`);
         }
       }
     } catch (e) {
