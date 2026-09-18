@@ -337,9 +337,10 @@
         <div class="saved-list" id="deptList"></div>
         <div class="home-empty" id="deptEmpty" hidden></div>
         <p class="home-note">
-          <strong>本机口径</strong>：只统计<strong>这台电脑、这个浏览器</strong>里保存/打开过的查询，
-          按打开次数排序，未上传到服务端。换电脑或换浏览器<b>看不到别人的记录</b>（数据不共享）——
-          要和同团队的人对齐，用上方「导 出 / 导 入」交换一次即可。
+          <strong>本机口径</strong>：这张卡是按「<strong>同一份查询条件被本部门几个人保存过</strong>」排的 ——
+          人多的排前面（一个人反复存同一份，也只算一个人）。统计需要把大家的数据凑在一起，
+          所以要先起本地代理（<code>node proxy.js</code>），数据落在它的 SQLite 库里；
+          <b>没连代理时退回本机算</b>，那时只能看到这台电脑上存过的。
           设置「当前用户」后，你自己保存的查询会自动归入所在部门。
         </p>
       </div>

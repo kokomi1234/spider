@@ -47,26 +47,37 @@
   （“中国银行软件中心（深圳）”，几百人），`teamName` 才是口语里的部门
   （“…开发三部”）。用 orgName 分组等于没有维度，所以 `teamId/teamName` 优先、
   `orgId/orgName` 兜底。
-- 首页「部门常用查询」= **本机口径**：只统计这台电脑上保存/打开过的记录，
-  按打开次数（`hits`）降序、其次最近打开时间，条数可切 **5 / 10 / 20（默认 10）**，
-  选择记在 localStorage。
-- 后端**没有**对应接口（中间平台定位），所以没有任何上报请求；界面上明确标注
-  「本机口径」，别让用户以为是全公司数据。
+- 首页「部门常用查询」的排序口径（2026-09-19 改）：**同一份查询条件被本部门几个人保存过**，
+  人多者排前，其次最近保存时间；条数可切 **5 / 10 / 20（默认 10）**，选择记在 localStorage。
+  以前按「打开次数」排，排头常常是某人反复点自己那条，不代表别人也想查。
+  同一份条件指「同页面 + 同 fields」（`SavedQuery.fingerprintOf`），可以各叫各的名字；
+  **一个人反复保存同一份也只算一个人**。没填任何筛选条件的记录各自成组，不合并。
+- 排行口径要凑齐所有人的数据才算得出来，所以优先问服务端（代理的 SQLite 库）；
+  没连代理（离线 / 静态部署）时**退回本机计算**，本机有多少算多少，不白屏。
+- 后端**没有**对应接口（中间平台定位），所以没有任何上报请求；界面上如实标注口径，
+  别让用户以为是全公司数据。
 ### 团队共享（代理端点，和「批量修改批次时间」同一套路）
 
 记录默认只在本机 localStorage，跨浏览器 / 跨电脑看不到别人的（不是权限问题）。
-现在代理提供了共享落盘端点，**同一个共享文件 = 同一个'部门库'**：
+现在代理提供了共享落盘端点，**同一个库 = 同一个'部门库'**：
 
 ```
-GET  /local/saved-queries            → { items, deleted, file }
-POST /local/saved-queries            → body { items, deletedIds }，服务端合并后返回全集
+GET  /local/saved-queries                       → { items, deleted, file, storage, people }
+GET  /local/saved-queries?dept=<部门键>&limit=N   → 部门高频：按「几个人保存过」排序
+GET  /local/saved-queries?user=<工号>&limit=N     → 这一个人员的常用查询
+POST /local/saved-queries                        → body { items, deletedIds }，服务端合并后返回全集
 ```
 
-- 文件默认写在**仓库根的 `shared/saved-queries.json`**（**不入库**：含查询条件 / 人名 / 部门）；
-  完整的三种用法（本机 / 同工作区 / 跨机器）见 `shared/README.md`。
-- 要跨机器共享，在根目录 `.env` 里把它指到一个所有人都能访问的**同一个文件**：
-  `PROXY_QUERIES_FILE=\\nas\share\saved-queries.json`（Windows 网络盘；macOS/Linux 写挂载点路径）。
-  设了之后读写都走那个文件，**同一个文件路径就是同一个团队库**。
+- **存储用 SQLite**（`publish/lib/queries-db.js`，Node 内置的 `node:sqlite`，不装任何 npm 包），
+  库默认在仓库根的 `shared/saved-queries.db`（**不入库**）。
+  为什么要库：JSON 文件里一条记录只有一个 owner，同一份条件被 10 个人保存过，
+  只能拆成 10 条，永远回答不了「多少人用过」。现在拆成「查询本体 + 谁保存过」两张表，
+  个人视图和部门视图一次都能查出来。详见 `shared/README.md`。
+- Node < 22.5 没有 `node:sqlite`：代理会自动**回落 JSON 文件**（`shared/saved-queries.json`），
+  功能不残废，只是部门排行退回前端本机计算。首次落成库时会把旧 JSON 的记录迁进去。
+- 要跨机器共享，在根目录 `.env` 里把位置指到一个所有人都能访问的**同一个库**：
+  `PROXY_QUERIES_DB=\\nas\share\saved-queries.db`（Windows 网络盘；macOS/Linux 写挂载点路径）。
+  同一个文件路径就是同一个团队库。
 - 合并规则与前端一致：按 id 或「同页面同名」判重，`hits/saves/lastAt` 取 **max**
   （所以反复提交同一个文件是幂等的，刷不出高频排行）。
 - **删除带墓碑**：删除意图随 POST 提交（`deletedIds`），服务端把它记进 `deleted`

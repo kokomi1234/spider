@@ -596,6 +596,129 @@ function forward(req, res, bodyBuf, key, meta) {
   proxyReq.end();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 常用查询的存储后端
+// ------------------------------------------------------------------
+// 优先 SQLite（publish/lib/queries-db.js，用 Node 内置的 node:sqlite，零 npm 依赖）：
+// 它能回答 JSON 文件回答不了的问题 —— 「同一份查询条件被本部门几个人保存过」。
+// Node 版本不够 / 内置模块被裁时自动回落到原来的 JSON 文件实现，功能不残废。
+// ═══════════════════════════════════════════════════════════════
+const QUERIES_DB_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.db');
+const QUERIES_JSON_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.json');
+const QUERIES_JSON_LEGACY = path.join(__dirname, 'config', 'saved-queries.json');
+
+let queriesDbState = null;      // { store, file } | null（不可用 / 未成功打开）
+let queriesDbTried = false;
+
+/** JSON 兜底路径：环境变量优先
+ * @returns {string} */
+function legacyQueriesFile() {
+  return process.env.PROXY_QUERIES_FILE || QUERIES_JSON_DEFAULT;
+}
+
+/** 把旧 JSON 文件里的记录搬进数据库（只在库还是空的时候做一次） */
+function migrateJsonToDb(store) {
+  if (store.all().length) return 0;
+  const candidates = [process.env.PROXY_QUERIES_FILE || QUERIES_JSON_DEFAULT, QUERIES_JSON_LEGACY];
+  for (const f of candidates) {
+    if (!fs.existsSync(f)) continue;
+    let items = [];
+    try {
+      const parsed = JSON.parse(fs.readFileSync(f, 'utf8'));
+      items = Array.isArray(parsed) ? parsed : (Array.isArray(parsed && parsed.items) ? parsed.items : []);
+    } catch (_) { continue; }
+    if (!items.length) continue;
+    store.upsert(items, []);
+    console.log(`[saved-queries] 已把 ${items.length} 条旧记录从 ${f} 迁进 SQLite`);
+    return items.length;
+  }
+  return 0;
+}
+
+/** 打开 SQLite 存储；不可用返回 null（调用方降级到 JSON） */
+function getQueriesStore() {
+  if (queriesDbTried) return queriesDbState && queriesDbState.store;
+  queriesDbTried = true;
+  let Mod = null;
+  try { Mod = require('./lib/queries-db.js'); } catch (_) { Mod = null; }
+  if (!Mod || !Mod.available()) {
+    console.log('[saved-queries] 当前 Node 没有可用的 node:sqlite（需要 Node ≥ 22.5），回落 JSON 文件存储');
+    return null;
+  }
+  const file = process.env.PROXY_QUERIES_DB || QUERIES_DB_DEFAULT;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const store = Mod.open(file);
+    migrateJsonToDb(store);
+    queriesDbState = { store, file };
+    console.log(`[saved-queries] SQLite 已就绪：${file}（现有 ${store.peopleCount()} 个保存者）`);
+    return store;
+  } catch (e) {
+    console.log('[saved-queries] SQLite 打开失败，回落 JSON 文件: ' + e.message);
+    queriesDbState = null;
+    return null;
+  }
+}
+
+/**
+ * SQLite 分支的请求处理。
+ * @returns {boolean} true = 已接走（含 405）；false = 交给调用方继续
+ */
+function handleQueriesSqlite(req, res, store) {
+  let search = null;
+  try { search = new URL(req.url, 'http://localhost').searchParams; } catch (_) { search = new URLSearchParams(); }
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    try {
+      const base = { file: store.file, storage: 'sqlite', people: store.peopleCount() };
+      const dept = search.get('dept');
+      const user = search.get('user');
+      const limit = Number(search.get('limit')) || 0;
+      if (dept) {
+        // 部门高频：同一份条件按「几个人保存过」排序（人的数量才是热度）
+        const items = store.deptTop(dept, limit || 10);
+        sendJson(res, 200, { code: 200, data: { ...base, mode: 'dept', dept, items, deleted: store.tombstones() } });
+      } else if (user) {
+        // 个人视图：这个人保存/打开过的
+        const items = store.byUser(user, limit || 50);
+        sendJson(res, 200, { code: 200, data: { ...base, mode: 'user', user, items, deleted: store.tombstones() } });
+      } else {
+        const items = store.all();
+        sendJson(res, 200, { code: 200, data: { ...base, mode: 'all', items, deleted: store.tombstones() } });
+      }
+    } catch (e) {
+      sendJson(res, 500, { code: 500, msg: '读取常用查询失败: ' + e.message });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const bufs = [];
+    req.on('data', (c) => bufs.push(c));
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(bufs).toString('utf8') || '{}';
+        if (text.length > 2 * 1024 * 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
+        const parsed = JSON.parse(text);
+        const incoming = Array.isArray(parsed) ? parsed : (parsed && parsed.items);
+        if (!Array.isArray(incoming)) { sendJson(res, 400, { code: 400, msg: 'body 需要 { items: [...] }' }); return; }
+        const delIds = Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [];
+        const r = store.upsert(incoming.slice(0, 2000), delIds);
+        sendJson(res, 200, {
+          code: 200, msg: '已合并保存',
+          data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite', people: store.peopleCount(), mode: 'all' },
+        });
+      } catch (e) {
+        sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
+      }
+    });
+    req.on('error', (e) => sendJson(res, 400, { code: 400, msg: '读取请求体失败: ' + e.message }));
+    return true;
+  }
+
+  return false;
+}
+
 // ── 主服务 ────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   // 请求日志：记录来源 IP + 方法 + 路径，便于排查「外部访问进不来」
@@ -795,21 +918,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 首页「常用查询」的共享落盘（不走 ITAMP 后端），与 /local/batch-times 同一套路，
-  // 但**多一步服务端合并**：这个文件可能被多台机器/多个人同时写，直接覆盖会把
-  // 别人刚存进去的记录冲掉。
-  //   GET  /local/saved-queries → { code:200, data:{ items:[...], file } }
-  //   POST /local/saved-queries   body { items:[...] } → 合并两边后落盘，返回合并结果
-  // 要让同团队多台机器看到同一份，把 PROXY_QUERIES_FILE 指到同一个共享路径即可
-  // （网络盘 / 同步盘都行）；默认落在仓库根的 shared/saved-queries.json
-  // （2026-09-19 从 publish/config/ 挪出来：共享文件统一放 shared/，见 shared/README.md）。
+  // 首页「常用查询」的落盘（不走 ITAMP 后端）。
+  //   GET  /local/saved-queries                     → { items, deleted, file }
+  //   GET  /local/saved-queries?dept=<部门键>&limit=N → 部门高频（按「几个人保存过」排序）
+  //   GET  /local/saved-queries?user=<工号>&limit=N   → 这一个人的常用查询
+  //   POST /local/saved-queries  { items, deletedIds } → 提交本机记录，返回全集
+  // 存储：优先 SQLite（shared/saved-queries.db，能回答「多少人保存过」）；
+  //       Node 不支持内置 node:sqlite 时自动降级到原来的 JSON 文件实现。
   if (cachePath === '/local/saved-queries') {
-    // 仓库根 = publish 的上一级（__dirname 是 publish/），别写成绝对路径，换机器就失效
-    const REPO_ROOT = path.resolve(__dirname, '..');
-    const DEFAULT_QUERIES_FILE = path.join(REPO_ROOT, 'shared', 'saved-queries.json');
-    const LEGACY_QUERIES_FILE = path.join(__dirname, 'config', 'saved-queries.json');
-    const FILE = process.env.PROXY_QUERIES_FILE || DEFAULT_QUERIES_FILE;
+    const store = getQueriesStore();          // SQLite 不可用返回 null → 走下面 JSON 兜底
+    if (store) {
+      if (handleQueriesSqlite(req, res, store)) return;
+      // 走到这里说明是 405 之类，照旧由下面统一处理
+      sendJson(res, 405, { code: 405, msg: 'Method Not Allowed' });
+      return;
+    }
+    const FILE = legacyQueriesFile();          // JSON 兜底用（SQLite 不可用时才走到这）
     const MAX_ITEMS = 200;   // 服务端宽松些：多人累积，比前端的 50 条上限大
+    const DEFAULT_QUERIES_FILE = QUERIES_JSON_DEFAULT;
+    const LEGACY_QUERIES_FILE = QUERIES_JSON_LEGACY;
 
     // 老机器上的 publish/config/saved-queries.json 不能直接丢：第一次用到新路径时
     // 把它复制过去（只在「新文件还没有」时搬，避免把别人共享库里的新内容覆盖掉）。

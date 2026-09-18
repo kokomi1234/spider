@@ -411,7 +411,9 @@ const PAGES = [
           && deptCheck.userPersisted === true && deptCheck.formHidden === true
           && deptCheck.saved === true && deptCheck.deptCount === 1
           && /开发三部/.test(deptCheck.deptTitle || '')
-          && /张三/.test(deptCheck.deptMeta || '') && /打开 0 次/.test(deptCheck.deptMeta || '')
+          // 口径（2026-09-19 改）：这行显示的是「这份条件被几个人保存过」，
+          // 不再显示某人的打开/保存次数 —— 一个人刚存的一条就是「1 人保存」。
+          && /张三/.test(deptCheck.deptMeta || '') && /1 人保存/.test(deptCheck.deptMeta || '')
           && deptCheck.deptHasOps === 0
           && /\/publish\?saved=/.test(deptCheck.deptHref || '')
           && deptCheck.topNSaved === '5' && deptCheck.topNSelected === '5';

@@ -354,7 +354,7 @@ test('saved-query：hit 累加打开次数并记最近打开时间', () => {
   assert.strictEqual(S.hit('不存在').ok, false);
 });
 
-test('saved-query：listByDept 只返回同部门的记录，按打开次数降序', () => {
+test('saved-query：listByDept 只返回同部门的记录，同命中条件合成一行', () => {
   const S = load(fakeStorage());
   S.save({ page: 'publish', name: '本部门常用', fields: {}, labels: {}, owner: OWNER_A });
   S.save({ page: 'task', name: '本部门少用', fields: {}, owner: OWNER_A });
@@ -366,8 +366,99 @@ test('saved-query：listByDept 只返回同部门的记录，按打开次数降�
   S.hit(常用.id);
 
   const list = S.listByDept(OWNER_A, 10);
-  assert.deepStrictEqual(list.map((x) => x.name), ['本部门常用', '本部门少用'], '别的部门与无归属的都不能混进来');
-  assert.strictEqual(list[0].hits, 2);
+  // 顺序在这里不稳定：两条都只有 1 人保存，次判据是毫秒级时间戳，
+  // 同一毫秒里完成 save/hit 就会翻转。**排序本身由「排行先比人数」那条用例钉住**，
+  // 这里只断言「谁该进来、谁不该进来」。
+  assert.deepStrictEqual(
+    list.map((x) => x.name).sort(),
+    ['本部门常用', '本部门少用'].sort(),
+    '别的部门与无归属的都不能混进来',
+  );
+  assert.strictEqual(list.length, 2);
+  list.forEach((x) => assert.strictEqual(x.savers, 1, '每条都要带出「几个人保存过」，首页靠它显示'));
+  const 常用行 = list.find((x) => x.name === '本部门常用');
+  assert.strictEqual(常用行.hits, 2, '打开次数仍然记录（只是不再参与排序）');
+});
+
+// ══════════════════════════════════════════════════════════
+// 5.1) 部门排行的口径：**多少「人」保存过这份条件**（2026-09-19 改）
+// ══════════════════════════════════════════════════════════
+// 以前按「打开次数」排，排出来的常常是某个人反复点了自己那条；
+// 现在要的是「大家都觉得该查的东西」，所以合并同一份条件、去重数人头。
+
+const COND_A = { callerSystem: 'E00406', serviceName: '客户信息查询' };   // 同一份条件
+// 同部门（同一个 teamId）的另一个人：部门排行先按部门过滤，跨部门的人进不来这个用例
+const TEAMMATE = { ...OWNER_A, userId: '4711511', userName: '李四' };
+
+test('saved-query：同一份条件被两个人保存 → 合成一行，人数=2', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '张三取的名', fields: { ...COND_A }, owner: OWNER_A });
+  S.save({ page: 'publish', name: '李四取的名', fields: { ...COND_A }, owner: TEAMMATE });
+  const list = S.listByDept(OWNER_A, 10);
+  assert.strictEqual(list.length, 1, '同一份条件不能因为两个人各存一份就刷两行');
+  assert.strictEqual(list[0].savers, 2, '两个不同的人保存 → 2 人');
+  assert.deepStrictEqual([...list[0].saverNames].sort(), ['张三', '李四'], '要能拿出保存者名单（hover 显示）');
+  assert.strictEqual(list[0].recentUser, '李四', '最近一次保存的人要能显示出来');
+});
+
+test('saved-query：同一个人反复保存同一份条件 → 只算 1 人（不许刷人数）', () => {
+  const S = load(fakeStorage());
+  const first = S.save({ page: 'publish', name: '重复保存', fields: { ...COND_A }, owner: OWNER_A });
+  // 换名字再存同一份条件：现在是「同名同页才更新」，名字不同会落成两条，
+  // 但人头去重以后仍然只能算 1 人。
+  S.save({ page: 'publish', name: '重复保存（第二次）', fields: { ...COND_A }, owner: OWNER_A });
+  S.hit(first.item.id);
+  const list = S.listByDept(OWNER_A, 10);
+  assert.strictEqual(list[0].savers, 1, '一个人存三遍也不是三个人');
+});
+
+test('saved-query：条件不同就不算同一份，各自独立计数', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A });
+  S.save({ page: 'publish', name: '条件乙', fields: { callerSystem: 'E07701' }, owner: OWNER_A });
+  assert.strictEqual(S.listByDept(OWNER_A, 10).length, 2, 'fields 不同 = 不同的查询，不能合并');
+  // 同一份条件换个 page 也不该合并（不同的查询页，打开目标不一样）
+  S.save({ page: 'task', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A });
+  assert.strictEqual(S.listByDept(OWNER_A, 10).length, 3, '不同页面的同名字段仍是两个入口');
+});
+
+test('saved-query：没填筛选条件的记录各自独立，不聚成一行', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A });
+  S.save({ page: 'publish', name: '乙', fields: {}, owner: OWNER_A });
+  assert.strictEqual(S.listByDept(OWNER_A, 10).length, 2, '「什么都没填」不是同一份条件，不能归并');
+});
+
+test('saved-query：排行先比人数（人数多的排前面，哪怕它打开次数更少）', () => {
+  const S = load(fakeStorage());
+  // 三人群:只用一次的条件
+  const three = [
+    { userId: '11', userName: '甲', teamId: 'K4229' },
+    { userId: '12', userName: '乙', teamId: 'K4229' },
+    { userId: '13', userName: '丙', teamId: 'K4229' },
+  ];
+  three.forEach((o, i) => S.save({ page: 'publish', name: '三人组' + i, fields: { q: 'popular' }, owner: { ...OWNER_A, ...o } }));
+  const solo = S.save({ page: 'publish', name: '我的高频', fields: { q: 'mine' }, owner: OWNER_A });
+  for (let i = 0; i < 50; i += 1) S.hit(solo.item.id);   // 打开次数远超，但只有 1 人
+
+  const list = S.listByDept(OWNER_A, 10);
+  assert.strictEqual(list[0].savers, 3, '三个人保存的排第一');
+  assert.ok(/三人组/.test(list[0].name), `排头位应是人多的那份，实际 ${list[0].name}`);
+  assert.strictEqual(list[1].savers, 1);
+});
+
+test('saved-query：fingerprintOf 对字段顺序、空值不敏感', () => {
+  const S = load(fakeStorage());
+  const a = S.fingerprintOf({ page: 'publish', fields: { x: '1', y: ['b', 'a'] } });
+  const b = S.fingerprintOf({ page: 'publish', fields: { y: ['a', 'b'], x: '1' } });
+  assert.strictEqual(a, b, '同一份条件换个写法仍是同一份');
+  assert.strictEqual(S.fingerprintOf({ page: 'publish', fields: { x: '' } }), '', '空值字段不当成条件');
+  assert.strictEqual(S.fingerprintOf({ page: 'publish', fields: {} }), '', '没有任何条件 → 不参与归并');
+  assert.notStrictEqual(
+    S.fingerprintOf({ page: 'publish', fields: { x: '1' } }),
+    S.fingerprintOf({ page: 'task', fields: { x: '1' } }),
+    '不同页面的同条件是两个入口',
+  );
 });
 
 test('saved-query：listByDept 的 limit 就是首页的 5 / 10 / 20，非法值退回 10', () => {

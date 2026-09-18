@@ -113,7 +113,8 @@ function makeSavedQuery(seed) {
       t.lastAt = Date.now();
       return { ok: true, item: t };
     },
-    // 与真实实现同口径：按部门（orgId 优先、否则 orgName）过滤，按 hits 降序取前 n 条
+    // 与真实实现同口径（2026-09-19 改）：先按部门过滤，再按**保存人数**降序取前 n 条。
+    // 排序第一判据是 savers 而不是 hits —— 别写回旧口径，否则单测测不到真东西。
     deptKeyOf: (u) => String((u && (u.teamId || u.teamName || u.orgId || u.orgName)) || ''),
     listByDept(user, limit) {
       const key = String((user && (user.teamId || user.teamName || user.orgId || user.orgName)) || '');
@@ -121,7 +122,7 @@ function makeSavedQuery(seed) {
       const n = Number.isFinite(limit) && limit > 0 ? limit : 10;
       return store
         .filter((it) => String((it.owner && (it.owner.teamId || it.owner.teamName || it.owner.orgId || it.owner.orgName)) || '') === key)
-        .sort((a, b) => ((b.hits || 0) - (a.hits || 0)) || ((b.lastAt || b.at) - (a.lastAt || a.at)))
+        .sort((a, b) => ((b.savers || 0) - (a.savers || 0)) || ((b.lastAt || b.at) - (a.lastAt || a.at)))
         .slice(0, n);
     },
     rename(id, name) {

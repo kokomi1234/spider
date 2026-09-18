@@ -39,5 +39,7 @@ require('./boundary-ui.test');
 require('./saved-query.test');
 require('./current-user.test');
 require('./home-page.test');
+// 2026-09-19：常用查询改落 SQLite（回答「这份条件被几个人保存过」）
+require('./queries-db.test');
 
 runAll();

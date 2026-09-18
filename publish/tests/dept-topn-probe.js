@@ -48,11 +48,20 @@ function startServer() {
  * @returns {Promise<{base:string, stop:Function, sharedFile:string}|null>} 起不来返回 null
  */
 async function startProxy() {
-  const sharedFile = path.join(os.tmpdir(), `spider-probe-queries-${Date.now()}.json`);
+  // 用临时 SQLite 库，**不要**碰开发者的 shared/saved-queries.db：
+  // 探针会写 mock 数据还会删，用它自己的库最安全（同时给 JSON 兜底路径也备一份临时的）。
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+  const sharedFile = path.join(os.tmpdir(), `spider-probe-queries-${stamp}.db`);
+  const jsonFallback = path.join(os.tmpdir(), `spider-probe-queries-${stamp}.json`);
   const port = 3900 + Math.floor(Math.random() * 90);
   const child = spawn(process.execPath, [path.join(ROOT, 'proxy.js')], {
     cwd: ROOT,
-    env: { ...process.env, PROXY_PORT: String(port), PROXY_QUERIES_FILE: sharedFile },
+    env: {
+      ...process.env,
+      PROXY_PORT: String(port),
+      PROXY_QUERIES_DB: sharedFile,
+      PROXY_QUERIES_FILE: jsonFallback,
+    },
     stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}/`;
@@ -63,7 +72,12 @@ async function startProxy() {
       req.on('error', () => resolve(false));
       req.setTimeout(600, () => { req.destroy(); resolve(false); });
     });
-    if (ok) return { base, sharedFile, stop: () => { try { child.kill(); } catch (_) { /* 已退出 */ } } };
+    if (ok) {
+      return {
+        base, sharedFile, jsonFallback,
+        stop: () => { try { child.kill(); } catch (_) { /* 已退出 */ } },
+      };
+    }
     await new Promise((r) => setTimeout(r, 300));
   }
   try { child.kill(); } catch (_) { /* noop */ }
@@ -91,22 +105,23 @@ const PEOPLE = [
   { userId: '1003', userName: '王五', orgId: 'O2', orgName: '中国银行软件中心（西安）', teamId: '', teamName: '' },
   // 与张三同 teamId 但 teamName 拼写得不一样：deptKeyOf 以 teamId 优先，应并进「开发一部」
   { userId: '1004', userName: '赵六', orgId: 'O1', orgName: '中国银行软件中心（深圳）', teamId: 'T01', teamName: '开发一部（临时写法）' },
+  // 又一个一部的同事，也存了 HOT_COND —— 凑成「3 人保存」看得出人数是聚合出来的
+  { userId: '1005', userName: '孙七', orgId: 'O1', orgName: '中国银行软件中心（深圳）', teamId: 'T01', teamName: '开发一部' },
 ];
 
-// ── mock 的记录：[归属人下标, 查询名, 打开次数] ──
+// ── mock 的记录：[归属人下标, 查询名, 查询条件, 打开次数] ──
+// 条件相同 = 同一份查询（不要求同名），所以下面 1/2/3 号三人存的是同一份东西：
+// 期望它们合成一行显示「3 人保存」，而不是三个互不相识的条目。
+const HOT_COND = { callerSystem: 'E00406', provideSystem: 'E00301' };
 const RECORDS = [
-  [0, '发布-按调用方查 delist', 9],
-  [0, '发布-按服务编号查接口', 7],
-  [0, '订阅-我负责的服务', 5],
-  [0, '任务单-本月待办', 3],
-  [0, '发布-冷门排查', 1],
-  [0, '发布-从没点开过', 0],
-  [1, '发布-同单位另一个部门', 8],
-  [1, '任务单-二部的单', 4],
-  [1, '订阅-二部订阅', 2],
-  [2, '发布-西安那条', 6],
-  [2, '任务单-西安它单', 1],
-  [3, '发布-张三组同事存的最高频', 10],
+  [0, '发布-按调用方查 delist', { ...HOT_COND }, 9],
+  [1, '发布-同事李四也会查这个', { ...HOT_COND }, 4],
+  [3, '发布-赵六取了个别的名字', { ...HOT_COND }, 2],
+  [4, '发布-孙七第三次存同样条件', { ...HOT_COND }, 3],
+  [0, '发布-只有张三在查', { callerSystem: 'E07701' }, 7],
+  [1, '任务单-李四自己的', { taskNo: 'T-1' }, 5],
+  [2, '发布-西安那条', { callerSystem: 'E00406' }, 6],
+  [2, '任务单-西安它单', { taskNo: 'T-2' }, 1],
 ];
 
 /**
@@ -179,12 +194,12 @@ async function takeShot(browser, page) {
     S.clear();
     CU.clear();
     const now = Date.now();
-    payload.records.forEach(([pi, name, hits], i) => {
+    payload.records.forEach(([pi, name, cond, hits], i) => {
       const owner = payload.people[pi];
       const r = S.save({
-        page: ['publish', 'task', 'subscription'][i % 3],
+        page: cond.taskNo ? 'task' : 'publish',
         name,
-        fields: { probe: true },
+        fields: { ...cond },
         summary: `${owner.userName} 的常用查询`,
         labels: {},
         owner,
@@ -200,6 +215,7 @@ async function takeShot(browser, page) {
     /** 读一次首页「部门排行」的当前状态 */
     const snapshot = () => {
       const rows = [...document.querySelectorAll('#deptList .saved-item')].map((el) => ({
+        id: el.dataset.id,
         name: (el.querySelector('.saved-name span:last-child') || {}).textContent || '',
         meta: (el.querySelector('.saved-meta') || {}).textContent || '',
         badge: (el.querySelector('.saved-badge') || {}).textContent || '',
@@ -260,8 +276,10 @@ async function takeShot(browser, page) {
       topOne: n20.rows.length ? n20.rows[0].meta : null,
     };
 
-    // ⑤ 点开一次 → 计一次 hits，排行要往下沉（真实点击 + 拦住跳转）
+    // ⑤ 点开一次：打开次数还在记（只是不再决定排序），人数当然不会变
     const before = await asUser(payload.people[0], 10);
+    const firstId = before.rows.length ? before.rows[0].id : null;
+    const hitsBefore = firstId ? (S.get(firstId) || {}).hits : null;
     const first = document.querySelector('#deptList .saved-item .saved-main');
     if (first) {
       first.addEventListener('click', (e) => e.preventDefault(), { once: true });
@@ -272,10 +290,11 @@ async function takeShot(browser, page) {
     await tick(80);
     const after = snapshot();
     out.clickEffect = {
-      beforeTop: before.rows.length ? before.rows[0].name : null,
-      afterTop: after.rows.length ? after.rows[0].name : null,
-      beforeMeta: before.rows.length ? before.rows[0].meta : null,
-      afterMeta: after.rows.length ? after.rows[0].meta : null,
+      id: firstId,
+      hitsBefore,
+      hitsAfter: firstId ? (S.get(firstId) || {}).hits : null,
+      metaBefore: before.rows.length ? before.rows[0].meta : null,
+      metaAfter: after.rows.length ? after.rows[0].meta : null,
     };
 
     S.clear();
@@ -338,12 +357,22 @@ async function takeShot(browser, page) {
         return r;
       };
 
-      const dumpFile = (tag) => {
-        let raw = '(无文件)';
-        try { raw = fs.readFileSync(proxy.sharedFile, 'utf8'); } catch (_) { /* 还没创建 */ }
-        line(`  [共享文件 ${tag}] ${raw.slice(0, 260)}`);
+      const showServerTop = async (tag) => {
+        // 直接问服务端：这个部门的排行是 SQL 里 COUNT(DISTINCT 人) 算出来的
+        const r = await new Promise((resolve) => {
+          const req = http.get(`${proxy.base}local/saved-queries?dept=T01&limit=10`, (res) => {
+            let s = '';
+            res.on('data', (d) => { s += d; });
+            res.on('end', () => { try { resolve(JSON.parse(s)); } catch (_) { resolve(null); } });
+          });
+          req.on('error', () => resolve(null));
+        });
+        const d = r && r.data;
+        line(`  [服务端排行 ${tag}] storage=${d ? d.storage : '?'} 人数=${d ? d.people : '?'} → `
+          + (d && Array.isArray(d.items) ? d.items.map((i) => `${i.name}(${i.savers}人:${(i.saverNames || []).join('/')})`).join(' ') : '取不到'));
+        return d;
       };
-      dumpFile('A 之前');
+
       const a = await runIn('A', async (ownerA) => {
         const S = window.SavedQuery;
         const CU = window.CurrentUser;
@@ -367,7 +396,7 @@ async function takeShot(browser, page) {
       });
 
       line(`  机器 A（张三）: ${JSON.stringify(a)}`);
-      dumpFile('A 推完');
+      const topAfterA = await showServerTop('A 推完');
 
       // 机器 B：先同步拉回，再看有没有张三的记录、归属是否完整
       const b = await runIn('B', async (ownerA, ownerB) => {
@@ -407,8 +436,7 @@ async function takeShot(browser, page) {
         };
       });
 
-      line(`  机器 A（张三）: ${JSON.stringify(a)}`);
-      dumpFile('B 推完');
+      const topAfterB = await showServerTop('B 推完');
       line(`  机器 B 拉取: ${JSON.stringify({ pulled: b.pulled, pullTotal: b.pullTotal, pullError: b.pullError, totalAfterPull: b.totalAfterPull })}`);
       line(`  归属保留情况: ${JSON.stringify(b.owners)}`);
       line(`  B 视角看「开发一部」: ${JSON.stringify(b.asZhangsan)}`);
@@ -418,11 +446,20 @@ async function takeShot(browser, page) {
       if (!b.owners.every((o) => o !== '无归属')) fails.push(`同步后有人丢了归属信息：${JSON.stringify(b.owners)}`);
       if (b.asZhangsan.rows.length !== 2) fails.push(`B 端应能看到开发一部的 2 条，实际 ${b.asZhangsan.rows.length}`);
       if (b.asLisi.rows.length !== 1) fails.push(`B 端应只看到自己那条，实际 ${b.asLisi.rows.length}`);
+      // 服务端（SQLite）必须能给出部门排行，且人数是**按人去重**的：
+      // A 两条是不同的空条件 → 各 1 人，不能因为 A 一个人存了两条就都写 2 人。
+      if (!topAfterB || topAfterB.storage !== 'sqlite') {
+        fails.push('服务端应走 SQLite 存储并给出部门排行，实际 ' + JSON.stringify(topAfterB && topAfterB.storage));
+      } else if (topAfterB.items.some((it) => Number(it.savers) !== 1)) {
+        fails.push(`一个人存的两条不该算成多人：${JSON.stringify(topAfterB.items.map((i) => i.savers))}`);
+      }
     } catch (e) {
       fails.push(`第二阶段异常：${e.message}`);
     }
     proxy.stop();
-    try { fs.unlinkSync(proxy.sharedFile); } catch (_) { /* 已删 */ }
+    // SQLite 会带 -wal / -shm 两个伴随文件，一起清掉
+    [proxy.sharedFile, proxy.sharedFile + '-wal', proxy.sharedFile + '-shm', proxy.jsonFallback]
+      .forEach((f) => { try { fs.unlinkSync(f); } catch (_) { /* 已删 */ } });
   }
 
   if (pageErrors.length) {

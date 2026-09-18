@@ -160,23 +160,101 @@
       v: typeof item.v === 'number' ? item.v : 1,   // 缺省 1 = 升级前的旧格式
       at: typeof item.at === 'number' ? item.at : 0,
       fields,
+      // 服务端（SQLite 侧）算好的人口统计：savers = 这份条件被几个人保存过。
+      // 允许它们穿过 sanitize —— 否则 SQL 里 COUNT(DISTINCT 人) 的结果会被这里抹掉，
+      // 页面又退回「看不出热度」的状态。本机离线时 listByDept() 会自己再算一遍。
+      savers: Number(item.savers) > 0 ? Math.floor(Number(item.savers)) : 0,
+      saverNames: Array.isArray(item.saverNames)
+        ? item.saverNames.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
+        : [],
+      recentUser: typeof item.recentUser === 'string' ? item.recentUser.trim() : '',
     };
   }
 
   /**
-   * 某个部门的常用查询排行（**本机口径**：只统计这台浏览器上记录过的查询）。
-   * 排序：打开次数降序 → 最近打开时间降序 → 保存时间降序。
-   * @param {{orgId?:string, orgName?:string}} user 当前用户（用它的部门做过滤）
+   * 同一份「查询条件」的指纹：同页面 + 同 fields = 同一个查询。
+   * 用它才能回答「这个条件有多少人保存过」—— 只看记录条数是不行的，
+   * 同一个人保存三次和三个人各保存一次，是完全不同的热度。
+   *
+   * **空条件不参与聚合**：什么筛选都没填的两条记录归成一组没有意义，
+   * 所以 fields 为空时返回空串（调用方按「各自独立」处理）。
+   *
+   * @param {object} item 记录
+   * @returns {string} 指纹；空串表示「没有筛选条件，别归并」
+   */
+  function fingerprintOf(item) {
+    const f = (item && item.fields && typeof item.fields === 'object') ? item.fields : {};
+    const keys = Object.keys(f).filter((k) => {
+      const v = f[k];
+      if (v == null || v === '') return false;
+      if (Array.isArray(v)) return v.length > 0;
+      return true;
+    });
+    if (!keys.length) return '';
+    const norm = keys.sort().map((k) => {
+      const v = f[k];
+      const sv = Array.isArray(v) ? v.map(String).sort().join(',') : String(v);
+      return `${k}=${sv}`;
+    }).join('&');
+    return `${item.page}?${norm}`;
+  }
+
+  /**
+   * 某个部门的常用查询排行（**本机口径**：只统计这台浏览器上能看到的记录）。
+   *
+   * 排序口径（2026-09-19 改）：**先看有多少人保存过这份条件，再看时间**。
+   * 以前按「打开次数」排，排出来的只是个人的重复劳动；改成人数之后，
+   * 排头位的才是「大家都觉得该查的东西」。
+   *
+   * 同一份条件（同页面 + 同 fields）会被聚成一行，避免同一个东西刷屏；
+   * 保存者按 userId 去重（没有工号时用姓名兜底）。
+   *
+   * @param {{orgId?:string, orgName?:string, teamId?:string, teamName?:string}} user 当前用户
    * @param {number} [limit] 取前几条（首页的 5/10/20）
+   * @returns {Array<object & {savers:number, saverNames:string[], recentUser:string}>}
+   *          savers = 本部门里保存过这份条件的人数；recentUser = 最近一次是谁存的
    */
   function listByDept(user, limit) {
     const key = deptKeyOf(user);
     if (!key) return [];
     const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
-    return list()
-      .filter((it) => deptKeyOf(it.owner) === key)
+    const mine = list().filter((it) => deptKeyOf(it.owner) === key);
+
+    // 按「同一份条件」分组：空条件的各自成组，不能都算成同一个查询
+    const groups = new Map();
+    mine.forEach((it) => {
+      const fp = fingerprintOf(it);
+      const gid = fp || ('solo:' + it.id);
+      if (!groups.has(gid)) groups.set(gid, []);
+      groups.get(gid).push(it);
+    });
+
+    const rows = [...groups.values()].map((items) => {
+      // 同一个人可能反复保存同一份条件 → 按 userId 去重，只算「几个人」
+      const people = new Map();
+      items.forEach((it) => {
+        const p = it.owner || {};
+        const id = String(p.userId || p.userName || '未知');
+        const prev = people.get(id);
+        if (!prev || (it.at || 0) > (prev.at || 0)) {
+          people.set(id, { name: p.userName || p.userId || '未知', userId: String(p.userId || ''), at: it.at || 0 });
+        }
+      });
+      // 代表条目：最近保存的那条（它的名字与摘要最接近「现在该用的那份」）
+      const head = items.slice()
+        .sort((a, b) => (b.at - a.at) || (b.hits - a.hits))[0];
+      const recent = [...people.values()].sort((a, b) => b.at - a.at)[0];
+      return {
+        ...head,
+        savers: people.size,
+        saverNames: [...people.values()].map((p) => p.name),
+        recentUser: recent ? recent.name : '',
+      };
+    });
+
+    return rows
       .sort((a, b) =>
-        (b.hits - a.hits)
+        (b.savers - a.savers)
         || ((b.lastAt || b.at) - (a.lastAt || a.at))
         || (b.at - a.at))
       .slice(0, n);
@@ -403,6 +481,44 @@
     return typeof window.fetch === 'function' && typeof window.location !== 'undefined';
   }
 
+  /**
+   * 向服务端要「部门高频查询」排行。
+   *
+   * 为什么要走服务端：本机只能看到**这台机器上**的记录，「部门里几个人保存过」
+   * 需要所有人的记录凑在一起才算得出来 —— 那部分数据在代理的 SQLite 库里。
+   * 服务端按同一份条件聚合并 COUNT(DISTINCT 人)，我们直接拿结果渲染。
+   *
+   * 存储降级到 JSON 文件时，代理不认 `?dept=`，会返回 `mode:'all'` 的全量列表；
+   * 那种情况必须**拒绝使用**（否则页面上会变成「不分部门的全部记录」），
+   * 让调用方退回本机计算。
+   *
+   * @returns {Promise<{ok:boolean, items?:Array, people?:number, storage?:string, error?:string}>}
+   */
+  async function deptTopFromServer(user, limit) {
+    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    const key = deptKeyOf(user);
+    if (!key) return fail('未设置当前用户，拿不到部门');
+    const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+    try {
+      const r = await window.fetch(
+        `${SERVER_URL}?dept=${encodeURIComponent(key)}&limit=${n}`,
+        { headers: { Accept: 'application/json' }, cache: 'no-store' },
+      );
+      if (!r.ok) return fail('部门排行请求失败：HTTP ' + r.status);
+      const json = await r.json();
+      const data = json && json.data;
+      if (!data) return fail('部门排行返回异常（没有 data）');
+      // 关键防线：mode 必须是 dept。JSON 存储/静态服务器会忽略我们的查询参数，
+      // 直接回全量 —— 那一刻要是照渲染，部门卡就名不副实了。
+      if (data.mode && data.mode !== 'dept') return fail('存储后端不支持部门排行（回落到本机计算）');
+      const items = Array.isArray(data.items) ? data.items.map(sanitize).filter(Boolean) : null;
+      if (!items) return fail('部门排行返回异常（没有 items）');
+      return { ok: true, items, people: Number(data.people) || 0, storage: String(data.storage || '') };
+    } catch (e) {
+      return fail('部门排行请求失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
   /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total} 或 {ok:false,error} */
   async function syncFromServer() {
     if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
@@ -514,7 +630,9 @@
     update,
     hit,
     listByDept,
+    deptTopFromServer,
     deptKeyOf,
+    fingerprintOf,
     exportJson,
     importJson,
     syncFromServer,

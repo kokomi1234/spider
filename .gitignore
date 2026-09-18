@@ -6,9 +6,12 @@
 .env.*
 !.env.example
 
-# 首页「常用查询」的共享文件：含真实查询条件 / 人名 / 部门，属运行时数据，不入库
-# （代理首次写入时自动创建于仓库根 shared/；要跨机器共享就把 PROXY_QUERIES_FILE
-#  指到共享盘，见 shared/README.md）
+# 首页「常用查询」的团队库：含真实查询条件 / 人名 / 部门，属运行时数据，不入库
+# SQLite 主存（代理首次写入时自动创建，见 shared/README.md）；
+# .json 是 Node < 22.5 时的降级产物。两者都指向共享盘即跨机器共享。
+shared/saved-queries.db
+shared/saved-queries.db-wal
+shared/saved-queries.db-shm
 shared/saved-queries.json
 
 # Real captured internal responses / sensitive network traces
@@ -23,6 +26,7 @@ analysis/har/
 
 # Temporary verification output
 output/*.png
+publish/output/
 
 # AI assistant workspace memory (not project code)
 .workbuddy/

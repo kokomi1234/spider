@@ -116,14 +116,20 @@
     }
 
     if (o.meta) {
-      const who = item.owner
-        ? [item.owner.userName, item.owner.userId ? `(${item.owner.userId})` : ''].join('')
+      // 部门排行的口径（2026-09-19 改）：显示「这份条件有多少人保存过」，
+      // 而不是「某个人打开/保存了多少次」—— 后者排出来只是个人的重复劳动。
+      const savers = Number(item.savers) || 0;
+      const who = savers
+        ? `${savers} 人保存${item.recentUser ? ` · 最近 ${item.recentUser}` : ''}`
         : '未记录查询人';
       const meta = document.createElement('div');
       // 与摘要分开一个类：两者外观相同，但归属信息要能被单独取到
-      // （否则 querySelector('.saved-summary') 只会拿到摘要，取不到查询人）。
+      // （否则 querySelector('.saved-summary') 只会拿到摘要，取不到这行）。
       meta.className = 'saved-meta';
-      meta.textContent = `${who} · 打开 ${item.hits} 次 · 保存 ${item.saves} 次`;
+      meta.textContent = who;
+      if (Array.isArray(item.saverNames) && item.saverNames.length) {
+        meta.title = `保存过这份条件的人：${item.saverNames.join('、')}`;
+      }
       main.appendChild(meta);
     }
 
@@ -361,6 +367,38 @@
     deptEmptyEl.hidden = !empty;
     if (empty) {
       deptEmptyEl.textContent = '本机还没有记录到本部门的常用查询：在任一查询页填好条件后点「⭐ 保存到首页」即可。';
+    }
+
+    // 本机数据先落地（离线也能看），再拿服务端的补充：
+    // 「部门里几个人保存过」要凑齐所有人的记录才算得出来，那份数据在代理的 SQLite 里。
+    if (u) loadDeptFromServer(u, topN);
+  }
+
+  /** 记录当前请求是针对谁的：慢请求回来时人已经换过不能覆盖（张冠李戴） */
+  let deptReqSeq = 0;
+
+  async function loadDeptFromServer(u, topN) {
+    const S = window.SavedQuery;
+    if (!S || typeof S.deptTopFromServer !== 'function') return;
+    const seq = (deptReqSeq += 1);
+    let r = null;
+    try {
+      r = await S.deptTopFromServer(u, topN);
+    } catch (_) {
+      return;   // 请求炸了不该影响已经渲染好的本机视图
+    }
+    if (seq !== deptReqSeq) return;                       // 已经有更新的请求了
+    const CU = window.CurrentUser;
+    const now = CU ? CU.get() : null;
+    if (!now || String(now.userId || now.userName || '') !== String(u.userId || u.userName || '')) return;
+    if (!r || !r.ok || !Array.isArray(r.items)) return;   // 失败就保留本机渲染的结果
+
+    clear(deptListEl);
+    r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true })));
+    const empty = r.items.length === 0;
+    deptEmptyEl.hidden = !empty;
+    if (empty) {
+      deptEmptyEl.textContent = '这台机器上还没有本部门的常用查询记录。';
     }
   }
 
