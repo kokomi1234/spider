@@ -1361,6 +1361,139 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 评委「按工号 / 按姓名」分流（2026-09-18 修复的回归保护）
+  // ═══════════════════════════════════════════════════════════════
+  // 抓包口径：两个端点各管一路 —— 按姓名 → getUserList?userName=，按工号 → getUserInfo?userId=。
+  // 原实现把工号当 userName 发 getUserList（抓包里没这个形态），查不出来且不报错。
+  // 这里用桩 UserApi 记录两个方法各自收到的参数，断言分流真的生效、且选中后能带出姓名/部门。
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(1000);
+      const jr = await page.evaluate(async () => {
+        const out = { list: [], detail: [] };
+        if (!window.SubscribeDialog || !window.UserApi) {
+          return { err: 'window.SubscribeDialog / window.UserApi 缺失' };
+        }
+        const origList = window.UserApi.fetchUserList;
+        const origDetail = window.UserApi.fetchUserDetail;
+        window.UserApi.fetchUserList = async (name) => {
+          out.list.push(name);
+          return {
+            ok: true,
+            list: [{
+              userId: '4711510', userName: '郑梓辉', orgName: '中国银行软件中心（深圳）',
+              teamName: '中国银行软件中心（深圳）开发三部',
+            }],
+          };
+        };
+        window.UserApi.fetchUserDetail = async (id) => {
+          out.detail.push(id);
+          return {
+            ok: true,
+            user: {
+              userId: '8404725', userName: '魏甜甜', orgName: '中国银行软件中心（西安）',
+              teamName: '中国银行软件中心（西安）开发一部',
+            },
+          };
+        };
+        const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+        try {
+          await window.SubscribeDialog.open({
+            serverCoding: 'E00301TO1197', sysServeNo: 'E00301TO1197', publishId: 'P-JUDGE-SEARCH',
+          });
+          await tick(150);
+          const tr = document.querySelector('#judgeTableBody tr.judge-row');
+          const sel = tr && tr.querySelector('.judge-no');
+          const box = sel && sel.parentElement.querySelector('.searchable-select-input');
+          if (!box) return { err: '评委工号的可搜索输入框没找到' };
+          // 选项面板可能被挂到 body（.is-floating 浮动定位）—— 必须按 aria-controls 找，
+          // 只在容器内 querySelector 会永远查不到选项（踩过一次）。
+          const panel = () => document.getElementById(box.getAttribute('aria-controls') || '');
+          const options = () => (panel() ? [...panel().querySelectorAll('.searchable-select-option')] : []);
+          const waitOption = async (re) => {
+            for (let i = 0; i < 15; i += 1) {
+              const hit = options().find((o) => re.test(o.textContent));
+              if (hit) return hit;
+              await tick(100);
+            }
+            return null;
+          };
+          const type = (v) => {
+            box.value = v;
+            box.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          const fill = () => ({
+            name: (tr.querySelector('.judge-name') || {}).value || '',
+            dept: (tr.querySelector('.judge-dept') || {}).value || '',
+          });
+
+          // ① 纯数字 → 工号 → getUserInfo(userId)，且**不得**落到 getUserList
+          box.click();
+          box.focus();
+          type('8404725');
+          await tick(700);
+          out.afterEmpNo = { detail: out.detail.slice(), list: out.list.slice() };
+          const optEmp = await waitOption(/魏甜甜/);
+          out.empOptionLabel = optEmp ? optEmp.textContent.trim() : null;
+          if (optEmp) { optEmp.click(); await tick(150); }
+          out.empFilled = fill();
+
+          // ② 非数字 → 姓名 → getUserList(userName)，且不得再打 getUserInfo
+          type('');
+          box.focus();
+          type('郑梓辉');
+          await tick(700);
+          out.afterName = { detail: out.detail.slice(), list: out.list.slice() };
+          const optName = await waitOption(/郑梓辉/);
+          out.nameOptionLabel = optName ? optName.textContent.trim() : null;
+          if (optName) { optName.click(); await tick(150); }
+          out.nameFilled = fill();
+        } finally {
+          window.UserApi.fetchUserList = origList;
+          window.UserApi.fetchUserDetail = origDetail;
+          if (window.SubscribeDialog) window.SubscribeDialog.close();
+        }
+        return out;
+      });
+      process.stdout.write(`  评委搜索分流(工号/姓名): ${JSON.stringify(jr)}\n`);
+      if (jr.err) fails.push(jr.err);
+      else {
+        const ae = jr.afterEmpNo || { detail: [], list: [] };
+        if (ae.detail.length !== 1 || ae.detail[0] !== '8404725') {
+          fails.push(`按工号应调 getUserInfo(userId=8404725)，实际 detail=${JSON.stringify(ae.detail)}`);
+        }
+        if (ae.list.length !== 0) {
+          fails.push(`按工号不得再调 getUserList，实际 list=${JSON.stringify(ae.list)}`);
+        }
+        if (!/魏甜甜/.test(String(jr.empOptionLabel))) {
+          fails.push(`工号命中后下拉应出现「魏甜甜（8404725）」，实际 ${jr.empOptionLabel}`);
+        }
+        if (!jr.empFilled || jr.empFilled.name !== '魏甜甜' || !/开发一部/.test(String(jr.empFilled.dept))) {
+          fails.push(`选中工号命中项后应带出姓名/部门，实际 ${JSON.stringify(jr.empFilled)}`);
+        }
+        const an = jr.afterName || { detail: [], list: [] };
+        if (an.list.length !== 1 || an.list[0] !== '郑梓辉') {
+          fails.push(`按姓名应调 getUserList(userName=郑梓辉)，实际 list=${JSON.stringify(an.list)}`);
+        }
+        if (an.detail.length !== ae.detail.length) {
+          fails.push(`按姓名不得再调 getUserInfo，实际 detail=${JSON.stringify(an.detail)}`);
+        }
+        if (!jr.nameFilled || jr.nameFilled.name !== '郑梓辉') {
+          fails.push(`选中姓名命中项后应带出姓名，实际 ${JSON.stringify(jr.nameFilled)}`);
+        }
+      }
+    } catch (e) {
+      fails.push(`评委搜索分流段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 分页栏：居中 + 页码命中区 / 选中态（2026-09-16 调整的回归保护）
   // ═══════════════════════════════════════════════════════════════
   // 页码的坑是「点错相邻页」：原来按钮 32×32、间距 4px、当前页只靠底色区分，

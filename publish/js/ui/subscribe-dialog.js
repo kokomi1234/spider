@@ -728,11 +728,19 @@
   }
 
   // ── 评委工号在线搜索 ─────────────────────────────────
-  // 抓包（har/userinfo.har）确认：getUserList 只认「完整姓名」或「完整工号」，中间过程
-  // （如“郑梓”“zheng”）后端直接返回 500。所以这里边输入边搜，失败/无结果把原因写进
-  // 下拉面板而不是静默；搜到的人沉淀进 judgeUserCache，下次输入同批人能立刻本地过滤出来。
+  // 抓包口径（har/userinfo.har + temp.har 2026-09-18 复核）是两个端点各管一路：
+  //   按**姓名** → POST getUserList?userName=xx  → data 是数组（可能多命中）
+  //   按**工号** → POST getUserInfo?userId=xx    → data 是单个用户对象
+  // 抓包里两组样本正好成对（userName=郑梓辉 ↔ userId=4711510、吴树海 ↔ 6464402），
+  // 所以「按工号」必须走 getUserInfo —— 原先把工号当 userName 发 getUserList
+  // 是抓包里没有的形态，查不出来也不会报错。
+  // 另：getUserList 只认完整姓名，中间过程（如“郑梓”“zheng”）后端直接返回 500。
+  // 这里边输入边搜，失败/无结果把原因写进下拉面板而不是静默；搜到的人沉淀进
+  // judgeUserCache，下次输入同批人能立刻本地过滤出来。
   const JUDGE_SEARCH_MIN = 2;      // 少于 2 个字不打请求
   const JUDGE_SEARCH_DELAY = 300;  // 防抖：够快又不至于每个字母都发请求
+  /** 工号形态：抓包样本都是纯数字（4711510 / 8404725 / 6464402） */
+  const EMPNO_RE = /^\d+$/;
 
   /** 结果回来时面板若不巧关了就再展开一次（只在输入框仍有焦点时，避免抢焦点） */
   function ensurePanelOpen(inst, targetEl) {
@@ -767,19 +775,36 @@
       if (inst) inst.setBusy('搜索中…');
 
       timer = setTimeout(async () => {
-        if (!window.UserApi || typeof window.UserApi.fetchUserList !== 'function') return;
+        if (!window.UserApi) return;
         const seq = ++searchSeq;
-        const r = await window.UserApi.fetchUserList(kw);
+        // 按抓包口径分流：纯数字 = 工号 → getUserInfo(userId)；否则 = 姓名 → getUserList(userName)
+        const byEmpNo = EMPNO_RE.test(kw);
+        if (byEmpNo ? typeof window.UserApi.fetchUserDetail !== 'function'
+          : typeof window.UserApi.fetchUserList !== 'function') return;
+        const r = byEmpNo
+          ? await window.UserApi.fetchUserDetail(kw)
+          : await window.UserApi.fetchUserList(kw);
         const inst2 = tr._noInstance;
         if (seq !== searchSeq || !inst2) return;
         if (readInput() !== kw) return;
 
         try {
-          if (r && r.ok && r.list.length) {
+          if (byEmpNo) {
+            // getUserInfo 只返回单个对象，没有「列表」可筛，命中就沉淀进缓存
+            const u = r && r.ok ? r.user : null;
+            if (u && u.userId) {
+              judgeUserCache.cacheUsers([u]);
+              inst2.updateOptions(judgeUserCache.cachedUserOptions());
+            } else if (r && r.ok) {
+              inst2.setBusy('未找到该工号（接口按 userId 精确匹配）');
+            } else {
+              inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
+            }
+          } else if (r && r.ok && r.list.length) {
             judgeUserCache.cacheUsers(r.list);
             inst2.updateOptions(judgeUserCache.cachedUserOptions());
           } else if (r && r.ok) {
-            inst2.setBusy('未找到匹配用户（接口只认完整姓名或工号）');
+            inst2.setBusy('未找到匹配姓名（接口只认完整姓名，如「郑梓辉」）');
           } else {
             inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
           }
