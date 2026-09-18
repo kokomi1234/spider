@@ -52,7 +52,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const envPath = path.join(__dirname, '.env');
+// .env 位置：默认就在代理脚本同级（publish/.env，与 ONBOARDING.md / .env.example 一致）。
+// 若部署时把 publish 拷到别的目录导致路径嵌套异常（例如出现 spider/spider/...），
+// 可用 PROXY_ENV_PATH 显式指到正确的 .env；前端「写入位置」也会跟着变化。
+const envPath = process.env.PROXY_ENV_PATH || path.join(__dirname, '.env');
 
 const PORT = process.env.PROXY_PORT || 3000;
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
@@ -698,7 +701,12 @@ const server = http.createServer((req, res) => {
         // 可选：覆盖 .env 文件
         if (saveToEnv) {
           try {
-            let content = fs.readFileSync(envPath, 'utf-8');
+            // 确保父目录存在：部署路径嵌套异常（如 spider/spider）或目录被清理时，
+            // writeFileSync 才不会因「父目录不存在」而 ENOENT。
+            fs.mkdirSync(path.dirname(envPath), { recursive: true });
+            // 文件可能还不存在（.env 被 gitignore，首次部署常没有）——没有就当空内容，
+            // 这样「覆盖 .env」首次也能创建文件，而不是 readFileSync 抛 ENOENT 直接 500。
+            const content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
             const lines = content.split('\n');
             let found = false;
             for (let i = 0; i < lines.length; i++) {
@@ -865,10 +873,12 @@ server.on('error', (err) => {
     console.error(`\n❌ 端口 ${PORT} 已被占用，代理没有启动。`);
     console.error(`   换个端口：PROXY_PORT=3001 node proxy.js`);
     console.error(`   或先查占用：lsof -nP -iTCP:${PORT} -sTCP:LISTEN\n`);
-  } else {
-    console.error('\n❌ 代理启动失败:', (err && err.message) || err, '\n');
+    // 端口占用是「根本没起来」的启动期失败，必须退出让调用方知道。
+    process.exit(1);
   }
-  process.exit(1);
+  // 其余 server 级错误（运行期偶发，例如对端异常断开/RST）只记录，不退出：
+  // 否则一个坏连接就能把正在对外服务的代理整个拖垮（历史表现就是跑 2~3 分钟莫名 exit 1）。
+  console.error('[proxy] server error（已记录，服务继续运行）:', (err && err.message) || err);
 });
 
 server.listen(PORT, () => {
@@ -879,6 +889,7 @@ server.listen(PORT, () => {
   console.log(`   模式：${OFFLINE_REFRESHED ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
   console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
   console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
+  console.log(`   🔑 .env 位置：${envPath}（前端「Token 管理」写入此处；可用 PROXY_ENV_PATH 改）`);
   if (!OFFLINE_REFRESHED) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
     if (!TOKEN_REFRESHED) {
