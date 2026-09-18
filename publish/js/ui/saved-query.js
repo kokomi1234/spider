@@ -21,7 +21,13 @@
   'use strict';
 
   const STORAGE_KEY = 'spider.savedQueries.v1';
-  const MAX_ITEMS = 50;
+  // 上限与代理端点（/local/saved-queries）保持一致：合并了同团队别人的记录后
+  // 本机条目数会超过「自己存的」，两边用同一个数字才不会互相打架。
+  const MAX_ITEMS = 200;
+  /** 共享落盘端点（代理提供，与 /local/batch-times 同一套路） */
+  const SERVER_URL = '/local/saved-queries';
+  /** 待同步的删除意图：删掉的 id 要告诉服务端，否则它会把记录原样合并回来 */
+  const DELETED_KEY = 'spider.savedQueries.deleted.v1';
   /** 记录结构版本：1 = 旧格式（只有编号 + 当时拼好的摘要）；2 = 带 labels（人类可读文本） */
   const SCHEMA_VERSION = 2;
   const PAGES = { publish: '服务发布数据查询', task: '任务单查询', subscription: '服务订阅关系查询' };
@@ -248,6 +254,7 @@
       return fail(`常用查询最多保存 ${MAX_ITEMS} 条，请先删除不用的`);
     }
     const w = writeRaw(next);
+    if (w.ok) autoPush();
     return w.ok ? { ok: true, item, updated: !!exists } : w;
   }
 
@@ -259,6 +266,7 @@
     if (!target) return fail('该查询已不存在');
     const next = items.map((it) => (it.id === id ? { ...it, name: title, at: it.at } : it));
     const w = writeRaw(next);
+    if (w.ok) autoPush();
     return w.ok ? { ok: true, item: { ...target, name: title } } : w;
   }
 
@@ -266,6 +274,7 @@
     const items = list();
     if (!items.some((it) => it.id === id)) return fail('该查询已不存在');
     const w = writeRaw(items.filter((it) => it.id !== id));
+    if (w.ok) { markDeleted(id); autoPush(); }
     return w.ok ? { ok: true } : w;
   }
 
@@ -295,7 +304,10 @@
   }
 
   function clear() {
-    return writeRaw([]);
+    const ids = list().map((it) => it.id);
+    const w = writeRaw([]);
+    if (w.ok) { ids.forEach(markDeleted); autoPush(); }
+    return w;
   }
 
   /**
@@ -318,6 +330,33 @@
    * 计数取 max 而不是相加 —— 反复导入同一个文件不该把「高频」刷上去。
    * @returns {{ok:boolean, added?:number, merged?:number, total?:number, error?:string}}
    */
+  /**
+   * 合并两份列表（幂等）：按 id 或「同页面 + 同名」判重，计数取 max ——
+   * 反复提交同一个文件不该把「高频」刷上去。
+   * 导出/导入与代理同步共用这一份规则（代理侧 proxy.js 有等价实现）。
+   */
+  function mergeItems(localItems, incoming) {
+    const items = (localItems || []).slice();
+    let added = 0;
+    let merged = 0;
+    (incoming || []).forEach((inc) => {
+      const same = items.find((it) => it.id === inc.id
+        || (it.page === inc.page && it.name === inc.name));
+      if (same) {
+        same.hits = Math.max(same.hits || 0, inc.hits || 0);
+        same.saves = Math.max(same.saves || 1, inc.saves || 1);
+        same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
+        if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
+        if (!same.labels && inc.labels && Object.keys(inc.labels).length) same.labels = inc.labels;
+        merged += 1;
+      } else {
+        items.push(inc);
+        added += 1;
+      }
+    });
+    return { items, added, merged };
+  }
+
   function importJson(text) {
     let parsed;
     try {
@@ -333,29 +372,119 @@
     const valid = incoming.map(sanitize).filter(Boolean);
     if (!valid.length) return fail('文件里没有可用的常用查询');
 
-    const items = list();
-    let added = 0;
-    let merged = 0;
-    valid.forEach((inc) => {
-      const same = items.find((it) => it.id === inc.id
-        || (it.page === inc.page && it.name === inc.name));
-      if (same) {
-        same.hits = Math.max(same.hits || 0, inc.hits || 0);
-        same.saves = Math.max(same.saves || 1, inc.saves || 1);
-        same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
-        if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
-        merged += 1;
-      } else {
-        items.push(inc);
-        added += 1;
-      }
-    });
-
+    const { items, added, merged } = mergeItems(list(), valid);
     if (items.length > MAX_ITEMS) {
       return fail(`合并后共 ${items.length} 条，超过上限 ${MAX_ITEMS} 条，请先清理一些再导入`);
     }
     const w = writeRaw(items);
     return w.ok ? { ok: true, added, merged, total: items.length } : w;
+  }
+
+  // ── 与代理端点的同步（团队共享，与批次时间同一套路）──────────
+  //
+  // 为什么需要它：记录在本机 localStorage，换电脑/换浏览器就看不到别人的。
+  // 代理提供一个读写共享文件的端点（GET 拉、POST 合并落盘），
+  // 于是「同一个代理 / 同一个共享目录」的人就能看到彼此的常用查询。
+  // 任何一步失败都只是「退回本机」——同步不该打断用户正在做的事。
+
+  /** 环境是否支持同步：测试环境（无 location）与静态部署（无 fetch）都要安静跳过 */
+  function canSync() {
+    // 都从 window 上取：一是符合「调用时才取 window.*」的项目约定，
+    // 二是单测能把 window.fetch / window.location 换成桩（裸 fetch 会解析到宿主全局）。
+    return typeof window.fetch === 'function' && typeof window.location !== 'undefined';
+  }
+
+  /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total} 或 {ok:false,error} */
+  async function syncFromServer() {
+    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    try {
+      const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (!r.ok) return fail('同步失败：HTTP ' + r.status);
+      const json = await r.json();
+      const incoming = (json && json.data && Array.isArray(json.data.items)) ? json.data.items : [];
+      const valid = incoming.map(sanitize).filter(Boolean);
+      if (!valid.length) return { ok: true, added: 0, merged: 0, total: list().length };
+      const { items, added, merged } = mergeItems(list(), valid);
+      const w = writeRaw(items);
+      return w.ok ? { ok: true, added, merged, total: items.length } : w;
+    } catch (e) {
+      return fail('同步失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
+  /**
+   * 把本机记录推给端点（服务端会与文件里的合并后返回全集），并用返回结果覆盖本地。
+   * @param {{beacon:boolean}} [opts] beacon=true 时用 sendBeacon —— 页面正在关闭
+   *        （比如点开一条查询要跳转）也能把这次计数送出去，普通 fetch 会被中断丢掉。
+   */
+  async function pushToServer(opts) {
+    const o = opts || {};
+    const pendingDeletes = readPendingDeletes();
+    const payload = JSON.stringify({ items: list(), deletedIds: pendingDeletes });
+
+    if (o.beacon) {
+      try {
+        // sendBeacon 不带自定义头，但代理只解析 body，够用
+        const nav = window.navigator;
+        if (nav && typeof nav.sendBeacon === 'function') {
+          const okSent = nav.sendBeacon(SERVER_URL, new Blob([payload], { type: 'application/json' }));
+          if (okSent) { writePendingDeletes([]); return { ok: true, beacon: true }; }
+          return fail('浏览器拒绝发送');
+        }
+      } catch (_) { /* 落到普通 fetch */ }
+      return fail('当前环境不支持 sendBeacon');
+    }
+
+    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    try {
+      const r = await window.fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      });
+      if (!r.ok) return fail('同步失败：HTTP ' + r.status);
+      const json = await r.json();
+      const items = (json && json.data && Array.isArray(json.data.items)) ? json.data.items : null;
+      if (!items) return { ok: true, total: list().length };
+      const valid = items.map(sanitize).filter(Boolean);
+      const w = writeRaw(valid);
+      // 服务端已收到这批删除意图（返回的 items 里也没有它们），本地清空待办
+      if (w.ok) writePendingDeletes([]);
+      return w.ok ? { ok: true, total: valid.length } : w;
+    } catch (e) {
+      return fail('同步失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
+  function readPendingDeletes() {
+    const s = storage();
+    if (!s) return [];
+    try {
+      const arr = JSON.parse(s.getItem(DELETED_KEY) || '[]');
+      return Array.isArray(arr) ? arr.map(String) : [];
+    } catch (_) { return []; }
+  }
+
+  function writePendingDeletes(ids) {
+    const s = storage();
+    if (!s) return;
+    try {
+      s.setItem(DELETED_KEY, JSON.stringify(Array.from(new Set((ids || []).map(String)))));
+    } catch (_) { /* 存不下就退化成「只删本地」，不影响别的功能 */ }
+  }
+
+  /** 记一条删除意图（下次 push 时带给服务端立墓碑） */
+  function markDeleted(id) {
+    if (!id) return;
+    writePendingDeletes(readPendingDeletes().concat(String(id)));
+  }
+
+  /** 写完本地后「尽力而为」推一次：失败静默 —— 本地已经存好了，别用同步失败打扰用户 */
+  function autoPush() {
+    if (!canSync()) return;
+    Promise.resolve()
+      .then(() => pushToServer())
+      .catch(() => { /* 静默：端点不可用就只留本机 */ });
   }
 
   /** 各页跳转地址（与 proxy.js 的干净路由一致） */
@@ -379,6 +508,8 @@
     deptKeyOf,
     exportJson,
     importJson,
+    syncFromServer,
+    pushToServer,
     remove,
     clear,
     hrefFor,

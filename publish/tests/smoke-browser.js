@@ -352,7 +352,7 @@ const PAGES = [
         });
 
         // 导出 / 导入：跨浏览器、跨电脑交换常用查询的唯一通路（本机 localStorage 不共享）
-        const ioCheck = await page.evaluate(() => {
+        const ioCheck = await page.evaluate(async () => {
           const out = {};
           const S = window.SavedQuery;
           if (!S) return { err: 'SavedQuery 未加载' };
@@ -381,6 +381,13 @@ const PAGES = [
           out.secondImport = { added: r2.added, merged: r2.merged, total: r2.total };
           out.renderedCount = (window.HomePage.render(), document.querySelectorAll('#savedList .saved-item').length);
 
+          // 共享同步：冒烟用的是自带静态服务器，没有 /local/saved-queries 端点，
+          // 所以这里只验「能力就位 + 失败时安静降级」，真实共享由联调脚本验。
+          out.hasSyncApi = typeof S.pushToServer === 'function' && typeof S.syncFromServer === 'function';
+          const pushed = await S.pushToServer();
+          out.pushWithoutEndpoint = pushed.ok === false;
+          out.localKept = S.list().length;
+
           S.clear();
           return out;
         });
@@ -390,7 +397,8 @@ const PAGES = [
           && ioCheck.firstImport && ioCheck.firstImport.ok && ioCheck.firstImport.added === 1
           && ioCheck.firstImport.total === 2
           && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 2
-          && ioCheck.renderedCount === 2;
+          && ioCheck.renderedCount === 2
+          && ioCheck.hasSyncApi === true && ioCheck.pushWithoutEndpoint === true;
         if (!ioOk) {
           process.stdout.write(`    [FAIL] 导出/导入异常：${JSON.stringify(ioCheck)}\n`);
           anyFail = true;

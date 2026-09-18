@@ -538,3 +538,105 @@ test('saved-query：合并后超过上限 → 拒绝并保留原数据', () => {
   assert.ok(/上限/.test(r.error), '要说清为什么拒绝：' + r.error);
   assert.strictEqual(S.list().length, 0, '拒绝时不能只写一半');
 });
+
+// ══════════════════════════════════════════════════════════
+// 7) 与代理端点的同步（团队共享，与批次时间同一套路）
+// ══════════════════════════════════════════════════════════
+
+/** 带同步能力的加载：注入 location + fetch 桩（模块从 window 上取，可替换） */
+function loadSync(storage, fetchStub) {
+  const win = { localStorage: storage, location: { href: 'http://localhost:3000/' }, fetch: fetchStub };
+  loadScript('js/ui/saved-query.js', {}, win);
+  return win.SavedQuery;
+}
+
+const okJson = (data) => async () => ({ ok: true, status: 200, json: async () => ({ code: 200, data }) });
+
+test('sync：没有端点能力时安静跳过，不抛也不假装成功', async () => {
+  const S = load(fakeStorage());       // 没有 location / fetch
+  const a = await S.syncFromServer();
+  assert.strictEqual(a.ok, false, '静态部署/离线时应明确说不可用');
+  const b = await S.pushToServer();
+  assert.strictEqual(b.ok, false);
+});
+
+test('sync：push 会把本机记录提交上去，并用服务端返回的全集覆盖本地', async () => {
+  const st = fakeStorage();
+  let posted = null;
+  const S = loadSync(st, async (url, opts) => {
+    if (!opts || opts.method !== 'POST') throw new Error('不该走 GET');
+    posted = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [
+      ...posted.items,
+      { id: 'peer1', page: 'task', name: '同事的查询', fields: {}, hits: 3, saves: 1,
+        owner: { userId: '1001', userName: '李四', teamId: 'M2534', teamName: '开发一部' } },
+    ] } }) };
+  });
+  S.save({ page: 'publish', name: '我的查询', fields: {} });
+
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, true);
+  assert.ok(posted.items.some((it) => it.name === '我的查询'), '本机记录要提交上去');
+  assert.strictEqual(S.list().length, 2, '服务端返回的全集要覆盖本地（含同事那条）');
+  assert.ok(S.list().some((it) => it.name === '同事的查询'));
+});
+
+test('sync：删除意图会带给服务端（否则合并时会把删掉的记录复活）', async () => {
+  const st = fakeStorage();
+  let posted = null;
+  const S = loadSync(st, async (url, opts) => {
+    posted = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [] } }) };
+  });
+  const keep = S.save({ page: 'publish', name: '保留', fields: {} });
+  const del = S.save({ page: 'publish', name: '要删的', fields: {} });
+  S.remove(del.item.id);
+
+  await S.pushToServer();
+  assert.deepStrictEqual(posted.deletedIds, [del.item.id], '删掉的 id 必须带上');
+  assert.ok(posted.items.some((it) => it.name === '保留'));
+
+  // 服务端已确认 → 待办清空，下次不再重复提交
+  await S.pushToServer();
+  assert.deepStrictEqual(posted.deletedIds, [], '确认过的删除意图不该重复提交');
+  assert.ok(keep.ok);
+});
+
+test('sync：syncFromServer 把服务端的记录合并进本地（幂等，计数取 max）', async () => {
+  const st = fakeStorage();
+  const S = loadSync(st, okJson({ items: [
+    { id: 'p1', page: 'publish', name: '同事的', fields: {}, hits: 9, saves: 2,
+      owner: { userId: '1001', userName: '李四', teamId: 'M2534', teamName: '开发一部' } },
+  ] }));
+  const r1 = await S.syncFromServer();
+  assert.deepStrictEqual({ ok: r1.ok, added: r1.added }, { ok: true, added: 1 });
+
+  const r2 = await S.syncFromServer();   // 再拉一次不该变成两条
+  assert.strictEqual(r2.added, 0);
+  assert.strictEqual(r2.merged, 1);
+  assert.strictEqual(S.list().length, 1);
+  assert.strictEqual(S.list()[0].hits, 9, '计数取 max');
+});
+
+test('sync：端点报错 / 返回坏数据时只影响同步，不动本地数据', async () => {
+  const st = fakeStorage();
+  const S = loadSync(st, async () => { throw new Error('Failed to fetch'); });
+  S.save({ page: 'publish', name: '本机数据', fields: {} });
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, false);
+  assert.ok(/同步失败/.test(r.error), '要说清是同步失败：' + r.error);
+  assert.strictEqual(S.list().length, 1, '同步失败不能动本机记录');
+});
+
+test('sync：HTTP 500 与坏 JSON 都要被当成失败而不是崩', async () => {
+  const st = fakeStorage();
+  const S = loadSync(st, async () => ({ ok: false, status: 500, json: async () => ({}) }));
+  const a = await S.pushToServer();
+  assert.strictEqual(a.ok, false);
+  assert.ok(/500/.test(a.error));
+
+  const S2 = loadSync(fakeStorage(), async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } }));
+  const b = await S2.pushToServer();
+  assert.strictEqual(b.ok, false);
+  assert.ok(b.error);
+});

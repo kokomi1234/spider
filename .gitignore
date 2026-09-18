@@ -6,6 +6,10 @@
 .env.*
 !.env.example
 
+# 首页「常用查询」的共享文件：含真实查询条件 / 人名 / 部门，属运行时数据，不入库
+# （代理首次写入时自动创建；要多人共享就把它指到共享盘，见 proxy.js 的 PROXY_QUERIES_FILE）
+publish/config/saved-queries.json
+
 # Real captured internal responses / sensitive network traces
 publish/cache/
 *.har

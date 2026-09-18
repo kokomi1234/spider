@@ -795,6 +795,125 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 首页「常用查询」的共享落盘（不走 ITAMP 后端），与 /local/batch-times 同一套路，
+  // 但**多一步服务端合并**：这个文件可能被多台机器/多个人同时写，直接覆盖会把
+  // 别人刚存进去的记录冲掉。
+  //   GET  /local/saved-queries → { code:200, data:{ items:[...], file } }
+  //   POST /local/saved-queries   body { items:[...] } → 合并两边后落盘，返回合并结果
+  // 要让同团队多台机器看到同一份，把 PROXY_QUERIES_FILE 指到同一个共享路径即可
+  // （网络盘 / 同步盘都行）；默认落在 publish/config/saved-queries.json。
+  if (cachePath === '/local/saved-queries') {
+    const FILE = process.env.PROXY_QUERIES_FILE || path.join(__dirname, 'config', 'saved-queries.json');
+    const MAX_ITEMS = 200;   // 服务端宽松些：多人累积，比前端的 50 条上限大
+
+    /** 合并键：同页面 + 同名 视为同一条（与前端 importJson 一致） */
+    const keyOf = (it) => ((it && it.page && it.name)
+      ? (String(it.page) + '\u0000' + String(it.name))
+      : ('id:' + String(it && it.id)));
+
+    /** 读文件（坏文件当空，绝不因为一份坏数据让端点 500） */
+    const readFile = () => {
+      try {
+        const raw = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : '';
+        if (!raw) return { items: [], deleted: [] };
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return { items: parsed, deleted: [] };
+        const items = Array.isArray(parsed && parsed.items) ? parsed.items : [];
+        const deleted = Array.isArray(parsed && parsed.deleted) ? parsed.deleted : [];
+        // 墓碑只留 30 天：够覆盖「同事几天后打开」的情况，又不会让文件无限增长
+        const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+        return {
+          items: items.filter((it) => it && typeof it === 'object' && it.id && it.page),
+          deleted: deleted.filter((d) => d && d.key && (Number(d.at) || 0) >= cutoff),
+        };
+      } catch (_) { return { items: [], deleted: [] }; }
+    };
+    const readItems = () => readFile().items;
+
+    /**
+     * 合并两份列表。规则与前端 SavedQuery.importJson 一致：
+     *   · 「同页面 + 同名」视为同一条（前端也用这条判重）
+     *   · hits / saves / lastAt 取 max —— 反复提交同一个文件不该把热度刷上去
+     *   · owner / labels 缺的从对方补
+     */
+    const mergeItems = (a, b, tombstone) => {
+      const out = [];
+      const idx = new Map();
+      const dead = tombstone || new Set();
+      [...(a || []), ...(b || [])].forEach((raw) => {
+        if (!raw || typeof raw !== 'object' || !raw.id) return;
+        const k = keyOf(raw);
+        // 已被删掉的（墓碑）不再接受——否则同事的本地副本一推送就把删除记录"复活"了
+        if (dead.has(k) || dead.has('id:' + String(raw.id))) return;
+        const prev = idx.get(k);
+        if (!prev) {
+          const copy = JSON.parse(JSON.stringify(raw));
+          idx.set(k, copy);
+          out.push(copy);
+          return;
+        }
+        prev.hits = Math.max(Number(prev.hits) || 0, Number(raw.hits) || 0);
+        prev.saves = Math.max(Number(prev.saves) || 1, Number(raw.saves) || 1);
+        prev.lastAt = Math.max(Number(prev.lastAt) || 0, Number(raw.lastAt) || 0);
+        if (!prev.owner && raw.owner) prev.owner = raw.owner;
+        if (!prev.labels && raw.labels) prev.labels = raw.labels;
+      });
+      // 最近打开/保存的排前面，文件本身也可读
+      out.sort((x, y) => (Number(y.lastAt) || Number(y.at) || 0) - (Number(x.lastAt) || Number(x.at) || 0));
+      return out.slice(0, MAX_ITEMS);
+    };
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      try {
+        const f = readFile();
+        sendJson(res, 200, { code: 200, data: { items: f.items, deleted: f.deleted, file: FILE } });
+      } catch (e) {
+        sendJson(res, 500, { code: 500, msg: '读取常用查询失败: ' + e.message });
+      }
+      return;
+    }
+    if (req.method === 'POST' || req.method === 'PUT') {
+      const bufs = [];
+      req.on('data', (c) => bufs.push(c));
+      req.on('end', () => {
+        try {
+          const text = Buffer.concat(bufs).toString('utf8') || '{}';
+          if (text.length > 2 * 1024 * 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
+          const parsed = JSON.parse(text);
+          const incoming = Array.isArray(parsed) ? parsed : (parsed && parsed.items);
+          if (!Array.isArray(incoming)) { sendJson(res, 400, { code: 400, msg: 'body 需要 { items: [...] }' }); return; }
+
+          const f = readFile();
+          // 删除意图：提交方删掉的条目要**从文件里移除并立墓碑**，
+          // 否则合并时它会把删除的记录原样带回来（同事的本地副本一推送就"复活"）。
+          const delIds = new Set((Array.isArray(parsed.deletedIds) ? parsed.deletedIds : []).map(String));
+          const deleted = f.deleted.slice();
+          let remaining = f.items;
+          if (delIds.size) {
+            remaining.forEach((it) => {
+              if (delIds.has(String(it.id))) deleted.push({ key: keyOf(it), at: Date.now() });
+            });
+            remaining = remaining.filter((it) => !delIds.has(String(it.id)));
+          }
+          const deadKeys = new Set(deleted.map((d) => d.key));
+          const merged = mergeItems(remaining, incoming, deadKeys);
+
+          fs.mkdirSync(path.dirname(FILE), { recursive: true });
+          fs.writeFileSync(FILE, JSON.stringify({
+            v: 2, updatedAt: new Date().toISOString(), items: merged, deleted,
+          }, null, 2) + '\n', 'utf8');
+          sendJson(res, 200, { code: 200, msg: '已合并保存', data: { items: merged, deleted, file: FILE } });
+        } catch (e) {
+          sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
+        }
+      });
+      req.on('error', (e) => sendJson(res, 400, { code: 400, msg: '读取请求体失败: ' + e.message }));
+      return;
+    }
+    sendJson(res, 405, { code: 405, msg: 'Method Not Allowed' });
+    return;
+  }
+
   // 请求体要参与缓存 key，必须先缓冲（不能再直接 req.pipe）
   const chunks = [];
   req.on('data', (c) => chunks.push(c));

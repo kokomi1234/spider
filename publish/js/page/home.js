@@ -459,7 +459,32 @@
     console.error('Token 管理初始化失败:', e);
   }
 
+  // 先把本机的渲染出来（不等网络），再与共享端点同步一次。
+  //
+  // 这里的 pushToServer 是**双向**的：它把本机记录提交上去，服务端与文件里的合并后
+  // 返回全集，前端再用全集覆盖本地 —— 所以「我存的能给别人」「别人存的我也拿到」都靠它。
+  // 没有端点（静态部署 / 离线 / 冒烟环境）时它安静失败，页面照旧只用本机数据。
   render();
+  (async () => {
+    const S = window.SavedQuery;
+    if (!S || typeof S.pushToServer !== 'function') return;
+    const r = await S.pushToServer();
+    if (r && r.ok && !r.beacon) {
+      renderSaved();
+      renderDept();
+    }
+  })();
+
+  // 离开页面前把本机记录（含刚才点开的那次计数）推回去：
+  // 点卡片会立刻跳转，普通 fetch 会被卸载中断，所以用 sendBeacon。
+  const flushToServer = () => {
+    const S = window.SavedQuery;
+    if (S && typeof S.pushToServer === 'function') S.pushToServer({ beacon: true });
+  };
+  window.addEventListener('pagehide', flushToServer);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushToServer();
+  });
 
   // 暴露给冒烟测试：断言首页真的渲染出了列表（而不是只判脚本加载成功）
   window.HomePage = {
