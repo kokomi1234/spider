@@ -109,6 +109,14 @@
       if (!r.ok) return { ok: false, list: [], mode: 'id', error: r.error || '查询失败' };
       const u = normalize(r.user);
       if (!u) return { ok: true, list: [], mode: 'id', empty: true };
+      // 核对返回的工号与输入是否一致：2026-09-18 实测后端会**忽略查询参数**、
+      // 直接返回 token 对应的登录人 —— 不核对就会把别人当成你，比查不到更糟。
+      if (u.userId && u.userId !== kw) {
+        return {
+          ok: false, list: [], mode: 'id',
+          error: `接口返回的是工号 ${u.userId}（不是 ${kw}），后端可能忽略了查询参数`,
+        };
+      }
       return { ok: true, list: [u], mode: 'id' };
     }
 
@@ -121,7 +129,19 @@
       return { ok: false, list: [], mode: 'name', error: r.error || '查询失败' };
     }
     const list = (r.list || []).map(normalize).filter(Boolean);
-    return { ok: true, list, mode: 'name', empty: list.length === 0 };
+    if (!list.length) return { ok: true, list: [], mode: 'name', empty: true };
+
+    // 与工号同理：只认「名字里真的含这个关键字」的结果。
+    // 实测（2026-09-18）传任意姓名都会返回同一个登录人，若原样展示，
+    // 用户会以为查到的就是自己要找的人 —— 这里把这种情况显式标出来。
+    const matched = list.filter((u) => u.userName && u.userName.includes(kw));
+    if (!matched.length) {
+      return {
+        ok: true, list: [], mode: 'name', empty: true, nameSearchUnsupported: true,
+        returned: list.map((u) => u.userName).filter(Boolean),
+      };
+    }
+    return { ok: true, list: matched, mode: 'name' };
   }
 
   /**

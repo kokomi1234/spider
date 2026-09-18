@@ -203,3 +203,59 @@ test('current-user：deptLabel 团队优先、一级单位兜底', () => {
   assert.strictEqual(w.CurrentUser.deptLabel({ userName: '王五' }), '');
   assert.strictEqual(w.CurrentUser.deptLabel(null), '');
 });
+
+// ══════════════════════════════════════════════════════════
+// 5) 与真实后端行为对齐：参数被忽略时必须挡住，不能把别人当成你
+//    （2026-09-18 实测：传任意姓名/不存在的姓名/错误参数名，后端都返回同一个登录人）
+// ══════════════════════════════════════════════════════════
+
+test('current-user：姓名搜索返回无关的人 → 明确标记「后端不按姓名过滤」而不是当结果用', async () => {
+  const w = load(fakeStorage());
+  w.UserApi = {
+    fetchUserList: async () => ({
+      ok: true,
+      // 无论传什么关键字，后端都回这个人
+      list: [{ userId: '6464402', userName: '吴树海', orgName: '中国银行软件中心（深圳）' }],
+    }),
+  };
+  const r = await w.CurrentUser.lookup('张三');
+  assert.strictEqual(r.ok, true, '接口本身成功，不该报错');
+  assert.deepStrictEqual(r.list, [], '绝不能把无关的人当成搜索结果返回');
+  assert.strictEqual(r.nameSearchUnsupported, true, '要能被上层识别出来并提示改用工号');
+  assert.deepStrictEqual(r.returned, ['吴树海'], '把后端实际返回的人带出来，便于排查');
+});
+
+test('current-user：姓名命中时才作为结果，且只保留名字含关键字的人', async () => {
+  const w = load(fakeStorage());
+  w.UserApi = {
+    fetchUserList: async () => ({
+      ok: true,
+      list: [
+        { userId: '1', userName: '张三' },
+        { userId: '2', userName: '张三三' },
+        { userId: '3', userName: '李四' },   // 关键字里没有，必须被剔除
+      ],
+    }),
+  };
+  const r = await w.CurrentUser.lookup('张三');
+  assert.deepStrictEqual(r.list.map((u) => u.userId), ['1', '2']);
+  assert.strictEqual(r.nameSearchUnsupported, undefined);
+});
+
+test('current-user：工号查询返回别的工号 → 报错而不是认下来', async () => {
+  const w = load(fakeStorage());
+  w.UserApi = {
+    fetchUserDetail: async () => ({ ok: true, user: { userId: '6464402', userName: '吴树海' } }),
+  };
+  const r = await w.CurrentUser.lookup('4711510');
+  assert.strictEqual(r.ok, false, '返回的工号与输入不一致时必须报错');
+  assert.ok(/6464402/.test(r.error) && /4711510/.test(r.error), '要说清两边分别是什么：' + r.error);
+});
+
+test('current-user：工号一致时正常返回', async () => {
+  const w = load(fakeStorage());
+  w.UserApi = { fetchUserDetail: async () => ({ ok: true, user: USER }) };
+  const r = await w.CurrentUser.lookup('4711510');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.list[0].userId, '4711510');
+});

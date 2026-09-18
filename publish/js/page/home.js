@@ -269,6 +269,13 @@
       showToast(`查询失败：${r.error || '未知错误'}`, 3600, 'error');
       return;
     }
+    // 后端不按姓名过滤（返回的是登录人，实测见 js/ui/current-user.js 的注释）：
+    // 与其把别人当成你，不如直接说清该怎么办。
+    if (r.nameSearchUnsupported) {
+      if (userHintEl) userHintEl.textContent = '未设置';
+      showToast('接口当前不按姓名过滤，请改用工号（如 4711510）', 4200, 'warn');
+      return;
+    }
     if (!r.list.length) {
       if (userHintEl) userHintEl.textContent = '未设置';
       showToast(r.mode === 'id' ? `没有找到工号 ${String(kw).trim()}` : '没有找到匹配的人员', 3200, 'warn');
