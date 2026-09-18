@@ -468,17 +468,19 @@ test('ServiceApi.fetchServiceDetail：正常 → 返回适配后的 data', async
   assert.strictEqual(res.data.serverCoding, 'X');
 });
 
-test('ServiceApi.unsubscribe：现状——subscribeRemove 已配置仍只做本地移除、0 次请求（疑似缺陷）', async () => {
-  // 现状：即便在配置里填上 subscribeRemove 端点，unsubscribe 也只返回
-  // { ok:true, local:true, remoteSkipped:true }，根本不会向服务端发请求。
-  // 后果：一旦接入真实端点，UI 显示「已取消」但后端仍订阅 —— 见报告。
+test('ServiceApi.unsubscribe：即便配置了 subscribeRemove 端点也只改本机标记、0 次请求（既定口径）', async () => {
+  // 口径（2026-09-19 定，不是缺陷）：后端查不到「我订阅了哪些服务」，这份清单
+  // 只能本机维护 —— 取消订阅 = 删掉本机清单里的一条标记（典型场景是当初添加错了）。
+  // 所以即便端点配上了也不该发请求：取消接口的请求体没有抓包确认，复用了订阅报文会语义反。
+  // 想改成真·远程取消，必须先拿到一次取消订阅的抓包写 buildUnsubscribeBody，
+  // 且这两条断言要跟着改（它们现在是「本地为准」的防线）。
   const stub = recStub(() => okResp([], 0, 0));
   const api = loadServiceApi({ endpoints: { subscribeRemove: '/itamp-tool/publish/unsubscribe' } }, stub.fn);
   const res = await api.unsubscribe('ObsUkbContectQuery');
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.local, true);
   assert.strictEqual(res.remoteSkipped, true);
-  assert.strictEqual(stub.rec.calls, 0, '现状：配置了端点也不真正请求服务端（疑似缺陷）');
+  assert.strictEqual(stub.rec.calls, 0, '订阅标记以本机为准：配了端点也不向服务端发请求');
 });
 
 test('ServiceApi.unsubscribe：subscribeRemove 未配置 → {ok:true, local:true}，零请求', async () => {

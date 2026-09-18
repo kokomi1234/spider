@@ -66,11 +66,17 @@
 
     dialog.innerHTML = `
       <h2 style="margin:0 0 16px 0;">已订阅服务管理</h2>
+      <!-- 来源说明：远端查不到「我订阅了哪些服务」，这份清单只能本地维护。
+           不写清楚的话，用户会默认是服务端数据，清一次缓存就以为订阅丢了。 -->
+      <p style="margin:0 0 16px 0;font-size:var(--fs-xs);color:var(--muted);line-height:1.6;">
+        这份清单是<strong>本机维护的标记</strong>：后端没有可用的订阅查询接口，列表来自手动添加 / 批量导入的记录。
+        它不等于服务端的真实订阅关系；换浏览器或清缓存会丢，建议用「批量导出」留一份备份。
+      </p>
       
       <!-- 统计 -->
       <div class="stats" style="margin-bottom:16px;">
         <div class="stat info">
-          <div class="lbl">已订阅数量</div>
+          <div class="lbl">已订阅数量（本机）</div>
           <div class="val" id="subCount">0</div>
         </div>
       </div>
@@ -134,6 +140,9 @@
   function updateCount() {
     const count = window.SubscribeManager.count();
     btnSubscribePanel.textContent = `已订阅 (${count})`;
+    // 悬停说明来源：后端查不到订阅关系，这个数字是本机清单的条数。
+    // 不写会被当成服务端数据，清一次缓存就以为订阅丢了。
+    btnSubscribePanel.title = `本机「已订阅」清单里有 ${count} 条（后端无订阅查询接口，数据来自手动添加 / 批量导入；换浏览器或清缓存会丢）`;
     const countEl = $('#subCount');
     if (countEl) countEl.textContent = count;
   }
@@ -174,28 +183,28 @@
         // 行距只有 8px，误点直接发起移除，而删错的这一条除了重新搜索再加回来没有退路。
         const ok = (window.DialogUtils && typeof window.DialogUtils.confirmBox === 'function')
           ? await window.DialogUtils.confirmBox({
-            title: '移除订阅',
-            message: `确定移除 ${code} 吗？`,
+            title: '移除订阅标记',
+            message: `确定不再标记 ${code} 为已订阅吗？\n\n这只是删掉本机清单里的一条标记（可能当初添加错了），不会改动服务端的订阅关系。`,
             okText: '移 除',
             danger: true,
           })
-          : window.confirm(`确定移除 ${code} 吗？`);
+          : window.confirm(`确定移除本机「已订阅」标记（${code}）吗？\n\n只删本机这条标记，服务端不受影响。`);
         if (!ok) return;
         btn.disabled = true; btn.textContent = '移除中…';
-        // 预留层（service-api.js）未配置 subscribeRemove 时，unsubscribe 直接返回本地模式
+        // 订阅标记的口径：本机为准（后端查不到订阅关系），所以这里本来就不发远程请求。
         const res = window.ServiceApi ? await window.ServiceApi.unsubscribe(code) : { ok: true, local: true };
         if (!res.ok) {
           btn.disabled = false; btn.textContent = '删除';
           showToast(`⚠️ 移除失败：${res.error || '未知错误'}`);
           return;
         }
+        // local:true 是**设计如此**（订阅标记以本机为准），不是「同步失败」，
+        // 所以文案要说清改了什么、没改什么：删的是本机清单里的一条标记。
+        // 写成「未同步服务端」会让人以为这里漏实现了提交，进而反复重试。
         window.SubscribeManager.remove(code);
         updateCount();
         renderSubList();
-        // remoteSkipped：只改了本地，服务端并未收到请求。必须说清楚，
-        // 否则用户会以为服务端也一起删掉了。
-        showToast(res.remoteSkipped ? `⚠️ ${res.reason || '仅本地移除，未同步服务端'}` : `已移除: ${code}`,
-                  res.remoteSkipped ? 4000 : 2500, res.remoteSkipped ? 'warn' : 'info');
+        showToast(`已从本机清单移除：${code}（服务端的订阅关系没有变化）`, 2600, 'info');
       });
     });
   }
@@ -368,18 +377,18 @@
   async function confirmClear() {
     const ok = (window.DialogUtils && typeof window.DialogUtils.confirmBox === 'function')
       ? await window.DialogUtils.confirmBox({
-        title: '清空已订阅服务',
-        message: '确定要清空所有已订阅服务吗？此操作不可恢复。',
+        title: '清空本机已订阅清单',
+        message: '确定要清空本机这份「已订阅」清单吗？\n\n清空后只是本机标记没了，服务端的订阅关系不变；清完可以用之前导出的文件重新导入，但本机这份清单本身不可恢复。',
         okText: '清 空',
         danger: true,
       })
-      : window.confirm('确定要清空所有已订阅服务吗？此操作不可恢复。');
+      : window.confirm('确定要清空本机这份「已订阅」清单吗？\n\n只影响本机标记，服务端订阅关系不变，且本机清单不可恢复。');
     if (!ok) return;
     try {
       window.SubscribeManager.clear();
       updateCount();
       renderSubList();
-      showToast('🗑️ 已清空所有已订阅服务', 2000, 'info');
+      showToast('🗑️ 已清空本机订阅清单', 2000, 'info');
     } catch (e) {
       console.error('清空订阅列表失败:', e);
       showToast('❌ 清空失败: ' + e.message, 3000, 'error');

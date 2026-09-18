@@ -133,7 +133,7 @@ test('subscribe：只给编码时不发远程写（缺明细会把兜底值写�
   assert.strictEqual(called, 1);
 });
 
-test('unsubscribe：端点为空的接口不发请求（取消订阅只做本地移除）', async () => {
+test('unsubscribe：零请求、返回本地口径（订阅标记以本机为准，不是「同步失败」）', async () => {
   let called = 0;
   const api = freshServiceApi(async () => { called += 1; return { ok: true, status: 200, json: async () => ({ code: 200 }) }; });
   assert.strictEqual(api.isEnabled('subscribeRemove'), false, '默认未配置 = 该能力关闭');

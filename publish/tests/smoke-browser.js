@@ -3131,6 +3131,72 @@ const PAGES = [
     await page.close();
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // 订阅面板「本地口径」（2026-09-19 定的口径，别退化成"未同步服务端"的说法）
+  // ═══════════════════════════════════════════════════════════════
+  // 后端没有订阅查询接口，右上角这个数字只能来自本机 localStorage。
+  // 断言三件事：① 计数按钮悬停要说明来源；② 面板里要有「本机维护」的说明；
+  // ③ 移除一条要能从清单里真删掉，且解释「服务端关系不变」。
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(700);
+      const r = await page.evaluate(async () => {
+        const tick = (ms) => new Promise((rs) => setTimeout(rs, ms));
+        const SM = window.SubscribeManager;
+        const btn = document.getElementById('btnSubscribePanel');
+        const out = { hasBtn: !!btn, hasMgr: !!SM };
+
+        SM.clear();
+        SM.add('LOC-VERIFY-1');
+        SM.add('LOC-VERIFY-2');
+        btn.click();
+        await tick(320);
+
+        out.btnText = btn.textContent.trim();
+        out.btnTitle = btn.getAttribute('title') || '';
+        out.bodyText = (document.querySelector('.overlay.show .dialog') || {}).textContent || '';
+        out.countShown = (document.getElementById('subCount') || {}).textContent || '';
+
+        // 删第一条：确认框要是「本地口径」的说法，点了之后清单真少一条
+        const delBtn = document.querySelector('#subList [data-code]');
+        out.rowBefore = document.querySelectorAll('#subList [data-code]').length;
+        if (delBtn) delBtn.click();
+        await tick(360);
+        const dlg = document.querySelector('.dlg-util-overlay');
+        out.confirmText = dlg ? dlg.textContent.replace(/\s+/g, ' ').trim() : '';
+        const okBtn = dlg ? dlg.querySelector('.sub-foot .filled') : null;
+        if (okBtn) okBtn.click();
+        await tick(420);
+        out.rowAfter = document.querySelectorAll('#subList [data-code]').length;
+        out.stillLocalOnly = SM.getAll().length;
+        window.DialogUtils && typeof DialogUtils.close === 'function' && DialogUtils.close();
+        SM.clear();
+        return out;
+      });
+      process.stdout.write(`  订阅面板本地口径: ${JSON.stringify(r)}\n`);
+      if (r.hasBtn !== true || r.hasMgr !== true) fails.push('订阅面板/管理器未就绪，用例无效');
+      if (r.btnText !== '已订阅 (2)') fails.push(`计数按钮应显示「已订阅 (2)」，实际 ${JSON.stringify(r.btnText)}`);
+      if (!/本机/.test(r.btnTitle)) fails.push(`计数按钮 title 要说明是本机清单，实际 ${JSON.stringify(r.btnTitle)}`);
+      if (!/本机维护的标记/.test(r.bodyText)) fails.push('面板里应写清「本机维护的标记」，否则会被当成服务端数据');
+      if (!/换浏览器|清缓存/.test(r.bodyText)) fails.push('面板里要提示「换浏览器/清缓存会丢」');
+      if (!(/本机清单|本机这条标记/.test(r.confirmText))) {
+        fails.push(`删除确认要说清只删本机标记，实际 ${JSON.stringify(r.confirmText)}`);
+      }
+      if (r.rowAfter !== r.rowBefore - 1) {
+        fails.push(`移除一条后列表应少一条（${r.rowBefore} → ${r.rowAfter}）`);
+      }
+      if (r.stillLocalOnly !== 1) fails.push(`移除后本机清单应剩 1 条，实际 ${r.stillLocalOnly}`);
+    } catch (e) {
+      fails.push(`订阅面板本地口径段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
   await browser.close();
   server.close();
   process.stdout.write(`\n==== 结果: ${anyFail ? '有 FAIL' : 'ALL PASS (静态加载/接线无报错)'} ====\n`);
