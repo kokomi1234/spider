@@ -232,7 +232,7 @@ test('徽标文案：publish/task/subscription 分别显示对应中文', () => 
   }
 });
 
-test('打开链接：卡片 <a> 的 href 等于 SavedQuery.hrefFor(page, id)', () => {
+test('整栏可点：卡片主体本身就是 <a>，href 等于 SavedQuery.hrefFor(page, id)', () => {
   const { els } = buildEnv({
     items: [
       { id: 'q1', page: 'publish', name: 'a', at: 2 },
@@ -247,8 +247,21 @@ test('打开链接：卡片 <a> 的 href 等于 SavedQuery.hrefFor(page, id)', (
     const card = cardFor(els.savedList, c.id);
     const a = findIn(card, (e) => e.tagName === 'A');
     assert.ok(a, `${c.id} 应有打开链接 <a>`);
+    assert.strictEqual(a.className, 'saved-main', '可点的应该是整块主体（saved-main），不是某个小按钮');
     assert.strictEqual(a.href, c.href, `${c.id} 的 href 应为 ${c.href}`);
+    // 名称与摘要要在这块 <a> 里，否则「点整栏」根本点不到
+    assert.ok(findIn(a, (e) => e.textContent === 'a' || e.textContent === 'b'), '名称应在可点区域内');
   }
+});
+
+test('整栏可点：不再有独立的「打 开」按钮（操作区只剩重命名 / 删除）', () => {
+  const { els } = buildEnv({ items: [{ id: 'q1', page: 'publish', name: 'a', at: 1 }] });
+  const card = cardFor(els.savedList, 'q1');
+  const ops = findIn(card, (e) => e.className === 'saved-ops');
+  assert.ok(ops, '应有操作区');
+  const btns = ops.children.filter((c) => c.tagName === 'BUTTON').map((c) => c.textContent);
+  assert.deepStrictEqual(btns, ['重命名', '删除'], '操作区只保留重命名与删除');
+  assert.strictEqual(findIn(card, (e) => e.className === 'saved-open'), null, '不应再有 .saved-open 按钮');
 });
 
 test('删除：确认 → 该条从存储消失、列表少一条', async () => {

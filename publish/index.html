@@ -81,15 +81,29 @@
     .saved-list { display: grid; gap: 8px; }
     .saved-item {
       display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px 12px;
+      align-items: stretch;
+      gap: 0;
       border: 1px solid var(--outline-soft);
       border-radius: var(--r-xs);
       background: var(--surface);
+      overflow: hidden;
     }
     .saved-item:hover { border-color: var(--outline); background: var(--surface-1); }
-    .saved-item .saved-main { flex: 1 1 auto; min-width: 0; }
+    /* 主体整块可点：撑满左侧，命中区就是「这一栏」本身，不用单独摆一个打开按钮 */
+    .saved-item .saved-main {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: block;
+      padding: 10px 12px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .saved-item .saved-main:hover { text-decoration: none; }
+    .saved-item .saved-main:hover .saved-name { color: var(--primary); }
+    .saved-item .saved-main:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: -2px;
+    }
     .saved-item .saved-name {
       display: flex;
       align-items: center;
@@ -118,7 +132,14 @@
       -webkit-line-clamp: 2;
       overflow: hidden;
     }
-    .saved-item .saved-ops { display: flex; gap: 6px; flex-shrink: 0; }
+    /* 操作区贴在右侧，独立于可点主体（按钮不能嵌在 <a> 里） */
+    .saved-item .saved-ops {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      padding: 10px 12px;
+    }
 
     .home-empty {
       padding: 22px 0;

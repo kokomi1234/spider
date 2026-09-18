@@ -141,7 +141,11 @@ const PAGES = [
           out.items1 = document.querySelectorAll('#savedList .saved-item').length;
           out.cardText = card ? card.textContent : '';
           out.badge = card ? card.querySelector('.saved-badge').textContent : '';
-          out.href = card ? card.querySelector('a.saved-open').getAttribute('href') : '';
+          const mainLink = card ? card.querySelector('a.saved-main') : null;
+          out.href = mainLink ? mainLink.getAttribute('href') : '';
+          out.opsButtons = card
+            ? Array.from(card.querySelectorAll('.saved-ops button')).map((b) => b.textContent.trim())
+            : [];
           out.emptyShownAfter = !document.getElementById('savedEmpty').hidden;
           out.countText = document.getElementById('savedCount').textContent;
 
@@ -165,6 +169,7 @@ const PAGES = [
           && homeCheck.saved === true && homeCheck.items1 === 1
           && homeCheck.badge === '服务发布数据查询'
           && /\/publish\?saved=/.test(homeCheck.href || '')
+          && JSON.stringify(homeCheck.opsButtons) === JSON.stringify(['重命名', '删除'])
           && homeCheck.cardText.includes('冒烟常用查询')
           && homeCheck.emptyShownAfter === false && /共 1 条/.test(homeCheck.countText || '')
           && homeCheck.items2 === 0 && homeCheck.storageCleared === 0;
@@ -220,6 +225,66 @@ const PAGES = [
         process.stdout.write(`  日期面板浮动: ${JSON.stringify(floatCheck)}\n`);
         if (!floatCheck.floating || !floatCheck.inBody || !floatCheck.visible) {
           process.stdout.write(`    [FAIL] 日期面板仍会被滚动容器裁剪：${JSON.stringify(floatCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
+        // 常用查询摘要要写「人类可读文本」而不是编号：下拉给 getLabel()、多选给 getLabels()。
+        // 这条回归钉住「选项里查得到就用 label，查不到才回落 value」——
+        // 少了它，首页卡片又会显示成「2611pc」这种只有机器认的编码。
+        const labelCheck = await page.evaluate(() => {
+          const out = {};
+          if (typeof window.createSearchableSelect !== 'function') return { err: 'createSearchableSelect 缺失' };
+          const host = document.createElement('div');
+          host.style.cssText = 'position:fixed;left:8px;top:8px;width:220px;background:#fff;z-index:9999';
+          document.body.appendChild(host);
+          const sel = document.createElement('select');
+          host.appendChild(sel);
+          try {
+            const inst = window.createSearchableSelect(sel, [
+              { value: '2611pc', label: '2611批次' },
+              { value: 'E00301', label: 'BOCNET-G-IFS' },
+            ], {});
+            inst.setValue('2611pc');
+            out.labelOfCode = inst.getLabel();
+            out.valueOfCode = inst.getValue();
+            inst.setValue('E00301');
+            out.labelOfSystem = inst.getLabel();
+            // 选项里没有的值：setValue 会拒绝（getValue 为空），这是组件既有行为，一并钉住
+            inst.setValue('9999xx');
+            out.valueOfUnknown = inst.getValue();
+            // 选项列表后来被清空（字典接口没回来）：value 还在，此时只能显示编号本身
+            inst.setValue('2611pc');
+            if (typeof inst.updateOptions === 'function') inst.updateOptions([]);
+            out.labelFallback = inst.getLabel();
+          } finally { host.remove(); }
+
+          if (typeof window.createMultiSelect === 'function') {
+            const host2 = document.createElement('div');
+            host2.style.cssText = 'position:fixed;left:8px;top:200px;width:220px;background:#fff;z-index:9999';
+            document.body.appendChild(host2);
+            try {
+              const ms = window.createMultiSelect(host2, [
+                { value: '2611pc', label: '2611批次' },
+                { value: '2608pc', label: '2608批次' },
+              ], {});
+              ms.setValue(['2611pc', '2608pc']);
+              out.multiLabels = ms.getLabels();
+            } finally { host2.remove(); }
+          }
+          return out;
+        });
+        process.stdout.write(`  下拉/多选 label: ${JSON.stringify(labelCheck)}\n`);
+        const labelOk = !labelCheck.err
+          && labelCheck.labelOfCode === '2611批次' && labelCheck.valueOfCode === '2611pc'
+          && labelCheck.labelOfSystem === 'BOCNET-G-IFS'
+          && labelCheck.valueOfUnknown === ''
+          && labelCheck.labelFallback === '2611pc'
+          && (!labelCheck.multiLabels
+            || JSON.stringify(labelCheck.multiLabels) === JSON.stringify(['2611批次', '2608批次']));
+        if (!labelOk) {
+          process.stdout.write(`    [FAIL] 下拉/多选取人类可读文本异常：${JSON.stringify(labelCheck)}\n`);
           anyFail = true;
         }
       }

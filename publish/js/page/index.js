@@ -469,11 +469,31 @@
     return out;
   }
 
+  /**
+   * 某个条件的**人类可读文本**：优先 label，只有编号时才显示编号。
+   * 首页卡片要给「人」扫一眼就认出来，所以摘要里必须写「2611批次」而不是「2611pc」、
+   * 写「BOCNET-G-IFS」而不是内部系统编号。编号是回填表单用的，展示层不该直接拿它。
+   */
+  function displayTextFor(id, value) {
+    const inst = snapshotInstanceFor(id);
+    if (inst && typeof inst.getLabel === 'function') {
+      const t = inst.getLabel();
+      if (t) return t;
+    }
+    // 原生 select：取选中项的可见文本（option 的 text，不是 value）
+    const el = document.getElementById(id);
+    if (el && el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions[0]) {
+      const txt = (el.selectedOptions[0].textContent || '').trim();
+      if (txt) return txt;
+    }
+    return value;
+  }
+
   /** 摘要给首页卡片显示用：最多 4 个条件，避免卡片被撑爆 */
   function buildSnapshotSummary(fields) {
     return SNAPSHOT_IDS
       .filter((id) => fields[id])
-      .map((id) => `${SNAPSHOT_LABELS[id] || id}：${fields[id]}`)
+      .map((id) => `${SNAPSHOT_LABELS[id] || id}：${displayTextFor(id, fields[id])}`)
       .slice(0, 4)
       .join(' · ');
   }

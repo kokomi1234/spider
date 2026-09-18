@@ -596,6 +596,17 @@
         return freeText || '';
       },
 
+      /**
+       * 当前选中项的**人类可读文本**（label），不是编号。
+       * 用途：常用查询的摘要要写「2611批次」而不是「2611pc」——编号只有机器认，
+       * 用户扫一眼首页卡片根本对不上是哪个批次。
+       * 找不到 label（选项里没有该项，或用户手输未选中）时依次回落到：
+       * 手输文本 → 原 value。调用方拿到的永远是「能给人看的文本」。
+       */
+      getLabel() {
+        return selectedLabel() || freeText || selectedValue || '';
+      },
+
       setValue(value) {
         const opt = findOpt(value);
         selectedValue = opt ? value : '';

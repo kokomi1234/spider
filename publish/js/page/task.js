@@ -484,8 +484,33 @@
     return fields;
   }
 
-  // 把 fields 拼成一句人能读的摘要，例：「排期批次：2611批次 · 任务分类：需求」
-  function buildSavedSummary(fields) {
+  /**
+   * 字段 id → **人类可读文本**：下拉取 label、多选取 labels。
+   * 摘要是给首页卡片上的人看的，写「2611批次 / 需求」而不是内部编码；
+   * 只有拿不到 label 时才回落到编号本身。
+   */
+  function collectSavedLabels(fields) {
+    const labels = {};
+    const ss = { t_leadDept: deptSelect, t_projectType: projectTypeSelect, t_reviewerRole: reviewerRoleSelect };
+    Object.keys(ss).forEach((id) => {
+      if (!fields[id]) return;
+      const t = (ss[id] && typeof ss[id].getLabel === 'function')
+        ? String(ss[id].getLabel() || '').trim() : '';
+      if (t) labels[id] = t;
+    });
+    const ms = { msel_batch: multiSelects.batch, msel_classify: multiSelects.classify };
+    Object.keys(ms).forEach((id) => {
+      if (!fields[id]) return;
+      const arr = (ms[id] && typeof ms[id].getLabels === 'function')
+        ? ms[id].getLabels().filter(Boolean) : [];
+      if (arr.length) labels[id] = arr.join('、');
+    });
+    return labels;
+  }
+
+  // 把 fields + labels 拼成一句人能读的摘要，例：「排期批次：2611批次 · 任务分类：需求」
+  function buildSavedSummary(fields, labels) {
+    const L = labels || {};
     const parts = [];
     // 日期区间合并成「起~止」一条，避免拆成起、止两条
     const range = (startKey, endKey, label) => {
@@ -499,8 +524,8 @@
       // 已合并的区间字段跳过
       if (id === 't_funcTestStart' || id === 't_funcTestEnd' || id === 't_archiveStart' || id === 't_archiveEnd') return;
       if (!fields[id]) return;
-      const v = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
-      parts.push(`${SAVED_LABELS[id]}：${v}`);
+      const raw = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
+      parts.push(`${SAVED_LABELS[id]}：${L[id] || raw}`);
     });
     return parts.join(' · ');
   }
@@ -514,7 +539,7 @@
       toast('⚠️ 请先填写至少一个筛选条件', 2500);
       return;
     }
-    const summary = buildSavedSummary(fields);
+    const summary = buildSavedSummary(fields, collectSavedLabels(fields));
     // 优先用统一的 DialogUtils.promptText（与全站弹窗同款）；缺失再退回原生 prompt
     let name = null;
     if (window.DialogUtils && typeof window.DialogUtils.promptText === 'function') {

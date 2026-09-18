@@ -53,8 +53,13 @@
     li.className = 'saved-item';
     li.dataset.id = item.id;
 
-    const main = document.createElement('div');
+    // 主体整块就是链接：点卡片任意处都能直达，不必去找一个小小的「打开」按钮。
+    // 用 <a> 而不是给 div 挂 click，是为了保留键盘可达、右键「在新标签页打开」、
+    // 以及鼠标悬停时地址栏能显示目标地址——这些是 div + onclick 给不了的。
+    const main = document.createElement('a');
     main.className = 'saved-main';
+    main.href = window.SavedQuery.hrefFor(item.page, item.id);
+    main.title = `打开常用查询：${item.name}`;
 
     const nameRow = document.createElement('div');
     nameRow.className = 'saved-name';
@@ -74,11 +79,6 @@
       main.appendChild(sum);
     }
 
-    const open = document.createElement('a');
-    open.className = 'saved-open outlined btn-xs';
-    open.href = window.SavedQuery.hrefFor(item.page, item.id);
-    open.textContent = '打 开';
-
     const ops = document.createElement('div');
     ops.className = 'saved-ops';
 
@@ -94,7 +94,6 @@
     del.textContent = '删除';
     del.addEventListener('click', () => doRemove(item.id, item.name));
 
-    ops.appendChild(open);
     ops.appendChild(rename);
     ops.appendChild(del);
 

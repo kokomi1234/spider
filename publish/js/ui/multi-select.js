@@ -255,6 +255,17 @@
         paintLabel();
       },
       getValues() { return Array.from(selected); },
+      /**
+       * 已选项的**人类可读文本**（label 数组），与 getValues() 一一对应。
+       * 存常用查询摘要时要写 label（如「2611批次」）而不是 value（如「2611pc」）；
+       * 选项里查不到的值回落到 value 本身（只有编号时就显示编号）。
+       */
+      getLabels() {
+        return Array.from(selected).map((v) => {
+          const o = list.find((x) => String(x.value) === String(v));
+          return o ? o.label : String(v);
+        });
+      },
       clear() { selected.clear(); renderList(); paintLabel(); },
       /**
        * 回填已选值（常用查询恢复用）。

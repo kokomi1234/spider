@@ -758,13 +758,36 @@
     return fields;
   }
 
-  // fields → 一句人能读的摘要，例：「提供方系统：BOCNETC-O-MAPSN · 调用方批次：2608批次」
-  function buildSavedSummary(fields) {
+  /**
+   * 字段 id → **人类可读文本**：下拉取 label、多选取 labels。
+   * 摘要是给首页卡片上的人看的，所以写「2608批次 / BOCNETC-O-MAPSN」而不是内部编码；
+   * 只有拿不到 label（选项里没有该项）时才回落到编号本身。
+   */
+  function collectSavedLabels(fields) {
+    const labels = {};
+    SAVED_SELECT_KEYS.forEach((key) => {
+      if (!fields[key]) return;
+      const t = (selects[key] && typeof selects[key].getLabel === 'function')
+        ? String(selects[key].getLabel() || '').trim() : '';
+      if (t) labels[key] = t;
+    });
+    SAVED_MULTI_KEYS.forEach((key) => {
+      if (!fields[key]) return;
+      const arr = (multiSelects[key] && typeof multiSelects[key].getLabels === 'function')
+        ? multiSelects[key].getLabels().filter(Boolean) : [];
+      if (arr.length) labels[key] = arr.join('、');
+    });
+    return labels;
+  }
+
+  // fields + labels → 一句人能读的摘要，例：「提供方系统：BOCNET-G-IFS · 调用方批次：2608批次」
+  function buildSavedSummary(fields, labels) {
+    const L = labels || {};
     return SAVED_ORDER
       .filter((id) => fields[id])
       .map((id) => {
-        const v = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
-        return `${SAVED_LABELS[id]}：${v}`;
+        const raw = Array.isArray(fields[id]) ? fields[id].join('、') : fields[id];
+        return `${SAVED_LABELS[id]}：${L[id] || raw}`;
       })
       .join(' · ');
   }
@@ -778,7 +801,7 @@
       toast('⚠️ 请先填写至少一个筛选条件', 2500);
       return;
     }
-    const summary = buildSavedSummary(fields);
+    const summary = buildSavedSummary(fields, collectSavedLabels(fields));
     // 优先用统一弹窗 DialogUtils.promptText；缺失再退回原生 prompt
     let name = null;
     if (window.DialogUtils && typeof window.DialogUtils.promptText === 'function') {
