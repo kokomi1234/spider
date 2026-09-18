@@ -30,7 +30,10 @@
     { id: 'f_provideSystemNumber',  key: 'compNum',             mode: 'api'   },
     { id: 'f_prodBatch',            key: 'batch',               mode: 'both', label: '变更批次',
       local: ['sheetProductBatch', 'prodBatch', 'productBatch', 'offerVersionBatch'] },
-    { id: 'f_sysServeNo',           key: 'sysServeNo',          mode: 'api'   },
+    // multi：多选控件（#msel_sysServeNo），值走独立通道 —— collectApiBody 会跳过它，
+    // 由 index.js 用实例的 getValues() 取（DOM 是 div，没有 .value 可读）。
+    // 归属仍写在这里，是为了让字段顺序 / 标签只有一处定义。
+    { id: 'msel_sysServeNo',        key: 'sysServeNo',          mode: 'api', multi: true },
     { id: 'f_serviceName',          key: 'serviceName',         mode: 'api'   },
     { id: 'f_interfaceCode',        key: 'serverCodingList',    mode: 'both', array: true, label: '接口编码',
       local: ['interfaceCode', 'serverCoding', 'sysEnName', 'sysServeEnName'] },
@@ -41,7 +44,9 @@
     { id: 'f_deptName',             key: 'deptId',              mode: 'both', exact: true, label: '部门名称',
       local: ['deptId'] },
     { id: 'f_productImplementUnit', key: 'implementationUnit',  mode: 'api'   },
-    { id: 'f_changeTime',           key: null,                  mode: 'local', date: true, label: '变更时间',
+    // range：起始 / 结束两个日期框（#f_changeTimeStart / #f_changeTimeEnd），
+    // 后端无对应字段，纯前端按下标区间过滤 —— conds 里会带 to 表示区间终点。
+    { id: 'f_changeTimeStart',      key: null,                  mode: 'local', date: true, range: true, label: '变更时间',
       local: ['offerEffectiveTime', 'effectiveTime'] },
   ];
 
@@ -141,12 +146,21 @@
     // 不抛 TypeError，直接当成「不满足任何条件」过滤掉（视为无数据，不造假）。
     return (rows || []).filter((row) => {
       if (!row || typeof row !== 'object') return false;
-      return conds.every(({ keys, value, exact, date }) => {
+      return conds.every(({ keys, value, exact, date, to, range }) => {
         const needle = String(value == null ? '' : value).toLowerCase();
+        // 区间条件（变更时间起止）：值本身按 YYYY-MM-DD 比大小，起止都可为空（半开区间）
+        const from = String(value == null ? '' : value).slice(0, 10);
+        const until = String(to == null ? '' : to).slice(0, 10);
         return keys.some((k) => {
           const v = row[k];
           if (v == null || v === '') return false;
           const s = String(v);
+          if (date && range) {
+            const day = s.slice(0, 10);
+            if (from && day < from) return false;
+            if (until && day > until) return false;
+            return true;
+          }
           if (date)  return s.slice(0, 10) === needle;      // 变更时间按 YYYY-MM-DD 比对
           if (exact) return s === value;                    // 部门用 deptId 精确匹配
           return s.toLowerCase().includes(needle);

@@ -99,6 +99,9 @@
   // ── 提供方系统下拉搜索组件实例 ──────────────────────
   let providerSelectInstance = null;
 
+  // ── 提供方应用系统服务编号：多选控件（宿主是 div，值在实例里）──
+  let sysServeNoSelect = null;
+
   // ── 部门下拉搜索组件实例 ────────────────────────────
   let deptSelectInstance = null;
   let deptOptions = [];       // 部门选项缓存 [{label, value}]
@@ -106,8 +109,9 @@
   // ── CHECKOUT/IN 状态下拉搜索组件实例（禁用） ────────
   let checkoutSelectInstance = null;
 
-  // ── 变更时间日期选择器实例 ────────────────────────
-  let changeTimeInstance = null;
+  // ── 变更时间：起始 / 结束 两个日期选择器（区间）──────
+  let changeTimeStartInstance = null;
+  let changeTimeEndInstance = null;
 
   // 所有包过的下拉实例：重置时要逐个 clear()，
   // 只改原生 select 的 value 不会同步组件内部的显示文本
@@ -223,6 +227,49 @@
     return PublishModel.resolveBatchLabel(val, getBatchOptions());
   }
 
+  /**
+   * 「提供方应用系统服务编号」的候选项由**提供方系统**决定，口径与服务订阅关系
+   * 查询页保持一致（js/page/subscription.js 的 loadProviderServeNos）：
+   * 同一个已抓包接口 ToolApi.fetchInformationProdBatch(compNum)，
+   * 差异只是那边同时填服务编号 + 接口编码两个多选，这里只需要服务编号。
+   * 该接口在 E00301 下会返回 1000+ 个编号，属于正常量级（订阅页同样如此）。
+   */
+  async function loadSysServeNos(compNum) {
+    if (!sysServeNoSelect) return;
+    const T = window.ToolApi;
+    if (!T || typeof T.fetchInformationProdBatch !== 'function') return;
+    if (!compNum) { sysServeNoSelect.setOptions([]); return; }
+    const res = await T.fetchInformationProdBatch(compNum);
+    const list = (res && res.ok && Array.isArray(res.list)) ? res.list : [];
+    sysServeNoSelect.setOptions(list
+      .map((it) => (typeof it === 'string'
+        ? { value: it, label: it }
+        : { value: String(it.value ?? it.label ?? ''), label: String(it.label ?? it.value ?? '') }))
+      .filter((o) => o.value));
+  }
+
+  /** 变更时间：读起始 / 结束（组件实例优先，退回原生 input） */
+  function getChangeTime(which) {
+    const inst = which === 'start' ? changeTimeStartInstance : changeTimeEndInstance;
+    if (inst) return String(inst.getValue() || '').slice(0, 10);
+    const el = $(which === 'start' ? '#f_changeTimeStart' : '#f_changeTimeEnd');
+    return el ? String(el.value || '').trim().slice(0, 10) : '';
+  }
+
+  /**
+   * 日历里判断某天是否落在变更时间区间内 —— 给 date-picker 的 rangeHighlight 用。
+   * 端点自身不算「区间内」（它们走 is-selected 实心样式），只高亮中间那段。
+   * 用户若把起止填反了，这里按大小自动纠正，和查询条件同一口径（见 collectLocalFilters）。
+   */
+  function inChangeRange(ymd) {
+    const from = getChangeTime('start');
+    const to = getChangeTime('end');
+    if (!from || !to) return false;
+    const lo = from <= to ? from : to;
+    const hi = from <= to ? to : from;
+    return ymd > lo && ymd < hi;
+  }
+
   /** 提供方系统当前值（可能是原生 input 或 searchable-select） */
   function getProviderValue() {
     return providerSelectInstance
@@ -265,8 +312,18 @@
   function collectApiBody() {
     const body = { ...PublishModel.API_BODY_DEFAULTS };
 
-    FIELDS.forEach(({ id, key, mode, array }) => {
+    // 提供方应用系统服务编号：多选控件，值不在 DOM 上（div），要问实例。
+    // 抓包契约里这个条件对应两个字段：sysServeNoList（列表）+ sysServeNo（单值），
+    // 两个都发：List 承载多选，sysServeNo 保持与改动前一致（取第一个），不改变旧行为。
+    const serveNos = sysServeNoSelect ? sysServeNoSelect.getValues() : [];
+    if (serveNos.length) {
+      body.sysServeNoList = serveNos;
+      body.sysServeNo = serveNos[0];
+    }
+
+    FIELDS.forEach(({ id, key, mode, array, multi }) => {
       if (mode === 'local' || !key) return;
+      if (multi) return;   // 多选已在上方单独处理
       // 提供方系统：走 searchable-select 实例
       if (id === 'f_provideSystemNumber') {
         const val = getProviderValue();
@@ -312,6 +369,16 @@
     const conds = [];
     FIELDS.forEach((f) => {
       if (f.mode === 'api' || !f.local) return;
+      // 变更时间：区间（起始 / 结束任一填写即生效）。
+      // 起止填反了就按大小交换 —— 报错拦住用户不如直接纠正，也比静默查出空结果好。
+      if (f.range) {
+        let from = getChangeTime('start');
+        let to = getChangeTime('end');
+        if (!from && !to) return;
+        if (from && to && from > to) { const t = from; from = to; to = t; }
+        conds.push({ label: f.label, keys: f.local, value: from, to, date: true, range: true });
+        return;
+      }
       // 部门字段走 searchable-select，value 是 deptId
       if (f.id === 'f_deptName') {
         const cond = getDeptCondition();
@@ -369,14 +436,17 @@
   function resetForm() {
     PublishQuery.cancel();       // 作废在途查询 + 清掉失败分页重试上下文
     hideLoading();
-    FIELDS.forEach(({ id }) => {
+    FIELDS.forEach(({ id, multi }) => {
+      if (multi) return;                 // 多选的宿主是 div，没有 .value，统一在下面 clear()
       const el = $(`#${id}`);
       if (el) el.value = '';
     });
     // 逐个清空下拉组件（只改原生 select 的 value，组件里的显示文本不会跟着变）
     selectInstances.forEach((inst) => inst.clear());
-    // 清空变更时间日期选择器（内部 selectedValue 不随 input.value 复位）
-    if (changeTimeInstance) changeTimeInstance.clear();
+    if (sysServeNoSelect) sysServeNoSelect.clear();
+    // 清空变更时间两个日期选择器（内部 selectedDate 不随 input.value 复位）
+    if (changeTimeStartInstance) changeTimeStartInstance.clear();
+    if (changeTimeEndInstance) changeTimeEndInstance.clear();
 
     // 清空结果（含统计面板 / 分页条 / 计数）
     PublishView.renderInitialResult();
@@ -429,6 +499,15 @@
 
   btnReset.addEventListener('click', resetForm);
 
+  // 提供方系统变化 → 重新拉「服务编号」候选（与订阅页同款联动）。
+  // searchable-select 选完会把值同步回原生 select 并派发 change，所以监听原生元素即可；
+  // 重置时它也会派发 change('')，顺带把候选清空。
+  const providerNativeEl = document.getElementById('f_provideSystemNumber');
+  if (providerNativeEl) {
+    providerNativeEl.addEventListener('change',
+      () => loadSysServeNos(String(providerNativeEl.value || '').trim()));
+  }
+
   // ── 常用查询：保存到首页 / 从首页回填并查询 ─────────
   //
   // 存的是「筛选控件 id → 值」的扁平快照，落在 localStorage（js/ui/saved-query.js），
@@ -439,17 +518,17 @@
   //   2) 赋值走组件实例（setValue），不能只改原生 select 的 value，
   //      否则组件内部的显示文本不跟着变，用户看到的还是上一次的旧值。
   const SNAPSHOT_IDS = [
-    'f_provideSystemNumber', 'f_prodBatch', 'f_sysServeNo', 'f_serviceName',
-    'f_interfaceCode', 'f_changeTime', 'f_sendOutSide', 'f_principalName',
+    'f_provideSystemNumber', 'f_prodBatch', 'msel_sysServeNo', 'f_serviceName',
+    'f_interfaceCode', 'f_changeTimeStart', 'f_changeTimeEnd', 'f_sendOutSide', 'f_principalName',
     'f_serviceStatus', 'f_deptName', 'f_productImplementUnit',
   ];
   const SNAPSHOT_LABELS = {
     f_provideSystemNumber: '提供方系统',
     f_prodBatch: '变更批次',
-    f_sysServeNo: '服务编号',
+    msel_sysServeNo: '服务编号',
     f_serviceName: '服务名称',
     f_interfaceCode: '接口编码',
-    f_changeTime: '变更时间',
+    f_changeTimeStart: '变更时间',
     f_sendOutSide: '发送行外',
     f_principalName: '接口负责人',
     f_serviceStatus: '服务状态',
@@ -461,6 +540,12 @@
   function captureSnapshotFields() {
     const out = {};
     SNAPSHOT_IDS.forEach((id) => {
+      // 多选控件：值在实例里（宿主是 div，没有 .value）
+      if (id === 'msel_sysServeNo') {
+        const arr = sysServeNoSelect ? sysServeNoSelect.getValues() : [];
+        if (arr && arr.length) out[id] = arr.slice();
+        return;
+      }
       const el = $(`#${id}`);
       if (!el) return;
       const v = (el.value || '').trim();
@@ -475,6 +560,13 @@
    * 写「BOCNET-G-IFS」而不是内部系统编号。编号是回填表单用的，展示层不该直接拿它。
    */
   function displayTextFor(id, value) {
+    // 多选：拿 label 数组拼成「A、B」，拿不到就用存下来的值
+    if (id === 'msel_sysServeNo') {
+      const labels = (sysServeNoSelect && typeof sysServeNoSelect.getLabels === 'function')
+        ? sysServeNoSelect.getLabels().filter(Boolean) : [];
+      if (labels.length) return labels.join('、');
+      return (Array.isArray(value) ? value : []).join('、');
+    }
     const inst = snapshotInstanceFor(id);
     if (inst && typeof inst.getLabel === 'function') {
       const t = inst.getLabel();
@@ -500,11 +592,19 @@
 
   /** 摘要给首页卡片显示用：最多 4 个条件，避免卡片被撑爆 */
   function buildSnapshotSummary(fields) {
-    return SNAPSHOT_IDS
-      .filter((id) => fields[id])
-      .map((id) => `${SNAPSHOT_LABELS[id] || id}：${displayTextFor(id, fields[id])}`)
-      .slice(0, 4)
-      .join(' · ');
+    const parts = [];
+    SNAPSHOT_IDS.forEach((id) => {
+      if (id === 'f_changeTimeEnd') return;          // 与起始合并成一条
+      if (id === 'f_changeTimeStart') {
+        const from = fields.f_changeTimeStart || '';
+        const to = fields.f_changeTimeEnd || '';
+        if (from || to) parts.push(`变更时间：${from || '不限'} ~ ${to || '不限'}`);
+        return;
+      }
+      if (!fields[id]) return;
+      parts.push(`${SNAPSHOT_LABELS[id] || id}：${displayTextFor(id, fields[id])}`);
+    });
+    return parts.slice(0, 4).join(' · ');
   }
 
   /**
@@ -527,7 +627,9 @@
     if (id === 'f_provideSystemNumber') return providerSelectInstance;
     if (id === 'f_prodBatch') return batchSelectInstance;
     if (id === 'f_deptName') return deptSelectInstance;
-    if (id === 'f_changeTime') return changeTimeInstance;
+    if (id === 'f_changeTimeStart') return changeTimeStartInstance;
+    if (id === 'f_changeTimeEnd') return changeTimeEndInstance;
+    if (id === 'msel_sysServeNo') return sysServeNoSelect;
     return null;
   }
 
@@ -581,11 +683,13 @@
     if (!item || item.page !== 'publish') return null;
 
     Object.keys(item.fields || {}).forEach((fid) => {
-      const el = document.getElementById(fid);
-      if (!el) return;
+      const val = item.fields[fid];
+      // 先看有没有组件实例（多选 / 下拉 / 日期都走实例，能同步显示文本）；
+      // 实例不存在时再退回原生元素赋值。
       const inst = snapshotInstanceFor(fid);
-      if (inst && typeof inst.setValue === 'function') inst.setValue(item.fields[fid]);
-      else el.value = item.fields[fid];
+      if (inst && typeof inst.setValue === 'function') { inst.setValue(val); return; }
+      const el = document.getElementById(fid);
+      if (el) el.value = val;
     });
 
     // 旧记录（摘要里是编号）趁字典已加载重算回写一次
@@ -783,6 +887,21 @@
     const s = D.initStaticSelects(makeSelect) || {};
     if (s.checkout) checkoutSelectInstance = s.checkout;
     if (s.changeTime) changeTimeInstance = s.changeTime;
+
+    // 多选控件：宿主是 div、选项由「提供方系统」联动带出，DOM 就绪即可建
+    if (typeof window.createMultiSelect === 'function') {
+      const host = $('#msel_sysServeNo');
+      if (host) sysServeNoSelect = window.createMultiSelect(host, [], '全部服务编号');
+    }
+
+    // 变更时间：起始 / 结束两个日期框，共用同一套区间高亮（rangeHighlight）
+    if (typeof window.createDatePicker === 'function') {
+      const startEl = $('#f_changeTimeStart');
+      const endEl = $('#f_changeTimeEnd');
+      const highlight = (ymd) => inChangeRange(ymd);
+      if (startEl) changeTimeStartInstance = window.createDatePicker(startEl, { rangeHighlight: highlight });
+      if (endEl) changeTimeEndInstance = window.createDatePicker(endEl, { rangeHighlight: highlight });
+    }
   }
 
   // 页面 DOM 就绪后异步加载各字典下拉；

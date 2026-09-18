@@ -298,6 +298,15 @@
         if (isSameDay(date, today)) button.classList.add('is-today');
         if (selectedDate && isSameDay(date, selectedDate)) button.classList.add('is-selected');
         if (isSameDay(date, focusDate)) button.classList.add('is-focus');
+        // 区间高亮：由调用方给判定函数（「变更时间」的起止区间要用）。
+        // 选中的两天仍是实心 is-selected，中间的日期加 is-in-range —— 样式上用上下虚线
+        // 把它们连起来，用户一眼能看出选了哪一段。判定函数每次渲染都重新调用，
+        // 所以另一端的选择变了、下次打开面板就是最新的区间。
+        if (typeof options.rangeHighlight === 'function'
+          && !(selectedDate && isSameDay(date, selectedDate))
+          && options.rangeHighlight(formatDate(date))) {
+          button.classList.add('is-in-range');
+        }
         button.addEventListener('click', (event) => {
           event.stopPropagation();
           selectDate(date);

@@ -369,6 +369,96 @@ const PAGES = [
       }
 
       if (pg.file === 'publish.html') {
+        // 变更时间改成「起始 / 结束」两个框后，日历里要把中间那段用虚线连起来。
+        // 这条只能真机验：要真的点开面板、点两天的日期、再看格子上的 is-in-range。
+        const rangeCheck = await page.evaluate(async () => {
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const out = {};
+          const startEl = document.getElementById('f_changeTimeStart');
+          const endEl = document.getElementById('f_changeTimeEnd');
+          if (!startEl || !endEl) return { err: '两个日期框不存在' };
+
+          // 只点**当前可见**面板里的格子：隐藏面板仍在 DOM 里，
+          // 用 document.querySelectorAll 会先命中隐藏的那个（踩过：日期写进了起始框）。
+          const visiblePanel = () => document.querySelector('.dp-panel:not([hidden])');
+          const pickDay = async (n) => {
+            const panel = visiblePanel();
+            if (!panel) return false;
+            const cells = Array.from(panel.querySelectorAll('.dp-grid .dp-cell'))
+              .filter((c) => !c.classList.contains('dp-blank'));
+            const target = cells.find((c) => c.textContent === String(n));
+            if (!target) return false;
+            target.click();
+            await sleep(120);
+            return true;
+          };
+
+          startEl.click();                       // 先选起始
+          await sleep(150);
+          out.opened = !!document.querySelector('.dp-panel:not([hidden])');
+          out.pickedStart = await pickDay(10);
+
+          endEl.click();                         // 再选结束
+          await sleep(150);
+          out.pickedEnd = await pickDay(20);
+
+          startEl.click();                       // 重新打开任一面板，看区间高亮
+          await sleep(150);
+          out.startVal = startEl.value;
+          out.endVal = endEl.value;
+          const panel = visiblePanel();
+          if (panel) {
+            out.inRange = Array.from(panel.querySelectorAll('.dp-grid .dp-cell.is-in-range'))
+              .map((c) => c.textContent);
+            // 端点本身是实心选中，不该同时算「区间内」
+            out.selected = Array.from(panel.querySelectorAll('.dp-grid .dp-cell.is-selected'))
+              .map((c) => c.textContent);
+          } else {
+            out.inRange = [];
+            out.selected = [];
+          }
+          // 关掉面板，别影响后续断言
+          document.body.click();
+          await sleep(100);
+          return out;
+        });
+
+        process.stdout.write(`  变更时间区间: ${JSON.stringify(rangeCheck)}\n`);
+        const rangeOk = !rangeCheck.err && rangeCheck.opened === true
+          && rangeCheck.pickedStart === true && rangeCheck.pickedEnd === true
+          && rangeCheck.startVal && rangeCheck.endVal
+          && rangeCheck.inRange.length > 0
+          && rangeCheck.inRange.includes('15')
+          && !rangeCheck.inRange.includes('10') && !rangeCheck.inRange.includes('20');
+        if (!rangeOk) {
+          process.stdout.write(`    [FAIL] 变更时间区间高亮异常：${JSON.stringify(rangeCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
+        // 提供方应用系统服务编号：已从手输单值改成多选，宿主是 div（值在实例里）。
+        const multiCheck = await page.evaluate(async () => {
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const host = document.getElementById('msel_sysServeNo');
+          if (!host) return { err: '多选宿主不存在' };
+          host.click();
+          await sleep(150);
+          const display = host.querySelector('.msel-display');
+          return {
+            hasDisplay: !!display,
+            expanded: display ? display.getAttribute('aria-expanded') : null,
+            disabled: host.querySelector('input[disabled]') ? true : false,
+          };
+        });
+        process.stdout.write(`  服务编号多选: ${JSON.stringify(multiCheck)}\n`);
+        if (multiCheck.err || !multiCheck.hasDisplay) {
+          process.stdout.write(`    [FAIL] 服务编号多选未接线：${JSON.stringify(multiCheck)}\n`);
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
         // 旧记录自动升级：2026-09-18 前保存的卡片，摘要里写的是编号（2611pc / E00301），
         // 改代码修不了已落盘的文本。现在的做法是「从首页打开时重算回写」——
         // 这里真的造一条 v1 旧记录，带 ?saved= 打开，再验它已经被升级成 v2。

@@ -214,3 +214,65 @@ test('isCheckedVal / absIndex：归一与绝对下标', () => {
   assert.strictEqual(PM.absIndex(2, 20, 0), 20);
   assert.strictEqual(PM.absIndex(1, 20, 3), 3);
 });
+
+// ── 变更时间：起始 / 结束 区间（2026-09-18 改成两个日期框）──────────
+test('applyLocalFilters：日期区间 —— 起止都给时按闭区间筛', () => {
+  const rows = [
+    { offerEffectiveTime: '2026-01-14T23:00:00' },
+    { offerEffectiveTime: '2026-01-15T10:00:00' },
+    { offerEffectiveTime: '2026-01-20T00:00:00' },
+    { offerEffectiveTime: '2026-01-25T00:00:00' },
+  ];
+  const keys = ['offerEffectiveTime'];
+  const cond = { keys, value: '2026-01-15', to: '2026-01-25', date: true, range: true };
+  assert.strictEqual(
+    PM.applyLocalFilters(rows, [cond]).length, 3,
+    '两端都算在区间内（闭区间）：15 / 20 / 25',
+  );
+
+  // 只填起始 → 等价于「该日之后」
+  assert.strictEqual(
+    PM.applyLocalFilters(rows, [{ ...cond, to: '' }]).length, 3,
+  );
+  // 只填结束 → 等价于「截止该日」，早于它的都要留下（含 01-14）
+  assert.strictEqual(
+    PM.applyLocalFilters(rows, [{ ...cond, value: '' }]).length, 4,
+    '只填结束时不该把更早的日期排除掉',
+  );
+  // 极窄区间：只剩一天
+  assert.deepStrictEqual(
+    PM.applyLocalFilters(rows, [{ ...cond, value: '2026-01-20', to: '2026-01-20' }]).length, 1,
+  );
+});
+
+test('applyLocalFilters：日期区间 —— 与时间部分无关，只比前 10 位', () => {
+  const rows = [
+    { offerEffectiveTime: '2026-03-01T09:30:00' },
+    { offerEffectiveTime: '2026-03-02T23:59:59' },
+  ];
+  const hit = PM.applyLocalFilters(rows, [{
+    keys: ['offerEffectiveTime'], value: '2026-03-01', to: '2026-03-01', date: true, range: true,
+  }]);
+  assert.strictEqual(hit.length, 1, '同一天的 23:59 也属于该日，不能被时间部分排除');
+});
+
+test('applyLocalFilters：日期区间 —— 空值行不参与匹配', () => {
+  const rows = [{ offerEffectiveTime: '' }, { offerEffectiveTime: null }, { offerEffectiveTime: '2026-03-05' }];
+  const hit = PM.applyLocalFilters(rows, [{
+    keys: ['offerEffectiveTime'], value: '2026-03-01', to: '2026-03-31', date: true, range: true,
+  }]);
+  assert.strictEqual(hit.length, 1, '空时间行不该被当作落在区间里');
+});
+
+test('FIELDS：变更时间已标成 range（两个日期框），不再有单值 f_changeTime', () => {
+  const timeField = PM.FIELDS.find((f) => f.range);
+  assert.ok(timeField, '要有一条 range 字段');
+  assert.strictEqual(timeField.id, 'f_changeTimeStart');
+  assert.strictEqual(timeField.mode, 'local', '后端没有该字段，纯前端过滤');
+  assert.ok(Array.isArray(timeField.local) && timeField.local.length, '要有本地比对的字段名');
+  // 服务编号改多选（宿主是 div），用 multi 标记区分于普通原生输入
+  const multiField = PM.FIELDS.find((f) => f.multi);
+  assert.ok(multiField, '要有一条 multi 字段');
+  assert.strictEqual(multiField.id, 'msel_sysServeNo');
+  assert.strictEqual(multiField.key, 'sysServeNo');
+});

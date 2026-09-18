@@ -152,8 +152,10 @@ test('接线：publish.html 有按钮、index.js 会 init，且脚本顺序正�
   const html = fs.readFileSync(path.join(ROOT, 'publish.html'), 'utf8');
   assert.ok(/id="btnTokenManager"/.test(html), 'publish.html 必须有 #btnTokenManager 按钮');
   assert.ok(/js\/ui\/token-manager\.js/.test(html), 'publish.html 必须引入 token-manager.js');
+  // 比的是 <script src="..."> 整串：页内注释里出现裸文件名不该被当成脚本位置
+  // （2026-09-18 踩过：注释里写了「见 js/page/index.js 的 loadSysServeNos」，indexOf 直接命中它）。
   assert.ok(
-    html.indexOf('js/ui/token-manager.js') < html.indexOf('js/page/index.js'),
+    html.indexOf('<script src="js/ui/token-manager.js">') < html.indexOf('<script src="js/page/index.js">'),
     'token-manager.js 必须排在 index.js 之前（否则 init 时模块还没挂上）',
   );
 

@@ -147,7 +147,7 @@ publish/
 |---|---|---|---|
 | 提供方系统 | `compNum` | api | |
 | 变更批次 | `batch` | both | 后端有效值需抓包确认，前端兜底读 `sheetProductBatch` 等 |
-| 系统服务编码 | `sysServeNo` | api | |
+| 提供方应用系统服务编号 | `sysServeNoList` + `sysServeNo` | api | **多选**（2026-09-18 从手输单值改过来），选项由「提供方系统」联动带出，与订阅页同一口径（`ToolApi.fetchInformationProdBatch`）；`sysServeNoList` 承载多选、`sysServeNo` 保持旧行为取第一个 |
 | 服务名称 | `serviceName` | api | |
 | 接口名 | `serverCodingList` | both | 前端兜底匹配 `interfaceCode` / `sysEnName` / `sysServeEnName` |
 | 是否发送行外 | `isSendOutsideSystem` | api | |
@@ -155,7 +155,7 @@ publish/
 | 服务状态 | `serviceStatus` | both | **后端该字段恒为 null**，实际靠前端按 `offerServerState` 过滤 |
 | 部门名称 | `deptId` | both | 精确匹配；下拉没建起来时退化为按 `deptName` 模糊过滤 |
 | 产品实施单元 | `implementationUnit` | api | |
-| 变更时间 | —（纯本地） | local | 后端无对应字段，前端按 `offerEffectiveTime` 兜底 |
+| 变更时间（起始 / 结束） | —（纯本地） | local | 后端无对应字段，前端按 `offerEffectiveTime` 兜底；**两个日期框的区间**（2026-09-18 从单值改过来），日历里用虚线连出中间那段（`createDatePicker` 的 `rangeHighlight` 钩子），起止填反了按大小自动交换 |
 
 > `CHECKOUT/IN 状态` 后端无对应字段，界面上已禁用并标注原因。
 > 完整的字段口径与坑见 `analysis/output/ITAMP接口总览.md`。

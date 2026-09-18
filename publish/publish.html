@@ -190,6 +190,12 @@
       color: var(--on-amber-c);
     }
 
+    /* 变更时间：起始 ~ 结束 两个框并排，各自占一半宽度（与普通 input 同宽），
+       中间一个 ~ 分隔。date-picker 会把 input 包进 .dp-wrapper，所以宽度要给 wrapper。 */
+    .date-range { display: flex; align-items: center; gap: 6px; }
+    .date-range .dp-wrapper { flex: 1 1 0; min-width: 0; }
+    .date-range .date-range-sep { color: var(--muted); flex: 0 0 auto; }
+
     /* 结果条数靠左、导出/筛选按钮组靠右，中间留白 */
     .results-card .card-head .toolbar { flex: 1 1 auto; justify-content: flex-end; }
     .result-count {
@@ -368,8 +374,11 @@
             </select>
           </div>
           <div class="form-group" data-page-node-id="JEzZa0TS6TFECgDjphW4hn">
-            <label for="f_sysServeNo" data-page-node-id="bcdvU6VFo2NtGLrKsID4Va">提供方应用系统服务编号</label>
-            <input type="text" id="f_sysServeNo" placeholder="如 E00301TP0460" data-page-node-id="EEC7iIM4DTsE4S277G1ZCD">
+            <!-- 2026-09-18：原来是手输单值，现与「服务订阅关系查询」页对齐成多选，
+                 选项由「提供方系统」联动带出（口径与订阅页一致，实现见 index.js 的 loadSysServeNos）。 -->
+            <label id="label_sysServeNo" data-page-node-id="bcdvU6VFo2NtGLrKsID4Va">提供方应用系统服务编号（可多选）</label>
+            <div class="msel" id="msel_sysServeNo" data-page-node-id="EEC7iIM4DTsE4S277G1ZCD"></div>
+            <span class="field-note" id="sysServeNoNote">先选「提供方系统」，可选项会自动带出</span>
           </div>
           <div class="form-group" data-page-node-id="lhli1ZTywyz4FH6eNwerNb">
             <label for="f_serviceName" data-page-node-id="8l65VCF6nFBHdrw34S43zR">提供方应用系统服务中文名称</label>
@@ -380,8 +389,14 @@
             <input type="text" id="f_interfaceCode" placeholder="如 PsnGlobalRemittanceAccountsQuery" data-page-node-id="EC5yQPsvjOXjt0PhSkqAQ7">
           </div>
           <div class="form-group" data-page-node-id="lNYHXbSWd9cOk5XYPwVJRo">
-            <label for="f_changeTime" data-page-node-id="7wiEIBGOSpflqCccgL0n7w">变更时间</label>
-            <input type="text" id="f_changeTime" placeholder="选择日期" readonly data-page-node-id="56aMgjthBJzbXyep0FIljh">
+            <!-- 2026-09-18：单个日期改成「起始 / 结束」两个框（各占一半宽度），
+                 两个都选后日历里用虚线连出中间区间（见 js/ui/date-picker.js 的 rangeHighlight）。 -->
+            <label for="f_changeTimeStart" data-page-node-id="7wiEIBGOSpflqCccgL0n7w">变更时间</label>
+            <div class="date-range">
+              <input type="text" id="f_changeTimeStart" placeholder="起始时间" readonly data-page-node-id="56aMgjthBJzbXyep0FIljh">
+              <span class="date-range-sep" aria-hidden="true">~</span>
+              <input type="text" id="f_changeTimeEnd" placeholder="结束时间" readonly>
+            </div>
           </div>
           <div class="form-group" data-page-node-id="MukTeJzscl4qrQhthofavT">
             <label for="f_sendOutSide" data-page-node-id="4B4mfPjZl3yuCM3HGGsz2y">是否发送行外系统</label>
@@ -884,6 +899,7 @@
   <script src="js/data/provider-data.js"></script>
   <script src="js/ui/popup-position.js"></script>
   <script src="js/ui/searchable-select.js"></script>
+  <script src="js/ui/multi-select.js"></script>
   <script src="js/ui/date-picker.js"></script>
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/data/department-data.js"></script>

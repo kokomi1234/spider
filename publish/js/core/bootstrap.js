@@ -34,6 +34,8 @@
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['SubscribeManager', () => has(window.SubscribeManager, 'isSubscribed')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
+      ['createMultiSelect', () => typeof window.createMultiSelect === 'function'],
+      ['createDatePicker', () => typeof window.createDatePicker === 'function'],
       ['CsvExporter', () => has(window.CsvExporter, 'exportRows')],
       ['PublishResponse', () => has(window.PublishResponse, 'parse')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
