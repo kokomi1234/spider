@@ -62,8 +62,11 @@ GET  /local/saved-queries            → { items, deleted, file }
 POST /local/saved-queries            → body { items, deletedIds }，服务端合并后返回全集
 ```
 
-- 文件默认 `publish/config/saved-queries.json`（**不入库**：含查询条件 / 人名 / 部门）；
-  要多人共享就把它指到同一个共享路径：`PROXY_QUERIES_FILE=\\nas\share\saved-queries.json`。
+- 文件默认写在**仓库根的 `shared/saved-queries.json`**（**不入库**：含查询条件 / 人名 / 部门）；
+  完整的三种用法（本机 / 同工作区 / 跨机器）见 `shared/README.md`。
+- 要跨机器共享，在根目录 `.env` 里把它指到一个所有人都能访问的**同一个文件**：
+  `PROXY_QUERIES_FILE=\\nas\share\saved-queries.json`（Windows 网络盘；macOS/Linux 写挂载点路径）。
+  设了之后读写都走那个文件，**同一个文件路径就是同一个团队库**。
 - 合并规则与前端一致：按 id 或「同页面同名」判重，`hits/saves/lastAt` 取 **max**
   （所以反复提交同一个文件是幂等的，刷不出高频排行）。
 - **删除带墓碑**：删除意图随 POST 提交（`deletedIds`），服务端把它记进 `deleted`

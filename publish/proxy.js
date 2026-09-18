@@ -801,10 +801,27 @@ const server = http.createServer((req, res) => {
   //   GET  /local/saved-queries → { code:200, data:{ items:[...], file } }
   //   POST /local/saved-queries   body { items:[...] } → 合并两边后落盘，返回合并结果
   // 要让同团队多台机器看到同一份，把 PROXY_QUERIES_FILE 指到同一个共享路径即可
-  // （网络盘 / 同步盘都行）；默认落在 publish/config/saved-queries.json。
+  // （网络盘 / 同步盘都行）；默认落在仓库根的 shared/saved-queries.json
+  // （2026-09-19 从 publish/config/ 挪出来：共享文件统一放 shared/，见 shared/README.md）。
   if (cachePath === '/local/saved-queries') {
-    const FILE = process.env.PROXY_QUERIES_FILE || path.join(__dirname, 'config', 'saved-queries.json');
+    // 仓库根 = publish 的上一级（__dirname 是 publish/），别写成绝对路径，换机器就失效
+    const REPO_ROOT = path.resolve(__dirname, '..');
+    const DEFAULT_QUERIES_FILE = path.join(REPO_ROOT, 'shared', 'saved-queries.json');
+    const LEGACY_QUERIES_FILE = path.join(__dirname, 'config', 'saved-queries.json');
+    const FILE = process.env.PROXY_QUERIES_FILE || DEFAULT_QUERIES_FILE;
     const MAX_ITEMS = 200;   // 服务端宽松些：多人累积，比前端的 50 条上限大
+
+    // 老机器上的 publish/config/saved-queries.json 不能直接丢：第一次用到新路径时
+    // 把它复制过去（只在「新文件还没有」时搬，避免把别人共享库里的新内容覆盖掉）。
+    if (FILE === DEFAULT_QUERIES_FILE && !fs.existsSync(FILE) && fs.existsSync(LEGACY_QUERIES_FILE)) {
+      try {
+        fs.mkdirSync(path.dirname(FILE), { recursive: true });
+        fs.copyFileSync(LEGACY_QUERIES_FILE, FILE);
+        console.log('[saved-queries] 已把旧文件迁到 ' + FILE + '（旧的留着当备份，可自行删除）');
+      } catch (e) {
+        console.log('[saved-queries] 迁移旧文件失败（不影响使用）: ' + e.message);
+      }
+    }
 
     /** 合并键：同页面 + 同名 视为同一条（与前端 importJson 一致） */
     const keyOf = (it) => ((it && it.page && it.name)

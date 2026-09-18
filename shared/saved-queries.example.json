@@ -1,0 +1,5 @@
+{
+  "_comment": "首页「常用查询」的团队库模板。正式文件是同目录的 saved-queries.json（不入库），由代理 /local/saved-queries 端点首次写入时自动创建。本文件只用来占位目录结构，改它不影响运行。",
+  "items": [],
+  "deleted": []
+}
