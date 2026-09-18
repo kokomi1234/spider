@@ -792,6 +792,20 @@
       .join(' · ');
   }
 
+  /**
+   * 旧记录（2026-09-18 前保存）的摘要写的是编号。从首页打开时字典已加载，
+   * 这里把 labels + 摘要重算回写一次，用户不必手动重新保存。
+   */
+  function upgradeSavedSummary(item, fields) {
+    const SQ = window.SavedQuery;
+    if (!SQ || !item || !fields) return;
+    if ((item.v || 1) >= 2 && item.labels && Object.keys(item.labels).length) return;
+    const labels = collectSavedLabels(fields);
+    const summary = buildSavedSummary(fields, labels);
+    if (!summary) return;
+    SQ.update(item.id, { labels, summary, v: SQ.SCHEMA_VERSION || 2 });
+  }
+
   // 点「⭐ 保存到首页」：收集 → 命名 → 存 → toast
   async function onSaveQuery() {
     const SQ = window.SavedQuery;
@@ -818,7 +832,7 @@
     if (name == null) return;                 // 用户取消
     name = String(name).trim();
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
-    const res = SQ.save({ page: 'subscription', name, fields, summary });
+    const res = SQ.save({ page: 'subscription', name, fields, summary, labels: collectSavedLabels(fields) });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
     toast('已保存到首页', 2000);
   }
@@ -868,6 +882,8 @@
     }
 
     syncQuickButtons();   // 让「按调用方系统筛选」快捷按钮高亮与回填值一致
+    // 旧记录（摘要里是编号）趁字典已加载重算回写一次，点一次卡片就自动修好
+    upgradeSavedSummary(item, f);
     toast(`已载入常用查询：${item.name}`, 2000);
     // 回填完成后复用页面查询入口，自动执行一次查询
     await query(1);

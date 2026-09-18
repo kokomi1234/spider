@@ -489,6 +489,15 @@
     return value;
   }
 
+  /** 每个条件的人类可读文本（存进记录，首页以后改版式不用重新解析编号） */
+  function snapshotLabels(fields) {
+    const out = {};
+    SNAPSHOT_IDS.forEach((id) => {
+      if (fields[id]) out[id] = displayTextFor(id, fields[id]);
+    });
+    return out;
+  }
+
   /** 摘要给首页卡片显示用：最多 4 个条件，避免卡片被撑爆 */
   function buildSnapshotSummary(fields) {
     return SNAPSHOT_IDS
@@ -496,6 +505,21 @@
       .map((id) => `${SNAPSHOT_LABELS[id] || id}：${displayTextFor(id, fields[id])}`)
       .slice(0, 4)
       .join(' · ');
+  }
+
+  /**
+   * 旧记录的摘要是「保存那一刻拼好的字符串」，里面写的是编号（E00301 / 2611pc）。
+   * 代码改了也修不了已落盘的文本 —— 所以从首页打开旧记录时，趁字典已加载把摘要
+   * 重算回写一次：用户点一次卡片就自动修好，不必手动重新保存。
+   */
+  function upgradeSavedSummary(item, fields) {
+    const S = window.SavedQuery;
+    if (!S || !item || !fields) return;
+    if ((item.v || 1) >= 2 && item.labels && Object.keys(item.labels).length) return;
+    const labels = snapshotLabels(fields);
+    const summary = buildSnapshotSummary(fields);
+    if (!summary) return;
+    S.update(item.id, { labels, summary, v: 2 });
   }
 
   /** 控件 id → 对应的下拉/日期组件实例（没有组件就退回原生赋值） */
@@ -528,7 +552,7 @@
     } catch (_) { name = ''; }
     if (!name || !String(name).trim()) return;   // 取消 / 空输入：什么都不做
 
-    const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary });
+    const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
     showToast(r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达', 2400, 'success');
   }
@@ -557,6 +581,8 @@
       else el.value = item.fields[fid];
     });
 
+    // 旧记录（摘要里是编号）趁字典已加载重算回写一次
+    upgradeSavedSummary(item, item.fields);
     showToast(`已载入常用查询：${item.name}`, 2200, 'info');
     state.pageNum = 1;
     state.currentFilter = 'all';

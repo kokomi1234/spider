@@ -290,6 +290,49 @@ const PAGES = [
       }
 
       if (pg.file === 'publish.html') {
+        // 旧记录自动升级：2026-09-18 前保存的卡片，摘要里写的是编号（2611pc / E00301），
+        // 改代码修不了已落盘的文本。现在的做法是「从首页打开时重算回写」——
+        // 这里真的造一条 v1 旧记录，带 ?saved= 打开，再验它已经被升级成 v2。
+        const oldId = await page.evaluate(() => {
+          const S = window.SavedQuery;
+          if (!S) return null;
+          S.clear();
+          const r = S.save({
+            page: 'publish', name: '旧格式卡片',
+            fields: { f_prodBatch: '2611pc', f_serviceName: '全球汇划' },
+            summary: '变更批次：2611pc · 服务名称：全球汇划',
+          });
+          if (!r.ok) return null;
+          // 手工降级成旧格式（去掉 labels / 版本号），等价于升级前保存下来的数据
+          const raw = JSON.parse(localStorage.getItem(S.STORAGE_KEY) || '[]');
+          raw.forEach((it) => { delete it.labels; it.v = 1; });
+          localStorage.setItem(S.STORAGE_KEY, JSON.stringify(raw));
+          return r.item.id;
+        });
+
+        if (oldId) {
+          await page.goto(`${base}publish.html?saved=${oldId}`, { waitUntil: 'load', timeout: 15000 });
+          await page.waitForTimeout(2500);   // 等字典初始化 → 回填 → 升级回写
+          const upgraded = await page.evaluate((id) => {
+            const S = window.SavedQuery;
+            const it = S ? S.get(id) : null;
+            return it ? { v: it.v, hasLabels: Object.keys(it.labels || {}).length > 0, summary: it.summary } : null;
+          }, oldId);
+          process.stdout.write(`  旧记录升级: ${JSON.stringify(upgraded)}\n`);
+          if (!upgraded || upgraded.v !== 2 || !upgraded.hasLabels) {
+            process.stdout.write(`    [FAIL] 旧记录点开后未自动升级：${JSON.stringify(upgraded)}\n`);
+            anyFail = true;
+          }
+          await page.evaluate(() => window.SavedQuery && window.SavedQuery.clear());
+          await page.goto(base + pg.file, { waitUntil: 'load', timeout: 15000 });
+          await page.waitForTimeout(600);
+        } else {
+          process.stdout.write('    [FAIL] 无法构造旧记录（SavedQuery 未加载？）\n');
+          anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
         // DialogUtils 的通用输入 / 确认弹窗（替代 window.prompt / confirm）：
         // 打开 → 有输入框 → 确认拿到 trim 后的值；确认框走取消返回 false。
         const dlgCheck = await page.evaluate(async () => {

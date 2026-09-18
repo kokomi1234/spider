@@ -22,6 +22,8 @@
 
   const STORAGE_KEY = 'spider.savedQueries.v1';
   const MAX_ITEMS = 50;
+  /** 记录结构版本：1 = 旧格式（只有编号 + 当时拼好的摘要）；2 = 带 labels（人类可读文本） */
+  const SCHEMA_VERSION = 2;
   const PAGES = { publish: '服务发布数据查询', task: '任务单查询', subscription: '服务订阅关系查询' };
 
   /** 空实现：localStorage 不可用时用它顶上，让调用方拿到一致的结构 */
@@ -71,6 +73,18 @@
     return null;
   }
 
+  /** labels 只收 string（展示用），空值丢弃 */
+  function cleanLabels(labels) {
+    const out = {};
+    if (labels && typeof labels === 'object') {
+      Object.keys(labels).forEach((k) => {
+        const v = labels[k];
+        if (typeof v === 'string' && v.trim()) out[k] = v.trim();
+      });
+    }
+    return out;
+  }
+
   /** 逐条校验存量数据：结构不合法就丢弃，避免脏数据把首页渲染打崩 */
   function sanitize(item) {
     if (!item || typeof item !== 'object') return null;
@@ -86,11 +100,24 @@
         if (v !== null && v !== '') fields[k] = v;
       });
     }
+    // labels：字段 id → 人类可读文本（「2611批次」而不是「2611pc」）。
+    // 2026-09-18 才加的：早先只存了 fields（编号）+ 当时拼好的 summary 字符串，
+    // 于是老卡片显示的是编号。labels 保留下来，既便于以后改版式，也用来判断
+    // 这条记录是不是已经升级过（见 SCHEMA_VERSION）。
+    const labels = {};
+    if (item.labels && typeof item.labels === 'object') {
+      Object.keys(item.labels).forEach((k) => {
+        const v = item.labels[k];
+        if (typeof v === 'string' && v.trim()) labels[k] = v.trim();
+      });
+    }
     return {
       id,
       page,
       name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '未命名查询',
       summary: typeof item.summary === 'string' ? item.summary : '',
+      labels,
+      v: typeof item.v === 'number' ? item.v : 1,   // 缺省 1 = 升级前的旧格式
       at: typeof item.at === 'number' ? item.at : 0,
       fields,
     };
@@ -116,7 +143,7 @@
    * 保存一份常用查询。
    * 同名同页视为「更新」（保留原 id 与排序位置），否则新增；超过上限报错。
    */
-  function save({ page, name, fields, summary }) {
+  function save({ page, name, fields, summary, labels }) {
     if (!page || !PAGES[page]) return fail('未知的页面类型');
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
@@ -134,6 +161,8 @@
       page,
       name: title,
       summary: typeof summary === 'string' ? summary : '',
+      labels: cleanLabels(labels),
+      v: SCHEMA_VERSION,
       at: Date.now(),
       fields: cleanedFields,
     };
@@ -167,6 +196,31 @@
     return w.ok ? { ok: true } : w;
   }
 
+  /**
+   * 就地改一条记录的**展示字段**（labels / summary / v），不动 id、name、fields、at。
+   *
+   * 为什么需要它：2026-09-18 之前的记录里摘要是「保存那一刻拼好的字符串」，
+   * 里面写的是编号（2611pc / E00301）。改代码修不了已经落盘的文本，
+   * 所以各页在从首页打开一条旧查询时，用已加载的字典把摘要重算一遍回写——
+   * 用户**点一次卡片就自动修好**，不用手动重新保存。
+   */
+  function update(id, patch) {
+    if (!id) return fail('缺少 id');
+    const items = list();
+    const target = items.find((it) => it.id === id);
+    if (!target) return fail('该查询已不存在');
+    const next = items.map((it) => {
+      if (it.id !== id) return it;
+      const merged = { ...it };
+      if (patch && typeof patch.summary === 'string') merged.summary = patch.summary;
+      if (patch && patch.labels) merged.labels = cleanLabels(patch.labels);
+      if (patch && typeof patch.v === 'number') merged.v = patch.v;
+      return merged;
+    });
+    const w = writeRaw(next);
+    return w.ok ? { ok: true, item: next.find((it) => it.id === id) } : w;
+  }
+
   function clear() {
     return writeRaw([]);
   }
@@ -180,11 +234,13 @@
   window.SavedQuery = {
     STORAGE_KEY,
     MAX_ITEMS,
+    SCHEMA_VERSION,
     PAGES,
     list,
     get,
     save,
     rename,
+    update,
     remove,
     clear,
     hrefFor,

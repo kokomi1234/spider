@@ -228,7 +228,76 @@ test('saved-query：写入配额满 → save 返回失败，且已存数据不�
 });
 
 // ══════════════════════════════════════════════════════════
-// 4) 跳转地址（首页卡片直达用的就是这个）
+// 4) labels（人类可读文本）与旧记录升级
+// ══════════════════════════════════════════════════════════
+
+test('saved-query：保存时带上 labels，记录标记为 v2', () => {
+  const S = load(fakeStorage());
+  const r = S.save({
+    page: 'publish', name: '甲',
+    fields: { f_prodBatch: '2611pc' },
+    summary: '变更批次：2611批次',
+    labels: { f_prodBatch: '2611批次' },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(r.item.labels, { f_prodBatch: '2611批次' });
+  assert.strictEqual(r.item.v, S.SCHEMA_VERSION, '新记录应带版本号，便于判断是否需要升级');
+});
+
+test('saved-query：labels 只收非空字符串，脏值丢弃', () => {
+  const S = load(fakeStorage());
+  const r = S.save({
+    page: 'publish', name: '甲', fields: { a: '1' },
+    labels: { good: '2611批次', bad: { o: 1 }, empty: '   ', num: 5, arr: ['x'] },
+  });
+  assert.deepStrictEqual(r.item.labels, { good: '2611批次' });
+});
+
+test('saved-query：旧记录（无 v / 无 labels）读出来是 v1，可被识别为待升级', () => {
+  const S = load(fakeStorage({
+    [KEY]: JSON.stringify([{ id: 'q1', page: 'publish', name: '旧卡片', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611pc' }]),
+  }));
+  const it = S.get('q1');
+  assert.strictEqual(it.v, 1, '缺 v 的记录按旧格式算');
+  assert.deepStrictEqual(it.labels, {});
+});
+
+test('saved-query：update 只改展示字段（labels / summary / v），不动 id / name / fields / at', () => {
+  const S = load(fakeStorage());
+  const r = S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' });
+  const before = r.item;
+  const u = S.update(before.id, { labels: { a: '可读名' }, summary: '新摘要', v: 2 });
+  assert.strictEqual(u.ok, true);
+  const after = S.get(before.id);
+  assert.strictEqual(after.summary, '新摘要');
+  assert.deepStrictEqual(after.labels, { a: '可读名' });
+  assert.strictEqual(after.v, 2);
+  // 这些不能被改坏，否则卡片会跳错页 / 回填错条件
+  assert.strictEqual(after.id, before.id);
+  assert.strictEqual(after.name, '原名');
+  assert.deepStrictEqual(after.fields, { a: '1' });
+  assert.strictEqual(after.at, before.at);
+});
+
+test('saved-query：update 忽略白名单外的字段（不许塞 fields / name 进来）', () => {
+  const S = load(fakeStorage());
+  const r = S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' });
+  S.update(r.item.id, { name: '被篡改', fields: { x: '2' }, labels: { a: 'L' } });
+  const after = S.get(r.item.id);
+  assert.strictEqual(after.name, '原名');
+  assert.deepStrictEqual(after.fields, { a: '1' });
+  assert.deepStrictEqual(after.labels, { a: 'L' }, '白名单内的仍要生效');
+});
+
+test('saved-query：update 不存在的 id → 报错', () => {
+  const S = load(fakeStorage());
+  assert.strictEqual(S.update('不存在', { summary: 'x' }).ok, false);
+  assert.strictEqual(S.update('', { summary: 'x' }).ok, false);
+  assert.strictEqual(S.update(null, { summary: 'x' }).ok, false);
+});
+
+// ══════════════════════════════════════════════════════════
+// 5) 跳转地址（首页卡片直达用的就是这个）
 // ══════════════════════════════════════════════════════════
 
 test('saved-query：hrefFor 三个页面各自对应干净路由，且 id 被转义', () => {
