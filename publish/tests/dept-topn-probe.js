@@ -109,6 +109,41 @@ const RECORDS = [
   [3, '发布-张三组同事存的最高频', 10],
 ];
 
+/**
+ * 出一张预览图：把 mock 数据渲染出来，截部门卡与整页，
+ * 让人一眼看到「部门常用查询在页面哪一屏」。
+ */
+async function takeShot(browser, page) {
+  const users = [
+    ['1001', '张三', 'T01', '开发一部'],
+    ['1004', '赵六', 'T01', '开发一部'],   // 同 teamId：它的记录应出现在张三的部门卡里
+  ];
+  await page.evaluate((u) => {
+    const S = window.SavedQuery;
+    const CU = window.CurrentUser;
+    S.clear(); CU.clear();
+    const mk = (userId, userName, teamId, teamName) => ({ userId, userName, teamId, teamName, orgId: 'O1', orgName: '中国银行软件中心（深圳）' });
+    const owner = mk(...u[0]);
+    const other = mk(...u[1]);
+    [['按调用方系统查服务', 12], ['按服务编号查接口', 8], ['已上线待下线清单', 5], ['低频排查用', 1]].forEach(([name, hits], i) => {
+      const r = S.save({ page: ['publish', 'task', 'subscription'][i % 3], name, fields: {}, summary: '调用方=E00406 · 提供方=E00301', labels: {}, owner });
+      for (let n = 0; n < hits; n += 1) S.hit(r.item.id);
+    });
+    // 同部门同事存的记到 3 次，排在第 3 位 —— 用来看「部门卡里会混入同事的记录，并标出是谁」
+    const mate = S.save({ page: 'publish', name: '同事存的那条（同部门）', fields: {}, summary: '调用方=E00406 · 提供方=E00301', labels: {}, owner: other });
+    for (let n = 0; n < 3; n += 1) S.hit(mate.item.id);
+    CU.set(owner);
+    window.HomePage.render();
+  }, users);
+  await page.waitForTimeout(300);
+  const dir = path.join(ROOT, 'output');
+  fs.mkdirSync(dir, { recursive: true });
+  const card = await page.$('#deptCard');
+  await card.screenshot({ path: path.join(dir, 'dept-topn-card.png') });
+  await page.screenshot({ path: path.join(dir, 'dept-topn-page.png'), fullPage: true });
+  return [path.join(dir, 'dept-topn-card.png'), path.join(dir, 'dept-topn-page.png')];
+}
+
 (async () => {
   const chromePath = findChrome();
   if (!chromePath) {
@@ -124,6 +159,15 @@ const RECORDS = [
 
   await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
   await page.waitForTimeout(900);
+
+  if (process.env.PROBE_SHOT) {
+    const shot = await browser.newPage({ viewport: { width: 1280, height: 1400 } });
+    await shot.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+    await shot.waitForTimeout(800);
+    const files = await takeShot(browser, shot);
+    process.stdout.write(`\n预览图已生成:\n  ${files.join('\n  ')}\n`);
+    await shot.close();
+  }
 
   const report = await page.evaluate(async (payload) => {
     const tick = (ms) => new Promise((r) => setTimeout(r, ms));
