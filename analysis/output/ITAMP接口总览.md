@@ -63,9 +63,9 @@ Cookie: <会话>
 **`token` 是动态的，有效期 12 小时。** 抓包实测：
 `loginTime` 2026-09-03 11:02:20 → `expireTime` 2026-09-03 23:02:20。
 
-> ⚠️ 认证 token 通过 `publish/.env` 的 `PROXY_TOKEN` 配置（由 `proxy.js` 启动时读取并注入请求头），代码里**没有硬编码**。token 约 12 小时过期，过期后页面报 401，换新 token 并清缓存重录即可。
+> ⚠️ 认证 token 通过项目根目录 `.env` 的 `PROXY_TOKEN` 配置（由 `proxy.js` 启动时读取并注入请求头），代码里**没有硬编码**。token 约 12 小时过期，过期后页面报 401，换新 token 并清缓存重录即可。
 > 过期后所有接口都会认证失败。更新方式：登录后调 `/itamp-comm/iam/getUserInfo`
-> 取 `data.token`，填进 `publish/.env` 的 `PROXY_TOKEN` 即可（**现状已做成配置项**，无需改代码）。
+> 取 `data.token`，填进项目根目录 `.env` 的 `PROXY_TOKEN` 即可（**现状已做成配置项**，无需改代码）。
 
 ### 响应封装：后端用了三套结构，别只按一种写
 

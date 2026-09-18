@@ -76,7 +76,7 @@ spider/
 
 这个仓库里有多份**含真实内网数据与凭证的文件**，处理原则：
 
-- `publish/.env` 存 `PROXY_TOKEN`，权限必须是 `600`（已设置）；`.env` 永远不进仓库（`.gitignore` 已覆盖）。
+- 项目根目录 `.env` 存 `PROXY_TOKEN`（由 `publish/proxy.js` 启动时读取并注入请求头）；`.env` 永远不进仓库（`.gitignore` 已覆盖）。
 - 抓包 `*.har`（根目录与 `analysis/har/`）与 `publish/cache/` 里含 **token / Cookie / ssopSessionId / 内网地址**，
   `.gitignore` 已全部忽略：`*.har`、`analysis/har/`、`publish/cache/`。
   **不要提交、外传或贴到外部工具**；需要分享时另做脱敏副本。

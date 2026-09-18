@@ -701,7 +701,7 @@ const server = http.createServer((req, res) => {
         // 可选：覆盖 .env 文件
         if (saveToEnv) {
           try {
-            // 确保父目录存在：部署路径嵌套异常（如 spider/spider）或目录被清理时，
+            // 确保父目录存在：自定义 PROXY_ENV_PATH 或目录被清理时，
             // writeFileSync 才不会因「父目录不存在」而 ENOENT。
             fs.mkdirSync(path.dirname(envPath), { recursive: true });
             // 文件可能还不存在（.env 被 gitignore，首次部署常没有）——没有就当空内容，

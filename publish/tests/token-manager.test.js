@@ -128,7 +128,7 @@ const STATUS_OK = {
   code: 200,
   hasToken: true,
   tokenPreview: 'abcd1234...wxyz',
-  envPath: '/mock/publish/.env',
+  envPath: '/mock/.env',
 };
 
 const overlayOf = (doc) => findIn(doc.body, (e) => /dlg-util-overlay/.test(e.className));
