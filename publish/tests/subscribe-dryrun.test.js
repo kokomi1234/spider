@@ -266,6 +266,52 @@ test('顺序无关：dryrun 先加载、依赖后加载，run 仍能工作（调
   assert.strictEqual(r.requests.length, 2);
 });
 
+test('run：预演模式下未选关联文档也放行（离线拿不到文档列表时仍能试通）', async () => {
+  const win = fresh();
+  const form = { ...FORM };
+  delete form.relDocIds;
+  delete form.relDocDetails;
+
+  // 非预演：按线上拦下
+  const blocked = await win.SubscribeDryRun.run({ row: ROW, form, judges: JUDGES(), quiet: true, dryRun: false });
+  assert.strictEqual(blocked.validate.code, 'no-doc');
+  assert.strictEqual(blocked.requests.length, 0);
+
+  // 预演模式：放行，且报文标注 documents 为空数组
+  const { r, calls } = await withoutRealFetch(() => win.SubscribeDryRun.run({
+    row: ROW, form, judges: JUDGES(), quiet: true, dryRun: true,
+  }));
+  assert.strictEqual(calls, 0);
+  assert.strictEqual(r.validate.ok, true);
+  assert.strictEqual(r.docSkipped, true, '要能看出「文档必填被跳过」这件事');
+  assert.deepStrictEqual(r.requests[0].body.documents, [], '预演下 documents 是空数组（真实环境后端会拒）');
+  assert.deepStrictEqual(r.requests.map((x) => x.name), ['setSubcription', 'subscriptionReview']);
+
+  // 但其它必填照旧：TPS 非法仍拦（预演只放开文档这一条）
+  const badTps = await win.SubscribeDryRun.run({
+    row: ROW, form: { ...form, perfPeak: { tps: 'abc' } }, judges: JUDGES(), quiet: true, dryRun: true,
+  });
+  assert.strictEqual(badTps.validate.code, 'bad-tps');
+  assert.strictEqual(badTps.requests.length, 0);
+});
+
+test('run：点击驱动开着时默认按预演模式校验（不必重复传 dryRun）', async () => {
+  const win = fresh();
+  withSpyCall(win);
+  await silence(() => win.SubscribeDryRun.enable());
+  const form = { ...FORM };
+  delete form.relDocIds;
+  const { r } = await silence(() => win.SubscribeDryRun.run({ row: ROW, form, judges: JUDGES(), quiet: true }));
+  assert.strictEqual(r.dryRun, true, '预演模式开启时应默认放开文档必填');
+  assert.strictEqual(r.validate.ok, true);
+  await silence(() => win.SubscribeDryRun.disable());
+  const after = await silence(() => win.SubscribeDryRun.run({ row: ROW, form, judges: JUDGES(), quiet: true }));
+  assert.strictEqual(after.r.dryRun, false, '关闭后回到线上口径（文档必填重新生效）');
+  assert.strictEqual(after.r.validate.code, 'no-doc');
+});
+
+
+
 // ── ④ 点击驱动的预演模式（enable / disable）────────────
 
 /** 跑一段逻辑并吞掉它的控制台输出（预演台会打印整份报文） */

@@ -17,6 +17,7 @@
    用法 A（推荐）：**点击驱动** —— 照常点页面上的「订阅」→ 弹窗 → 「确 认」，写请求被拦下并打印：
      ① 地址栏加 ?dryrun=1 打开页面（或控制台 SubscribeDryRun.enable() 一次）
      ② 点结果行「订阅」→ 填表 → 点「确 认」→ 控制台自动打印两个报文与字段明细
+        （「关联文档」可不选：预演下这条必填不拦，离线取不到文档列表也试得动）
      ③ 关闭：点右下角浮标，或 SubscribeDryRun.disable()（会撤销预演产生的本地「已订阅」标记）
      可选：enable({ fail: 'subscribe' | 'review' }) 模拟写入失败，观察失败链路
      注意：只拦写接口，**读接口照常发真实请求**（页面其它功能不受影响）
@@ -379,8 +380,14 @@
         && typeof window.SubscribeManager.isSubscribed === 'function'
         ? (code) => window.SubscribeManager.isSubscribed(code)
         : null);
+    // 预演模式（点击驱动的 enable()）默认**放开「关联文档」必填** —— 离线/内网拿不到
+    // 文档列表时用户无从选择，拦了整条链路就试不动。显式传 dryRun 可覆盖。
+    const dryRun = o.dryRun !== undefined ? !!o.dryRun : isEnabled();
+    const docSkipped = dryRun && !String(src.form.relDocIds || '').trim();
     const validate = typeof SMx.validateSubscribe === 'function'
-      ? SMx.validateSubscribe(src.row, src.form, isSubscribed, { judges: src.judges, defaultsFetched: src.defaultsFetched })
+      ? SMx.validateSubscribe(src.row, src.form, isSubscribed, {
+        judges: src.judges, defaultsFetched: src.defaultsFetched, dryRun,
+      })
       : { ok: false, code: 'no-model', msg: '⚠️ SubscribeModel 未加载', duration: 0 };
     const judgeValidate = typeof SMx.validateJudgeSubmit === 'function'
       ? SMx.validateJudgeSubmit(src.row, src.judges)
@@ -397,11 +404,16 @@
       console.log(`表单：调用方系统=${form.callerSystem || '(空)'}  任务编号=${form.taskNo || '(空)'}  TPS=${(form.perfPeak || {}).tps || '(空)'}  文档=${(String(form.relDocIds || '').split(',').filter(Boolean)).length} 个  评委=${src.judges.length} 条${src.defaultsFetched ? '（已拉取默认评委）' : ''}`);
       console.log('校验顺序（来源：subscribe-model.js validateSubscribe 的实现顺序）：行 → 服务编码 → 是否已订阅 → 调用方系统 → 关联文档 → 服务编号 → TPS(峰值) → 评委信息 → 任务编号');
       printValidate('【一】确认订阅前的必填/格式校验（subscribe-model.js validateSubscribe）', validate);
+      if (docSkipped) {
+        console.log('   ⓘ 预演模式：未选关联文档 → 该校验已跳过（离线拿不到文档列表时也能把流程试通）；报文里 documents 会是空数组');
+      }
       printValidate('【二】评委提交校验（validateJudgeSubmit）', src.judges.length ? judgeValidate : { ok: true, code: '', msg: '（无评委行，与线上一致：不提交评委）' });
     }
 
     const out = {
       from: src.from,
+      dryRun,
+      docSkipped,
       validate,
       judgeValidate,
       requests: [],
@@ -645,6 +657,11 @@
       MODE.lastAt = Date.now();
       if (sameClick) MODE.group.push(item); else MODE.group = [item];
       printIntercepted(item, sameClick);
+      // 预演下「关联文档」必填被跳过，报文里的 documents 会是空数组 —— 明确说一句，
+      // 免得把「空 documents」当成脚本 bug（真实环境后端会拒这一条）
+      if (body && Array.isArray(body.documents) && !body.documents.length) {
+        console.log('   ⓘ 预演模式：本次未选关联文档（必填已跳过），documents 为空数组；真实环境里这一条后端会拒');
+      }
       updateBadge();
       cancelLater(MODE.timer);
       MODE.timer = later(printClickSummary, 600);
@@ -674,6 +691,7 @@
     console.log('🧪 订阅预演模式已开启（DRY RUN）—— 写请求会被拦截，不会写入后端');
     console.log(`   拦截范围（取自各接口模块的 endpoints 配置）：${paths.join('、')}`);
     console.log('   现在请照常点击页面上的「订阅」→ 弹窗里填好 → 点「确 认」；读接口照常发真实请求。');
+    console.log('   预演下「关联文档」必填不拦：离线拿不到文档列表时不用选也能把流程试通（报文里 documents 会是空数组）。');
     console.log(`   关闭：点右下角浮标，或 SubscribeDryRun.disable()${o.fail ? `（本次模拟 ${o.fail} 写入失败）` : ''}`);
     console.log('   注意：模拟成功也会把该服务标记为已订阅（本地）；disable() 会撤销这些标记。');
     console.log(LINE);
@@ -995,6 +1013,39 @@
       actual: (r) => `requests=[${r.requests.map((x) => x.name).join(', ')}]`,
     },
     {
+      name: '预演模式：未选关联文档也放行（离线拿不到文档列表时仍能试）',
+      kind: 'request',
+      dryRun: true,
+      expect: '校验放行 + 订阅报文照发，documents 为空数组，并标注「必填已跳过」',
+      input: () => {
+        const f = goodForm();
+        f.relDocIds = '';
+        f.relDocNames = '';
+        f.relDocDetails = [];
+        return { row: goodRow(), form: f, judges: goodJudges() };
+      },
+      check: (r) => r.validate.ok === true
+        && r.docSkipped === true
+        && r.requests.length >= 1
+        && Array.isArray((r.requests[0] || {}).body.documents)
+        && r.requests[0].body.documents.length === 0,
+      actual: (r) => `ok=${r.validate.ok} docSkipped=${r.docSkipped} requests=${r.requests.length} `
+        + `documents=${JSON.stringify(((r.requests[0] || {}).body || {}).documents)}`,
+    },
+    {
+      name: '非预演模式：未选关联文档仍按线上拦下（no-doc，不发报文）',
+      kind: 'request',
+      dryRun: false,
+      expect: 'code=no-doc 且 0 个请求',
+      input: () => {
+        const f = goodForm();
+        f.relDocIds = '';
+        return { row: goodRow(), form: f, judges: goodJudges() };
+      },
+      check: (r) => r.validate.code === 'no-doc' && r.requests.length === 0,
+      actual: (r) => `code=${r.validate.code} requests=${r.requests.length}`,
+    },
+    {
       name: '组包：校验不过时按线上行为直接拦下，不构造报文',
       kind: 'request',
       expect: 'skipped 有值且 0 个请求',
@@ -1038,12 +1089,15 @@
       if (sc.skip) continue;
       const input = sc.input();
       let res;
+      // 场景矩阵一律显式指定 dryRun（默认 false）——「关联文档必填」这条的期望值
+      // 不能因为预演模式开着就漂移；预演模式的放行行为另有专门场景覆盖。
+      const dryRun = sc.dryRun === undefined ? false : !!sc.dryRun;
       if (sc.kind === 'validate') {
         res = await run({
-          ...input, quiet: true, force: sc.force, isSubscribed: sc.isSubscribed,
+          ...input, quiet: true, force: sc.force, isSubscribed: sc.isSubscribed, dryRun,
         });
       } else {
-        res = await run({ ...input, quiet: true, force: sc.force });
+        res = await run({ ...input, quiet: true, force: sc.force, dryRun });
       }
       let pass = false;
       let err = '';

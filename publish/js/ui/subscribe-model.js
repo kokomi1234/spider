@@ -428,7 +428,11 @@
     }
     // 关联文档必填：空着提交时 service-api 只会发出 documents: []（后端必然拒），
     // 用户却要等一次往返才看到错。拦在前端，焦点落到这一行的「选 择」按钮上。
-    if (!String(form.relDocIds || '').trim()) {
+    // 例外：**预演模式**（订阅预演台 enable()，judgeState.dryRun）不拦 —— 文档列表来自
+    // 真实接口，离线/内网拿不到时用户根本无从选择，拦了整条链路就试不动；
+    // 预演只看报文，放行更可用（报文里 documents 会是空数组，预演台会明确标注）。
+    const dryRun = !!(judgeState && judgeState.dryRun);
+    if (!dryRun && !String(form.relDocIds || '').trim()) {
       return { ok: false, code: 'no-doc', msg: '⚠️ 请选择关联文档', duration: 2500, focus: 'sub_relDoc' };
     }
     // 调用方应用系统服务编号：表单没填还能靠派生救回来（= 调用方系统编号 + 行服务编号尾号 TOxxxx，

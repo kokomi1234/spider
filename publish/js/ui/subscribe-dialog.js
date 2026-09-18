@@ -500,10 +500,14 @@
     //   · subscribedCoding：订阅已成立、上次评委没送出去 —— 这次只补交评委，
     //     不能再拿「已在订阅列表」把补交的路堵死。
     const form = collectForm();
+    // 预演模式（订阅预演台）：把开关透给校验 —— 关联文档必填在预演下不拦
+    // （离线拿不到文档列表时用户无从选择，拦了整条链路就试不动）
+    const dryRun = !!(window.SubscribeDryRun && typeof window.SubscribeDryRun.isEnabled === 'function'
+      && window.SubscribeDryRun.isEnabled());
     const v = M.validateSubscribe(currentRow, form, (code) => {
       if (subscribedCoding === code) return false;
       return !!(window.SubscribeManager && window.SubscribeManager.isSubscribed(code));
-    }, { judges, defaultsFetched: judgeFetchedOk });
+    }, { judges, defaultsFetched: judgeFetchedOk, dryRun });
     if (!v.ok) {
       if (v.focus) focusField(v.focus);
       if (v.msg) toast(v.msg, v.duration, 'warn');

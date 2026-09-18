@@ -443,6 +443,32 @@ test('validateSubscribe：评委信息必填，唯一豁免是「已成功拉取
   assert.strictEqual(bothMissing.code, 'no-judges');
 });
 
+test('validateSubscribe：预演模式（judgeState.dryRun）不拦关联文档，其它必填照旧', () => {
+  const base = {
+    callerSystem: 'E00406', callerServiceNo: 'E00406TO1197',
+    perfPeak: { tps: '5' }, taskNo: 'T-1', relDocIds: '',
+  };
+  const row = { serverCoding: 'S' };
+  // 平时：未选关联文档 → 拦（线上行为，不能被预演开关带偏）
+  assert.strictEqual(SM.validateSubscribe(row, base).code, 'no-doc');
+  assert.strictEqual(SM.validateSubscribe(row, base, null, { dryRun: false }).code, 'no-doc');
+  // 预演模式：放行（离线拿不到文档列表时用户无从选择，拦了整条链路就试不动）
+  assert.strictEqual(SM.validateSubscribe(row, base, null, { dryRun: true }).ok, true);
+  // 但其它必填/格式规则一律照旧 —— 预演只放开文档这一条
+  assert.strictEqual(
+    SM.validateSubscribe(row, { ...base, perfPeak: { tps: 'abc' } }, null, { dryRun: true }).code, 'bad-tps',
+  );
+  assert.strictEqual(
+    SM.validateSubscribe(row, { ...base, taskNo: '' }, null, { dryRun: true }).code, 'no-task-no',
+  );
+  assert.strictEqual(
+    SM.validateSubscribe(row, base, null, { dryRun: true, judges: [], defaultsFetched: false }).code, 'no-judges',
+  );
+  assert.strictEqual(
+    SM.validateSubscribe(row, { ...base, callerSystem: '' }, null, { dryRun: true }).code, 'no-caller',
+  );
+});
+
 test('validateJudgeSubmit：无评委 / 无 publishId / 通过', () => {
   assert.strictEqual(SM.validateJudgeSubmit(null, [{ name: 'a' }]).code, 'no-row');
   const noJudges = SM.validateJudgeSubmit({ id: 'X' }, []);

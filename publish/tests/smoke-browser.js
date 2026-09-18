@@ -1596,7 +1596,8 @@ const PAGES = [
         const csBox = document.querySelector('#sub_callerSystem').parentElement.querySelector('.searchable-select-input');
         csBox.value = 'E00406';
         csBox.dispatchEvent(new Event('input', { bubbles: true }));
-        document.getElementById('sub_relDocIds').value = 'doc-smoke-click';
+        // 故意**不选关联文档**：离线/内网拿不到文档列表时用户无从选择，
+        // 预演模式必须放行，否则整条链路试不动（用户实际反馈的点）
         document.getElementById('sub_tpsPeak').value = '5';
         document.getElementById('sub_taskNo').value = 'T-SMOKE-1';
         const tr = document.querySelector('#judgeTableBody tr.judge-row');
@@ -1629,6 +1630,13 @@ const PAGES = [
       }
       if (!/subscriptionReview/.test(joined)) fails.push('评委报文也应被拦截并打印');
       if (!/本次点击共拦截 2 个写请求/.test(joined)) fails.push('缺少「本次点击」小计');
+      // 未选关联文档：预演下必须照常走下去，报文里 documents 为空数组并明确标注
+      if (!/预演模式：本次未选关联文档（必填已跳过）/.test(joined)) {
+        fails.push('未选关联文档时未按预演模式放行（应打印「预演模式：本次未选关联文档（必填已跳过）」）');
+      }
+      if (!/"documents": \[\]/.test(joined)) {
+        fails.push('未选关联文档时预演报文里 documents 应为空数组');
+      }
       if (!/已拦 2 条写请求/.test(String(dc.badgeAfterClick))) {
         fails.push(`浮标计数应更新为 2，实际 ${dc.badgeAfterClick}`);
       }
