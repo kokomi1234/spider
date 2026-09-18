@@ -1045,7 +1045,24 @@
 
   // ═══════════════════════════════════════════════════
 
+  /**
+   * 只读快照：把当前弹窗的行数据、表单、评委与「默认评委豁免」状态一次性交出去。
+   * 给「订阅报文预演台」（js/ui/subscribe-dryrun.js）与控制台排查用 ——
+   * 不碰任何状态，弹窗没打开（currentRow 已清）时返回 null。
+   */
+  function snapshot() {
+    if (!currentRow) return null;
+    return {
+      open: !!(dom && dom.overlay && dom.overlay.classList.contains('show')),
+      row: currentRow,
+      form: typeof collectForm === 'function' ? collectForm() : {},
+      judges: collectJudges().filter((j) => j.empNo || j.name),
+      defaultsFetched: judgeFetchedOk,
+      serverCoding: currentRow.serverCoding || currentRow.sysServeNo || '',
+    };
+  }
+
   if (typeof window !== 'undefined') {
-    window.SubscribeDialog = { open, close };
+    window.SubscribeDialog = { open, close, snapshot };
   }
 })();

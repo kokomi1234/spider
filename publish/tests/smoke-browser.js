@@ -57,7 +57,7 @@ function startServer() {
 }
 
 const PAGES = [
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
   { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition'] },
@@ -1500,6 +1500,64 @@ const PAGES = [
       }
     } catch (e) {
       fails.push(`评委搜索分流段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 订阅报文预演台（DRY RUN）自检
+  // ═══════════════════════════════════════════════════════════════
+  // 预演台的唯一价值是「可信」：它必须走真实组包函数，同时**一个真实请求都不能发**。
+  // 这里从浏览器层盯住：① 场景矩阵全绿；② 预演确实捕获到两个报文；
+  // ③ 页面没有发出任何指向 setSubcription / subscriptionReview 的真实请求。
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    const leaked = [];
+    try {
+      page.on('request', (r) => {
+        if (/setSubcription|subscriptionReview/i.test(r.url())) leaked.push(r.url());
+      });
+      await page.goto(base + 'index.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const dr = await page.evaluate(async () => {
+        if (!window.SubscribeDryRun) return { err: 'window.SubscribeDryRun 缺失' };
+        const sc = await window.SubscribeDryRun.scenarios({ quiet: true });
+        // 弹窗没打开 → 用内置示例跑一次，保证「离线也能看报文」这条路可用
+        const one = await window.SubscribeDryRun.run({ quiet: true });
+        return {
+          total: sc.total,
+          failed: sc.failed,
+          bad: sc.items.filter((i) => !i.pass).map((i) => i.name),
+          requests: one.requests.map((r) => r.name),
+          fetchCalls: one.fetchCalls,
+          restored: one.restored,
+          apiCallIsFunction: typeof window.API.call === 'function',
+          validateOk: one.validate.ok,
+        };
+      });
+      process.stdout.write(`  订阅预演台自检: ${JSON.stringify(dr)} 真实请求泄漏: ${leaked.length}\n`);
+      if (dr.err) fails.push(dr.err);
+      else {
+        if (dr.failed !== 0) {
+          fails.push(`预演台场景矩阵有 ${dr.failed} 项不符合预期：${JSON.stringify(dr.bad)}`);
+        }
+        if (dr.requests.join(',') !== 'setSubcription,subscriptionReview') {
+          fails.push(`预演应捕获「订阅 + 评委」两个报文，实际 ${JSON.stringify(dr.requests)}`);
+        }
+        if (dr.fetchCalls !== 0) fails.push(`预演穿透到了 fetch 层（${dr.fetchCalls} 次）`);
+        if (dr.restored !== true || dr.apiCallIsFunction !== true) {
+          fails.push('预演结束后没有把 window.API.call 还原');
+        }
+        if (dr.validateOk !== true) fails.push('内置示例应能通过必填校验（示例数据不完整）');
+      }
+      if (leaked.length) {
+        fails.push(`预演台发出了真实请求（应被 API/fetch 双层拦截）：${leaked.join(' | ')}`);
+      }
+    } catch (e) {
+      fails.push(`订阅预演台自检段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;

@@ -34,6 +34,7 @@
       ['PublishView', () => has(window.PublishView, 'renderRows')],
       ['PublishQuery', () => has(window.PublishQuery, 'doQuery')],
       ['SubscribeModel', () => has(window.SubscribeModel, 'displayBatch')],
+      ['SubscribeDryRun', () => has(window.SubscribeDryRun, 'run')],
       ['DocPicker', () => has(window.DocPicker, 'open')],
     ],
     subscription: [

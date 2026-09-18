@@ -23,6 +23,7 @@ require('./publish-model.test');
 require('./publish-view.test');
 require('./publish-query.test');
 require('./subscribe-model.test');
+require('./subscribe-dryrun.test');
 require('./subscription-model.test');
 require('./subscription-view.test');
 require('./bootstrap.test');
