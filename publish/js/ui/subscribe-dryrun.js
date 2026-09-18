@@ -14,9 +14,16 @@
      · 控制台打印：完整报文 JSON + 所有非空字段（按报文键序）+ 空值字段清单
        + 关键字段来源 + 校验结论，便于逐字段对照抓包
 
-   用法（在浏览器控制台）：
-     SubscribeDryRun.run()                 // 用当前订阅弹窗里的表单预演
-     SubscribeDryRun.run({ force: true })  // 即使校验不过也把报文构造出来
+   用法 A（推荐）：**点击驱动** —— 照常点页面上的「订阅」→ 弹窗 → 「确 认」，写请求被拦下并打印：
+     ① 地址栏加 ?dryrun=1 打开页面（或控制台 SubscribeDryRun.enable() 一次）
+     ② 点结果行「订阅」→ 填表 → 点「确 认」→ 控制台自动打印两个报文与字段明细
+     ③ 关闭：点右下角浮标，或 SubscribeDryRun.disable()（会撤销预演产生的本地「已订阅」标记）
+     可选：enable({ fail: 'subscribe' | 'review' }) 模拟写入失败，观察失败链路
+     注意：只拦写接口，**读接口照常发真实请求**（页面其它功能不受影响）
+
+   用法 B（辅助）：脚本驱动
+     SubscribeDryRun.run()                 // 用当前订阅弹窗里的表单预演（不点按钮）
+     SubscribeDryRun.run({ force: true })  // 校验不过也把整条链路构造出来看报文
      SubscribeDryRun.run({ row, form, judges, defaultsFetched })   // 显式注入
      SubscribeDryRun.scenarios()           // 跑内置场景矩阵（必填缺失/字段为空/格式错误…）
      SubscribeDryRun.dump(body, '标签')     // 只打印一份报文
@@ -477,6 +484,232 @@
   }
 
   // ═══════════════════════════════════════════════════
+  // 点击驱动的预演模式（enable / disable）—— 主用法
+  // ------------------------------------------------------------
+  // 开启后**照常点页面上的「订阅」→ 弹窗 → 「确 认」**，写请求在传输层被拦下并打印，
+  // 读接口一律放行（页面其它功能不受影响）。弹窗会像真订阅成功那样关掉、列表会刷新，
+  // 所以整条交互链路（校验 → 订阅 → 评委 → 本地标记 → 关闭）都能看到。
+  //
+  // 开启方式：
+  //   · 页面地址加 ?dryrun=1（加载即开启）
+  //   · 控制台 SubscribeDryRun.enable()
+  // 关闭方式：点右下角浮标，或 SubscribeDryRun.disable()（会撤销预演产生的本地订阅标记）
+  // ═══════════════════════════════════════════════════
+
+  let MODE = null;
+  const CLICK_GAP = 1500;   // 两个写请求间隔小于它 = 同一次点击（用于把「一次确认」的两个报文归组）
+
+  /**
+   * 定时器取用：优先 window.setTimeout，其次裸 setTimeout，都没有就直接执行。
+   * 为什么要写这层：单测的 harness 用 `new Function` 执行页面脚本，未列入形参的全局才回落到 Node 全局 ——
+   * 而 `setTimeout` 恰好是列进去的形参，测试不注入时它是 undefined，裸调会抛
+   * 「setTimeout is not a function」（与浏览器无关，纯测试环境问题）。
+   */
+  function later(fn, ms) {
+    const t = (typeof window !== 'undefined' && typeof window.setTimeout === 'function' && window.setTimeout)
+      || (typeof setTimeout === 'function' && setTimeout);
+    if (!t) { fn(); return null; }
+    return t(fn, ms);
+  }
+  function cancelLater(id) {
+    if (id == null) return;
+    const c = (typeof window !== 'undefined' && typeof window.clearTimeout === 'function' && window.clearTimeout)
+      || (typeof clearTimeout === 'function' && clearTimeout);
+    if (c) c(id);
+  }
+
+  /**
+   * 可拦截的写接口白名单 —— **从各接口模块现取的 endpoints 配置**，不写死路径。
+   * 为什么不写死：`/itamp-tool/intfcMgmt/conditions/subscribe` 是**读**接口（批次/系统下拉），
+   * 按名字含 subscribe 就拦会把页面数据源一起拦掉。
+   */
+  function writePaths() {
+    const out = [];
+    const sa = window.ServiceApi;
+    if (sa && sa.endpoints) {
+      ['subscribeAdd', 'subscribeRemove'].forEach((k) => { if (sa.endpoints[k]) out.push(sa.endpoints[k]); });
+    }
+    const ta = window.ToolApi;
+    if (ta && ta.endpoints && ta.endpoints.subscriptionReview) out.push(ta.endpoints.subscriptionReview);
+    return out;
+  }
+  const pathOf = (p) => String(p || '').split('?')[0];
+  function isWritePath(p) {
+    const t = pathOf(p);
+    return writePaths().some((w) => pathOf(w) === t);
+  }
+  function failFor(path, fail) {
+    if (!fail) return null;
+    const isReview = pathOf(path) === pathOf((window.ToolApi && window.ToolApi.endpoints || {}).subscriptionReview || '');
+    return (fail === 'review' && isReview) || (fail === 'subscribe' && !isReview) ? fail : null;
+  }
+
+  function isEnabled() { return !!MODE; }
+
+  function updateBadge() {
+    if (!MODE || !MODE.badge) return;
+    MODE.badge.textContent = `🧪 订阅预演中 · 已拦 ${MODE.count} 条写请求 · 点此关闭`;
+  }
+
+  function installBadge() {
+    if (typeof document === 'undefined' || !document.body) return;
+    const el = document.createElement('div');
+    el.id = 'dryrunBadge';
+    el.setAttribute('role', 'status');
+    el.title = '点击关闭预演模式（关闭后写请求不再被拦截）';
+    el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:3000;padding:8px 14px;'
+      + 'border-radius:999px;font:12px/1.4 var(--font-sans,system-ui,sans-serif);'
+      + 'background:#FAEEDA;color:#633806;border:1px solid #BA7517;cursor:pointer;user-select:none';
+    el.addEventListener('click', () => disable());
+    document.body.appendChild(el);
+    MODE.badge = el;
+    updateBadge();
+  }
+
+  /** 一次点击的两个报文归到一组，点击结束（600ms 无新请求）后打一份小计 */
+  function printClickSummary() {
+    if (!MODE || !MODE.group.length) return;
+    const g = MODE.group.slice();
+    MODE.group = [];
+    console.log(SUB);
+    console.log(`🧪 本次点击共拦截 ${g.length} 个写请求（未写入后端）：`);
+    g.forEach((it) => {
+      const secs = describe(it.body).sections;
+      const parts = secs.map((s) => (s.kind === 'array' ? `${s.key} ${s.count} 条`
+        : (s.kind === 'object' ? `${s.key} 非空 ${s.nonEmpty.length}/${s.count}` : `${s.key} 有值`)));
+      console.log(`   · ${it.name}  →  ${parts.join('，')}`);
+    });
+    console.log('   字段明细见上面每个请求的打印（顺序 = 报文键序，可直接与抓包逐行对照）');
+    console.log(LINE);
+  }
+
+  function printIntercepted(item, sameClick) {
+    console.log(LINE);
+    console.log(`🧪 订阅预演（DRY RUN）· 第 ${item.index} 个写请求已拦截 —— 未写入后端`);
+    console.log(`触发：前端点击${sameClick ? '（与上一个请求属同一次「确认」）' : ''}　时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`);
+    printBody(item, 1, 1);
+  }
+
+  /**
+   * 开启预演模式。
+   * @param {{fail?:'subscribe'|'review'}} [opts]
+   *        fail='subscribe' → 订阅写入返回失败（看「订阅失败」提示与本地不标记）
+   *        fail='review'    → 订阅成功但评委写入失败（看「只补交评委」的部分失败链路）
+   * @returns {{ok:boolean, paths?:string[], already?:boolean, error?:string}}
+   */
+  function enable(opts) {
+    const o = opts || {};
+    if (MODE) return { ok: true, already: true, count: MODE.count, paths: MODE.paths };
+    if (typeof window === 'undefined' || !window.API || typeof window.API.call !== 'function') {
+      console.warn('[订阅预演] window.API 未就绪，暂不能开启（等页面脚本加载完再试）');
+      return { ok: false, error: 'API 未就绪' };
+    }
+    const paths = writePaths();
+    if (!paths.length) {
+      console.warn('[订阅预演] 没有可拦截的写接口：ServiceApi / ToolApi 未加载，或端点未配置');
+      return { ok: false, error: '没有可拦截的写接口' };
+    }
+    const sm = window.SubscribeManager;
+    MODE = {
+      savedCall: window.API.call,
+      savedToast: null,
+      count: 0,
+      writes: [],
+      group: [],
+      lastAt: 0,
+      timer: null,
+      badge: null,
+      fail: o.fail || null,
+      paths,
+      startedAt: new Date(),
+      // 预演会在本地把服务标记为「已订阅」（模拟成功的一部分），先记下开启前的快照，
+      // 关闭时把这期间新增的标记撤销，避免污染真实订阅清单
+      beforeSubscribed: (sm && typeof sm.getAll === 'function') ? sm.getAll().slice() : null,
+    };
+
+    const savedCall = window.API.call;
+    window.API.call = async (path, callOpts) => {
+      // 读接口照常走真实请求；模式已关闭（在途请求收尾）也直接放行
+      if (!MODE || !isWritePath(path)) return savedCall(path, callOpts);
+      const body = callOpts && callOpts.body;
+      const item = {
+        index: ++MODE.count,
+        name: ((pathOf(path).split('/').pop()) || String(path)),
+        method: (callOpts && callOpts.method) || 'POST',
+        path: String(path || ''),
+        body,
+        query: callOpts && callOpts.query,
+      };
+      MODE.writes.push(item);
+      const sameClick = (Date.now() - MODE.lastAt) < CLICK_GAP;
+      MODE.lastAt = Date.now();
+      if (sameClick) MODE.group.push(item); else MODE.group = [item];
+      printIntercepted(item, sameClick);
+      updateBadge();
+      cancelLater(MODE.timer);
+      MODE.timer = later(printClickSummary, 600);
+      const hit = failFor(path, MODE.fail);
+      if (hit) {
+        console.log(`  ⛔ 本次按设置模拟「${hit} 写入失败」：返回 500，用于观察失败链路`);
+        return {
+          ok: false, status: 500, headers: { get: () => null },
+          json: async () => ({ code: 500, msg: `预演桩：模拟 ${hit} 写入失败` }),
+        };
+      }
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => FAKE_JSON };
+    };
+
+    // 顺手把弹窗提示镜像到控制台：被校验拦下时（不发请求）这里是唯一的证据
+    if (window.AppServices && typeof window.AppServices.toast === 'function') {
+      const origToast = window.AppServices.toast;
+      MODE.savedToast = origToast;
+      window.AppServices.toast = (msg, d, t) => {
+        try { console.log(`   💬 页面提示：${msg}`); } catch (_) { /* ignore */ }
+        return origToast(msg, d, t);
+      };
+    }
+
+    installBadge();
+    console.log(LINE);
+    console.log('🧪 订阅预演模式已开启（DRY RUN）—— 写请求会被拦截，不会写入后端');
+    console.log(`   拦截范围（取自各接口模块的 endpoints 配置）：${paths.join('、')}`);
+    console.log('   现在请照常点击页面上的「订阅」→ 弹窗里填好 → 点「确 认」；读接口照常发真实请求。');
+    console.log(`   关闭：点右下角浮标，或 SubscribeDryRun.disable()${o.fail ? `（本次模拟 ${o.fail} 写入失败）` : ''}`);
+    console.log('   注意：模拟成功也会把该服务标记为已订阅（本地）；disable() 会撤销这些标记。');
+    console.log(LINE);
+    return { ok: true, paths };
+  }
+
+  /** 关闭预演模式：还原传输层与提示、撤掉浮标、撤销预演期间新增的本地订阅标记 */
+  function disable() {
+    if (!MODE) return { ok: true, already: true };
+    const m = MODE;
+    MODE = null;
+    window.API.call = m.savedCall;
+    if (window.AppServices && m.savedToast) window.AppServices.toast = m.savedToast;
+    cancelLater(m.timer);
+    if (m.badge && m.badge.parentNode) m.badge.parentNode.removeChild(m.badge);
+
+    const reverted = [];
+    const sm = window.SubscribeManager;
+    if (sm && m.beforeSubscribed && typeof sm.getAll === 'function' && typeof sm.remove === 'function') {
+      const before = new Set(m.beforeSubscribed);
+      sm.getAll().forEach((c) => { if (!before.has(c) && sm.remove(c)) reverted.push(c); });
+    }
+    console.log(LINE);
+    console.log(`🧪 订阅预演模式已关闭 —— 本次共拦截 ${m.count} 个写请求（都未写入后端）`);
+    console.log(`   已还原传输层${m.savedToast ? '与页面提示' : ''}${reverted.length ? `；撤销本地「已订阅」标记：${reverted.join('、')}` : '；无新增的本地订阅标记需要撤销'}`);
+    console.log(LINE);
+    return { ok: true, count: m.count, reverted, writes: m.writes };
+  }
+
+  // ?dryrun=1 → 打开页面即进入预演模式（纯点击操作，不用碰控制台）
+  if (typeof window !== 'undefined' && typeof location !== 'undefined'
+    && /[?&]dryrun=1(&|$)/.test(location.search)) {
+    later(() => { try { enable(); } catch (e) { console.warn('[订阅预演] 自动开启失败：', e && e.message); } }, 0);
+  }
+
+  // ═══════════════════════════════════════════════════
   // 场景矩阵：必填缺失 / 字段为空 / 格式错误 / 顺序 / 组包
   // ═══════════════════════════════════════════════════
 
@@ -835,6 +1068,11 @@
   }
 
   window.SubscribeDryRun = Object.freeze({
+    // 点击驱动（主用法）：开启后照常点「订阅」→「确 认」，写请求被拦下并打印
+    enable,
+    disable,
+    isEnabled,
+    // 脚本驱动：预演一次 / 跑场景矩阵 / 只打印一份报文
     run,
     scenarios,
     dump,
@@ -843,6 +1081,8 @@
     isEmptyValue,
     formatValue,
     describeObject,
+    isWritePath,
+    writePaths,
     FIELD_SOURCES,
     SCENARIOS,
   });

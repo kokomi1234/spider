@@ -266,6 +266,150 @@ test('顺序无关：dryrun 先加载、依赖后加载，run 仍能工作（调
   assert.strictEqual(r.requests.length, 2);
 });
 
+// ── ④ 点击驱动的预演模式（enable / disable）────────────
+
+/** 跑一段逻辑并吞掉它的控制台输出（预演台会打印整份报文） */
+async function silence(fn) {
+  const origin = console.log;
+  const lines = [];
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  try {
+    const r = await fn();
+    return { r, lines };
+  } finally {
+    console.log = origin;
+  }
+}
+
+/** 记录「真实」API.call 被调用的次数（用来验证读接口放行、写接口不放行） */
+function withSpyCall(win) {
+  const calls = [];
+  win.API.call = async (path) => {
+    calls.push(String(path));
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 200, data: {} }) };
+  };
+  return calls;
+}
+
+test('enable：写请求被拦住（真实 call 不被调用），返回假 200 让上层继续', async () => {
+  const win = fresh();
+  const calls = withSpyCall(win);
+  const origCall = win.API.call;
+  const { r: enabled } = await silence(() => win.SubscribeDryRun.enable());
+  assert.strictEqual(enabled.ok, true);
+  assert.ok(enabled.paths.includes('/itamp-tool/publish/setSubcription'));
+
+  const { r, calls: fetchCalls } = await withoutRealFetch(async () => {
+    const res = await silence(() => win.ServiceApi.subscribeWithForm(ROW, FORM));
+    return res.r;
+  });
+
+  assert.strictEqual(fetchCalls, 0, '预演模式下不得发真实请求');
+  assert.deepStrictEqual(calls, [], '写请求不该穿透到真实 call');
+  assert.deepStrictEqual(r, { ok: true, local: false }, '要返回成功，弹窗才会继续走评委与本地标记');
+
+  const off = await silence(() => win.SubscribeDryRun.disable());
+  assert.strictEqual(off.r.count, 1, '应记录到 1 个被拦截的写请求');
+  assert.strictEqual(win.API.call, origCall, 'disable 必须还原 API.call');
+  assert.strictEqual(win.SubscribeDryRun.isEnabled(), false);
+});
+
+test('enable：读接口照常放行（含名字里带 subscribe 的读接口 —— 关键回归）', async () => {
+  const win = fresh();
+  const calls = withSpyCall(win);
+  await silence(() => win.SubscribeDryRun.enable());
+
+  await silence(() => win.API.call('/itamp-tool/publish/getPublishDataList', { method: 'POST', body: {} }));
+  await silence(() => win.API.call('/itamp-tool/intfcMgmt/conditions/subscribe', { method: 'POST', body: {} }));
+
+  assert.deepStrictEqual(calls, [
+    '/itamp-tool/publish/getPublishDataList',
+    '/itamp-tool/intfcMgmt/conditions/subscribe',
+  ], '读接口必须原样透传（conditions/subscribe 是批次/系统下拉的数据源，拦了页面就空了）');
+  assert.strictEqual(win.SubscribeDryRun.isWritePath('/itamp-tool/intfcMgmt/conditions/subscribe'), false);
+  assert.strictEqual(win.SubscribeDryRun.isWritePath('/itamp-tool/publish/setSubcription'), true);
+  assert.strictEqual(win.SubscribeDryRun.isWritePath('/itamp-tool/publish/subscriptionReview?n=1'), true);
+  await silence(() => win.SubscribeDryRun.disable());
+});
+
+test('enable：幂等；disable：还原提示包装并撤销预演期间新增的本地订阅标记', async () => {
+  const win = fresh();
+  // 假订阅管理器：记录 getAll / remove
+  const services = ['EXISTING-1'];
+  const removed = [];
+  win.SubscribeManager = {
+    getAll: () => services.slice(),
+    remove: (c) => { removed.push(c); return true; },
+  };
+  const origToast = () => 'orig';
+  win.AppServices = { toast: origToast };
+
+  await silence(() => win.SubscribeDryRun.enable());
+  const again = await silence(() => win.SubscribeDryRun.enable());
+  assert.strictEqual(again.r.already, true, '重复 enable 应当幂等');
+  assert.notStrictEqual(win.AppServices.toast, origToast, '开启后应镜像页面提示到控制台');
+
+  services.push('NEW-FAKE-1');           // 模拟「预演订阅成功」写进本地清单
+  const off = await silence(() => win.SubscribeDryRun.disable());
+  assert.deepStrictEqual(off.r.reverted, ['NEW-FAKE-1'], '预演新增的本地标记要撤销');
+  assert.deepStrictEqual(removed, ['NEW-FAKE-1']);
+  assert.strictEqual(win.AppServices.toast, origToast, '提示包装要还原');
+  const off2 = await silence(() => win.SubscribeDryRun.disable());
+  assert.strictEqual(off2.r.already, true, '重复 disable 应当幂等');
+});
+
+test('enable({fail})：分别模拟「订阅失败」与「评委失败」，返回形状要能让失败链路走通', async () => {
+  const win = fresh();
+  withSpyCall(win);
+  await silence(() => win.SubscribeDryRun.enable({ fail: 'review' }));
+
+  const { r } = await silence(() => win.ServiceApi.subscribeWithForm(ROW, FORM));
+  assert.strictEqual(r.ok, true, '订阅本身应成功');
+
+  const review = await silence(() => win.ToolApi.submitSubscriptionReview({
+    publishId: 'PUB-1', prodSysServeNoList: ['E00406TO1197'], judgeInfoList: [],
+  }));
+  assert.strictEqual(review.r.ok, false, '评委写入按设置失败 → 上层走「部分失败：只补交评委」');
+  await silence(() => win.SubscribeDryRun.disable());
+
+  const win2 = fresh();
+  withSpyCall(win2);
+  await silence(() => win2.SubscribeDryRun.enable({ fail: 'subscribe' }));
+  const sub = await silence(() => win2.ServiceApi.subscribeWithForm(ROW, FORM));
+  assert.strictEqual(sub.r.ok, false, '订阅写入按设置失败 → 上层提示「订阅失败」');
+  await silence(() => win2.SubscribeDryRun.disable());
+});
+
+test('enable：一次点击的两个报文会归成一组（间隔小于阈值）', async () => {
+  const win = fresh();
+  withSpyCall(win);
+  await silence(() => win.SubscribeDryRun.enable());
+  const { lines } = await silence(async () => {
+    await win.ServiceApi.subscribeWithForm(ROW, FORM);
+    await win.ToolApi.submitSubscriptionReview({
+      publishId: 'PUB-1',
+      prodSysServeNoList: ['E00406TO1197'],
+      judgeInfoList: win.SubscribeModel.toJudgeInfoList(JUDGES()),
+    });
+  });
+  const joined = lines.join('\n');
+  assert.ok(/第 1 个写请求已拦截/.test(joined), '第一个请求要有拦截横幅');
+  assert.ok(/第 2 个写请求已拦截/.test(joined));
+  assert.ok(/与上一个请求属同一次「确认」/.test(joined), '第二次应被识别为同一次点击');
+  await silence(() => win.SubscribeDryRun.disable());
+});
+
+test('enable：API 未就绪 / 无可拦写接口时给出明确失败，不半途留下钩子', async () => {
+  const win = { toast: () => {}, __APP_CONFIG__: undefined };
+  loadScript('js/ui/subscribe-dryrun.js', {}, win);   // 只加载 dryrun：没有 API / ServiceApi
+  const { r } = await silence(() => win.SubscribeDryRun.enable());
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(win.SubscribeDryRun.isEnabled(), false, '失败时不应进入已开启状态');
+  assert.strictEqual(win.API, undefined);
+});
+
+
+
 // ── ③ 场景矩阵 ─────────────────────────────────────────
 
 test('scenarios：内置场景全部符合预期，且覆盖必填缺失/字段为空/格式错误/顺序/组包', async () => {

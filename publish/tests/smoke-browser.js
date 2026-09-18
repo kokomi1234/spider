@@ -1565,6 +1565,94 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 点击驱动的订阅预演（?dryrun=1 → 点「确 认」不写入）
+  // ═══════════════════════════════════════════════════════════════
+  // 用户的实际用法：打开页面（带 ?dryrun=1）→ 点订阅 → 弹窗填表 → **点「确 认」**，
+  // 请求被拦下并打印。这里从浏览器层验证整条点击链路，并确认没有真实写入泄漏。
+  {
+    const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    const fails = [];
+    const leaked = [];
+    const logs = [];
+    try {
+      page.on('request', (r) => {
+        if (/setSubcription|subscriptionReview/i.test(r.url())) leaked.push(r.url());
+      });
+      page.on('console', (m) => { logs.push(m.text()); });
+      await page.goto(base + 'index.html?dryrun=1', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+      const dc = await page.evaluate(async () => {
+        const out = { enabled: window.SubscribeDryRun.isEnabled() };
+        const badge = () => document.getElementById('dryrunBadge');
+        out.badgeAtStart = badge() ? badge().textContent : null;
+        out.subscribedBefore = window.SubscribeManager.getAll();
+
+        await window.SubscribeDialog.open({
+          id: 'PUB-SMOKE-CLICK', publishId: 'PUB-SMOKE-CLICK', serverCoding: 'E00301TO1197',
+          sysServeNo: 'E00301TO1197', provideComponentName: '冒烟组件', provideSystemNumber: 'E00301',
+          assemblyNo: 'E00301', prodBatch: '2611批次', serverNo: 'M-202607-11289',
+        });
+        await new Promise((r) => setTimeout(r, 250));
+        const csBox = document.querySelector('#sub_callerSystem').parentElement.querySelector('.searchable-select-input');
+        csBox.value = 'E00406';
+        csBox.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('sub_relDocIds').value = 'doc-smoke-click';
+        document.getElementById('sub_tpsPeak').value = '5';
+        document.getElementById('sub_taskNo').value = 'T-SMOKE-1';
+        const tr = document.querySelector('#judgeTableBody tr.judge-row');
+        tr.querySelector('.judge-name').value = '冒烟评委';
+        tr._judgeDeptId = 'K4229';
+        await new Promise((r) => setTimeout(r, 120));
+
+        document.getElementById('btnSubConfirm').click();     // ← 真实点击，不是调函数
+        await new Promise((r) => setTimeout(r, 900));
+        out.dialogClosed = !document.getElementById('subscribeOverlay').classList.contains('show');
+        out.subscribedAfterClick = window.SubscribeManager.getAll();
+        out.badgeAfterClick = badge() ? badge().textContent : null;
+
+        const off = window.SubscribeDryRun.disable();
+        out.offCount = off.count;
+        out.offReverted = off.reverted;
+        out.badgeGone = !badge();
+        out.apiRestored = typeof window.API.call === 'function';
+        out.subscribedAfterOff = window.SubscribeManager.getAll();
+        return out;
+      });
+      const joined = logs.join('\n');
+      process.stdout.write(`  点击驱动预演: ${JSON.stringify(dc)} 真实写请求泄漏: ${leaked.length}\n`);
+      if (dc.enabled !== true) fails.push('?dryrun=1 应自动开启预演模式');
+      if (!/已拦 0 条写请求/.test(String(dc.badgeAtStart))) {
+        fails.push(`开启后应出现右下角浮标，实际 ${dc.badgeAtStart}`);
+      }
+      if (!/第 1 个写请求已拦截/.test(joined) || !/第 2 个写请求已拦截/.test(joined)) {
+        fails.push('点「确 认」应打印两个被拦截的写请求（订阅 + 评委）');
+      }
+      if (!/subscriptionReview/.test(joined)) fails.push('评委报文也应被拦截并打印');
+      if (!/本次点击共拦截 2 个写请求/.test(joined)) fails.push('缺少「本次点击」小计');
+      if (!/已拦 2 条写请求/.test(String(dc.badgeAfterClick))) {
+        fails.push(`浮标计数应更新为 2，实际 ${dc.badgeAfterClick}`);
+      }
+      if (dc.dialogClosed !== true) fails.push('预演下订阅应像真成功一样关闭弹窗');
+      if (!Array.isArray(dc.subscribedAfterClick) || !dc.subscribedAfterClick.includes('E00301TO1197')) {
+        fails.push(`预演成功应在本地标记已订阅，实际 ${JSON.stringify(dc.subscribedAfterClick)}`);
+      }
+      if (dc.offCount !== 2) fails.push(`disable 应报告拦截数为 2，实际 ${dc.offCount}`);
+      if (!Array.isArray(dc.offReverted) || !dc.offReverted.includes('E00301TO1197')) {
+        fails.push(`disable 应撤销预演产生的本地标记，实际 ${JSON.stringify(dc.offReverted)}`);
+      }
+      if (dc.subscribedAfterOff.includes('E00301TO1197')) fails.push('撤销后本地清单不应还留着预演标记');
+      if (dc.badgeGone !== true) fails.push('关闭后浮标应移除');
+      if (dc.apiRestored !== true) fails.push('关闭后 API.call 必须可用');
+      if (leaked.length) fails.push(`预演模式漏出了真实写请求：${leaked.join(' | ')}`);
+    } catch (e) {
+      fails.push(`点击驱动预演段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 分页栏：居中 + 页码命中区 / 选中态（2026-09-16 调整的回归保护）
   // ═══════════════════════════════════════════════════════════════
   // 页码的坑是「点错相邻页」：原来按钮 32×32、间距 4px、当前页只靠底色区分，
