@@ -52,10 +52,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// .env 位置：默认就在代理脚本同级（publish/.env，与 ONBOARDING.md / .env.example 一致）。
-// 若部署时把 publish 拷到别的目录导致路径嵌套异常（例如出现 spider/spider/...），
-// 可用 PROXY_ENV_PATH 显式指到正确的 .env；前端「写入位置」也会跟着变化。
-const envPath = process.env.PROXY_ENV_PATH || path.join(__dirname, '.env');
+// .env 位置：**项目根目录**（publish/ 的上一级，即 spider/.env）。
+// 2026-09-18 已从 publish/.env 迁出两件事一起做的：① 凭证不留在可部署的 publish/ 里，
+// 免得随前端一起被拷走；② 相对脚本解析，不依赖 cwd（从哪个目录启动都不会错位）。
+// 仍可用 PROXY_ENV_PATH 显式指定；前端「Token 管理」的写入位置也跟着这个值走。
+const envPath = process.env.PROXY_ENV_PATH || path.join(__dirname, '..', '.env');
 
 const PORT = process.env.PROXY_PORT || 3000;
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
