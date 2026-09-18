@@ -676,7 +676,9 @@ const server = http.createServer((req, res) => {
   }
 
   // Token 管理端点：页面上更改 token，支持覆盖 .env 或仅当次有效
+  // 鉴权与 /cache/* 一致：设了 PROXY_ADMIN_TOKEN 才要求 ?token=（默认不设=不鉴权，方便本地开发）
   if (cachePath === '/admin/token') {
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     const bufs = [];
     req.on('data', (c) => bufs.push(c));
     req.on('end', () => {
@@ -689,6 +691,7 @@ const server = http.createServer((req, res) => {
           return;
         }
         // 立即生效
+        const prevToken = TOKEN_REFRESHED;
         process.env.PROXY_TOKEN = token;
         TOKEN_REFRESHED = token;
         console.log(`   🔑 Token 已更新${saveToEnv ? ' 并写入 .env' : '（仅当次有效）'}`);
@@ -708,6 +711,10 @@ const server = http.createServer((req, res) => {
             if (!found) lines.unshift(`PROXY_TOKEN=${token}`);
             fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
           } catch (e) {
+            // 写盘失败就把运行时回滚：否则会出现「页面提示失败、代理其实已经换了 token」
+            // 的不一致状态，用户以为没生效，实际请求已经在用新 token。
+            process.env.PROXY_TOKEN = prevToken;
+            TOKEN_REFRESHED = prevToken;
             sendJson(res, 500, { code: 500, msg: '写入 .env 失败: ' + e.message });
             return;
           }
@@ -721,8 +728,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 获取当前 token 状态
+  // 获取当前 token 状态（同 /admin/token，设了 PROXY_ADMIN_TOKEN 才鉴权）
   if (cachePath === '/admin/token/status') {
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     sendJson(res, 200, {
       code: 200,
       hasToken: !!TOKEN_REFRESHED,
