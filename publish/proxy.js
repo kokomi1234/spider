@@ -52,47 +52,74 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// 自动加载 .env 文件（无需手动传环境变量）
 const envPath = path.join(__dirname, '.env');
-if (fs.existsSync(envPath)) {
+
+const PORT = process.env.PROXY_PORT || 3000;
+const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
+const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
+
+// ── .env 热更新 ───────────────────────────────────────────────
+function loadEnv() {
+  if (!fs.existsSync(envPath)) return {};
+  const vars = {};
   fs.readFileSync(envPath, 'utf-8').split('\n').forEach(line => {
     line = line.trim();
     if (line && !line.startsWith('#')) {
       const [key, ...rest] = line.split('=');
       const value = rest.join('=').trim();
-      // 与 dotenv 惯例一致：已存在的环境变量优先，.env 只做兜底。
-      // 否则 `PROXY_TOKEN=xxx node proxy.js` 这种临时覆盖会被 .env 静默改回去。
-      if (key && value !== undefined && !(key in process.env)) {
-        process.env[key] = value;
+      if (key && value !== undefined) {
+        // 首次加载时不覆盖（命令行传参优先），热更新时强制覆盖
+        if (FIRST_LOAD && !(key in process.env)) process.env[key] = value;
+        if (!FIRST_LOAD) process.env[key] = value;
+        vars[key] = value;
       }
     }
   });
+  return vars;
 }
 
-const PORT = process.env.PROXY_PORT || 3000;
-const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
-const TOKEN = process.env.PROXY_TOKEN;
+function refreshConfig() {
+  loadEnv();
+  TOKEN_REFRESHED = process.env.PROXY_TOKEN || '';
+  for (const [name, envKey] of [
+    ['systemId', 'PROXY_SYSTEM_ID'],
+    ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
+    ['authMethods', 'PROXY_AUTH_METHODS'],
+    ['Cookie', 'PROXY_COOKIE'],
+  ]) {
+    const v = (process.env[envKey] || '').trim();
+    if (v) EXTRA_HEADERS[name] = v;
+    else delete EXTRA_HEADERS[name];
+  }
+  OFFLINE_REFRESHED = process.env.PROXY_OFFLINE === '1';
+  console.log(`   🔄 已重新加载 .env：token=${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(空)'} headers=[${Object.keys(EXTRA_HEADERS).join(', ')}] offline=${OFFLINE_REFRESHED}`);
+}
 
-// 转发超时（毫秒）。不设的话目标不可路由（黑洞 IP）时请求会一直挂着，
-// 直到 OS 层超时（实测 10s 仍无响应，实际可达数分钟），连接持续堆积。
-// 内网大查询较慢，默认给 20s；个别慢接口用 PROXY_TIMEOUT 调大。
-const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
-
-// 后端要求的公共请求头。抓包里浏览器会话带了这些，但代理转发时浏览器
-// 不会自动带上（跨域自定义头），必须在这里补。
-// ⚠️ 留空就不注入，绝不臆造值 —— ssopSessionId 是会话级的，需要真实登录后取。
+// 后端要求的公共请求头（启动时初始化，refreshConfig 会更新）
 const EXTRA_HEADERS = {};
-for (const [name, envKey] of [
-  ['systemId', 'PROXY_SYSTEM_ID'],
-  ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
-  ['authMethods', 'PROXY_AUTH_METHODS'],
-  ['Cookie', 'PROXY_COOKIE'],
-]) {
-  const v = (process.env[envKey] || '').trim();
-  if (v) EXTRA_HEADERS[name] = v;
-}
 
-const OFFLINE = process.env.PROXY_OFFLINE === '1';   // 纯离线回放
+let TOKEN_REFRESHED = '';
+let OFFLINE_REFRESHED = false;
+let FIRST_LOAD = true;
+
+// 启动时先加载一次 .env
+refreshConfig();
+FIRST_LOAD = false;
+
+// ── .env 文件监听（保存即自动热更新）──────────────────────
+let lastEnvStat = null;
+try { lastEnvStat = fs.statSync(envPath); } catch (_) {}
+const ENV_POLL_MS = 1500; // 1.5 秒轮询一次，够用且低开销
+(function pollEnv() {
+  try {
+    const stat = fs.statSync(envPath);
+    if (!lastEnvStat || stat.mtimeMs !== lastEnvStat.mtimeMs) {
+      lastEnvStat = stat;
+      refreshConfig();
+    }
+  } catch (_) { /* .env 被删除时忽略 */ }
+  setTimeout(pollEnv, ENV_POLL_MS);
+})();
 
 // ── API 内存缓存（读接口加速）─────────────────────────────────
 // conditions/subscribe 后端要 3~4s（93KB），而每次刷新页面都要拉一次
@@ -469,7 +496,7 @@ function forward(req, res, bodyBuf, key, meta) {
   // ⚠️ 必须在配了 token 时才写这个头。写成 undefined 时 http.request 会同步抛
   // ERR_HTTP_INVALID_HEADER_VALUE，异常被 uncaughtException 吞掉后响应永远不会发出，
   // 客户端只能一直转圈（实测 6s 无响应）。token 约 12 小时过期，这个坑迟早踩到。
-  if (TOKEN) fwdHeaders['token'] = TOKEN;
+  if (TOKEN_REFRESHED) fwdHeaders['token'] = TOKEN_REFRESHED;
   Object.assign(fwdHeaders, EXTRA_HEADERS);    // systemId / ssopSessionId / authMethods
   fwdHeaders['Accept-Encoding'] = 'identity'; // 不压缩，便于调试与录制
   if (!fwdHeaders['content-type']) fwdHeaders['content-type'] = 'application/json';
@@ -592,7 +619,7 @@ const server = http.createServer((req, res) => {
       code: 200,
       msg: 'proxy ok',
       target: TARGET,
-      offline: OFFLINE,
+      offline: OFFLINE_REFRESHED,
       record: RECORD,
       cacheDir: CACHE_DIR,
       cacheCount: Object.keys(readIndex()).length,
@@ -638,6 +665,70 @@ const server = http.createServer((req, res) => {
     } catch (e) {
       sendJson(res, 500, { code: 500, msg: '清空失败: ' + e.message });
     }
+    return;
+  }
+
+  // .env 热更新：修改 token / OFFLINE 等配置后无需重启
+  if (cachePath === '/reload') {
+    refreshConfig();
+    sendJson(res, 200, { code: 200, msg: 'reloaded', env: loadEnv() });
+    return;
+  }
+
+  // Token 管理端点：页面上更改 token，支持覆盖 .env 或仅当次有效
+  if (cachePath === '/admin/token') {
+    const bufs = [];
+    req.on('data', (c) => bufs.push(c));
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(bufs).toString('utf8');
+        if (text.length > 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
+        const { token, saveToEnv } = JSON.parse(text);
+        if (!token || typeof token !== 'string') {
+          sendJson(res, 400, { code: 400, msg: '缺少 token 字段' });
+          return;
+        }
+        // 立即生效
+        process.env.PROXY_TOKEN = token;
+        TOKEN_REFRESHED = token;
+        console.log(`   🔑 Token 已更新${saveToEnv ? ' 并写入 .env' : '（仅当次有效）'}`);
+        // 可选：覆盖 .env 文件
+        if (saveToEnv) {
+          try {
+            let content = fs.readFileSync(envPath, 'utf-8');
+            const lines = content.split('\n');
+            let found = false;
+            for (let i = 0; i < lines.length; i++) {
+              if (lines[i].trim().startsWith('PROXY_TOKEN=')) {
+                lines[i] = `PROXY_TOKEN=${token}`;
+                found = true;
+                break;
+              }
+            }
+            if (!found) lines.unshift(`PROXY_TOKEN=${token}`);
+            fs.writeFileSync(envPath, lines.join('\n'), 'utf-8');
+          } catch (e) {
+            sendJson(res, 500, { code: 500, msg: '写入 .env 失败: ' + e.message });
+            return;
+          }
+        }
+        sendJson(res, 200, { code: 200, msg: 'token updated', saved: !!saveToEnv });
+      } catch (e) {
+        sendJson(res, 400, { code: 400, msg: '解析失败: ' + e.message });
+      }
+    });
+    req.on('error', (e) => sendJson(res, 400, { code: 400, msg: '读取请求体失败: ' + e.message }));
+    return;
+  }
+
+  // 获取当前 token 状态
+  if (cachePath === '/admin/token/status') {
+    sendJson(res, 200, {
+      code: 200,
+      hasToken: !!TOKEN_REFRESHED,
+      tokenPreview: TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)',
+      envPath: envPath,
+    });
     return;
   }
 
@@ -715,7 +806,7 @@ function handle(req, res, bodyBuf) {
   if (isApiWritePath(req.url)) invalidateApiCache('写接口 ' + pathOf(req.url));
 
   // 纯离线模式：只读本地缓存，完全不访问网络
-  if (OFFLINE) {
+  if (OFFLINE_REFRESHED) {
     const hit = readCache(key);
     if (hit) {
       if (isApiCachePath(req.url)) storeApiCache(key, hit);   // 下一回同参数直接走内存缓存
@@ -776,23 +867,21 @@ server.listen(PORT, () => {
   console.log(`\n✅ 服务器运行在 http://localhost:${PORT}`);
   console.log(`   📄 静态文件：从 ${__dirname} 提供（HTML/JS/CSS 等）`);
   console.log(`   🔀 API 代理：→ ${TARGET}`);
-  console.log(`   模式：${OFFLINE ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
+  console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);
+  console.log(`   模式：${OFFLINE_REFRESHED ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
   console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
-  console.log(`   API 内存缓存：${API_CACHE_TTL ? `开启（TTL ${API_CACHE_TTL}ms，${API_CACHE_PATHS.join('、')}）` : '关闭（PROXY_API_CACHE_TTL=0）'}`);
   console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
-  if (!OFFLINE) {
+  if (!OFFLINE_REFRESHED) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
-    console.log(`   附加请求头：${Object.keys(EXTRA_HEADERS).length ? Object.keys(EXTRA_HEADERS).join(', ') : '（未配置）'}`);
-    if (!TOKEN) {
+    if (!TOKEN_REFRESHED) {
       console.log(`   ⚠️  未配置 PROXY_TOKEN：转发时不会带 token 头，后端大概率 401。` +
                   `请在 .env 里补上（后端 token 约 12 小时过期）`);
-    }
-    if (!Object.keys(EXTRA_HEADERS).length) {
-      console.log(`   ⚠️  未配置 systemId / ssopSessionId / authMethods：抓包显示后端需要这几个头，` +
-                  `缺失可能导致 401。用 PROXY_SYSTEM_ID / PROXY_SSOP_SESSION_ID / PROXY_AUTH_METHODS 配置`);
     }
   }
   console.log(`   健康检查：http://localhost:${PORT}/health`);
   console.log(`   缓存列表：http://localhost:${PORT}/cache/list`);
-  console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面\n`);
+  console.log(`   热更新 .env：修改后自动生效（约 1.5 秒），也可 curl http://localhost:${PORT}/reload 立即生效`);
+  console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面`);
+  console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/index.html?dryrun=1`);
+  console.log(`     拦截写请求、打印完整报文，不产生任何真实写入。说明见 docs/订阅预演台使用说明.md\n`);
 });

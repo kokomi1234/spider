@@ -626,6 +626,9 @@
   // ── 初始化页面状态（网络检测等） ────────────────
   initPageState();
 
+  // Token 管理浮窗
+  if (window.TokenManager) TokenManager.init();
+
   window.addEventListener('storage', (e) => {
     if (e.key === SUBSCRIBE_STORAGE_KEY) {
       PublishView.updateSubscribePanelCount();
