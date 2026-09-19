@@ -299,7 +299,9 @@
     if (replayLoose && (dropped > 0 || droppedDup > 0))
       return '本地代理回放的是旧录制数据，与当前查询条件不符，已被前端过滤。请连内网用当前条件重新请求一次以重新录制';
     if (dropped > 0 || droppedDup > 0)
-      return '本页数据均不满足筛选条件（部分条件后端未支持，已由前端过滤）';
+      // 口径（2026-09-19 核）：这些条件作用在**已拉全并去重**的数据上，之后才前端分页，
+      // 所以不是「本页」被筛掉 —— 写「本页」会让人以为是分页问题、反复翻页。
+      return '已加载的数据里没有满足筛选条件的记录（部分条件后端未支持，由前端在全量结果上过滤）';
     return '未找到匹配的数据，请尝试调整筛选条件';
   }
 
@@ -310,7 +312,7 @@
    */
   function droppedFilterHint(localConds, dropped) {
     const names = (localConds || []).map((c) => c.label).filter(Boolean).join('、');
-    return `ℹ️ 本页过滤掉 ${dropped} 条不满足「${names}」的数据（后端未支持该字段）`;
+    return `ℹ️ 过滤掉 ${dropped} 条不满足「${names}」的数据（后端未支持该字段，在前端按全量结果筛）`;
   }
 
   /**

@@ -8,8 +8,8 @@
  * 顺序、归属文案是否符合预期。
  *
  * 用法：
- *   node tests/dept-topn-probe.js
- *   PROBE_KEEP=1 node tests/dept-topn-probe.js    # 出错时保留浏览器现场（不自动关）
+ *   node tests/probes/dept-topn-probe.js
+ *   PROBE_KEEP=1 node tests/probes/dept-topn-probe.js    # 出错时保留浏览器现场（不自动关）
  *
  * 与其它测试的关系：
  *   tests/run.js            —— 零依赖单测（ SavedQuery.listByDept 的纯函数层）
@@ -21,9 +21,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
-const { chromium } = require('../vendor/playwright-core');
+const { chromium } = require('../../vendor/playwright-core');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '..', '..');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 
 function startServer() {

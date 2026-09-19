@@ -234,7 +234,7 @@ test('doQuery：前端兜底过滤生效并提示被丢掉的条数', async () =
   await t.Q.doQuery({ focusMissing: false });
 
   assert.strictEqual(t.state.rawRows.length, 225);
-  assert.ok(toastOf(t, '本页过滤掉 225 条'), '应提示兜底过滤丢了多少条');
+  assert.ok(toastOf(t, '过滤掉 225 条'), '应提示兜底过滤丢了多少条');
 });
 
 test('doQuery：空结果 → 空态渲染 + state 复位 + 关掉 loading', async () => {

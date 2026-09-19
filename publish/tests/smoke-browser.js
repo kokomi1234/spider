@@ -60,7 +60,7 @@ const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition'] },
-  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery'] },
+  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
   { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition'] },
@@ -289,7 +289,84 @@ const PAGES = [
         }
       }
 
+      // 无障碍：组件内部那个真正能聚焦的框，必须能被读屏念出字段名。
+      // 页面上的 label[for] 指的是被隐藏的宿主，名字传不过来（2026-09-19 普查的结论），
+      // 所以组件把宿主那侧的文案写成 aria-label —— 这条守住「别退回静默无名」。
+      // 注：这里弹窗还没打开、评委行还不存在，弹窗内那部分另见「空态/防重复提交」段的 ④。
+      if (pg.file !== 'index.html') {
+        const a11yCheck = await page.evaluate(() => {
+          const boxes = Array.from(document.querySelectorAll('.searchable-select-input, .msel-display'));
+          const nameless = boxes.filter((el) => !(el.getAttribute('aria-label') || '').trim()).map((el) => {
+            const g = el.closest('.form-group,.sub-row,.doc-filter-item,.field,.filter-item');
+            const l = g && g.querySelector ? g.querySelector('label') : null;
+            const host = el.parentElement && el.parentElement.querySelector('select,input[type=hidden]');
+            return (l ? l.textContent.replace(/\s+/g, ' ').trim() : '')
+              || (host && host.id) || el.className;
+          });
+          return { total: boxes.length, nameless };
+        });
+        process.stdout.write(`  可访问名称: ${a11yCheck.total - a11yCheck.nameless.length}/${a11yCheck.total} 个控件有名，无名=${JSON.stringify(a11yCheck.nameless)}\n`);
+        if (a11yCheck.total && a11yCheck.nameless.length) {
+          process.stdout.write(`    [FAIL] 这些可聚焦框读屏念不出字段名：${JSON.stringify(a11yCheck.nameless)}\n`);
+          anyFail = true;
+        }
+      }
+
       if (pg.file === 'index.html') {
+        // 同步状态角标：同步本来是静默的，用户必须能看出当前看的是团队库还是只有本机。
+        // 冒烟不连真代理，直接把存储层的状态换掉，验「状态 → 文案 / 类名 / title」这条 DOM 契约。
+        const syncCheck = await page.evaluate(async () => {
+          const el = document.querySelector('#savedSync');
+          if (!el) return { err: '缺少 #savedSync' };
+          if (!window.HomePage || typeof window.HomePage.renderSync !== 'function') return { err: 'HomePage.renderSync 缺失' };
+          const real = window.SavedQuery.lastSyncState;
+          const snap = {};
+          const probe = (state) => {
+            window.SavedQuery.lastSyncState = () => ({
+              state, total: 7, file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 2,
+              error: state === 'fail' ? '同步失败：HTTP 500' : '', at: Date.now(),
+            });
+            window.HomePage.renderSync();
+            snap[state] = { text: el.textContent, cls: el.className, title: el.title || '' };
+          };
+          try {
+            ['shared', 'local', 'fail'].forEach(probe);
+            window.SavedQuery.lastSyncState = () => ({ state: 'pending', at: 0 });
+            window.HomePage.renderSync();
+            snap.pendingHidden = !!el.hidden;
+          } finally {
+            window.SavedQuery.lastSyncState = real;
+            window.HomePage.renderSync();
+          }
+          // 上面三条只验「翻译层」。这里再走**真接线**：真调一次代理端点
+          // （冒烟的静态服务器没有这个端点 → 404 → 应落成「仅本机」），
+          // 少了这一步，把 onSyncStateChange 改名也照样全绿。
+          try {
+            const r = await window.SavedQuery.pushToServer();
+            snap.wired = {
+              ok: !!(r && r.ok), state: window.SavedQuery.lastSyncState().state,
+              hidden: !!el.hidden, text: el.textContent, cls: el.className,
+            };
+          } catch (e) {
+            snap.wired = { err: String(e && e.message || e) };
+          }
+          return snap;
+        });
+        process.stdout.write(`  同步角标: ${JSON.stringify(syncCheck)}\n`);
+        const syncOk = !syncCheck.err
+          && /已同步 7 条/.test(syncCheck.shared.text) && /is-shared/.test(syncCheck.shared.cls)
+          && /saved-queries\.db/.test(syncCheck.shared.title)
+          && /仅本机/.test(syncCheck.local.text) && /is-local/.test(syncCheck.local.cls)
+          && /同步失败/.test(syncCheck.fail.text) && /HTTP 500/.test(syncCheck.fail.title)
+          && syncCheck.pendingHidden === true
+          && syncCheck.wired && syncCheck.wired.ok === false
+          && syncCheck.wired.state === 'local'
+          && syncCheck.wired.hidden === false && /仅本机/.test(syncCheck.wired.text);
+        if (!syncOk) {
+          process.stdout.write(`    [FAIL] 同步状态角标异常：${JSON.stringify(syncCheck)}\n`);
+          anyFail = true;
+        }
+
         // 当前用户 + 部门常用查询（本机口径）。
         // 用一个假的 UserApi 顶掉真接口（冒烟没有后端），验完整链路：
         // 填姓名 → 查到人 → 落到 localStorage → 保存的查询带上归属 → 部门区出现排行。
@@ -1238,6 +1315,99 @@ const PAGES = [
       }
 
       if (pg.file === 'task.html') {
+        // 导出：点一次要真的按页拉取、报进度、最后落文件；再点一次要能取消。
+        // ⚠️ 这条是 2026-09-19 补的：当时 548 条单测全绿，但 exportCsv 里调了一个
+        // 本文件不存在的 renderCount()，一点就 ReferenceError、按钮永久卡在「取消导出」
+        // —— 页面脚本没有 node 侧假 DOM 可测，**只有真浏览器点一下才暴出来**。
+        const exportCheck = await page.evaluate(async () => {
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const btn = document.querySelector('#btnExportCsv');
+          const rc = document.querySelector('#resultCount');
+          if (!btn || !rc) return { err: '缺少 #btnExportCsv 或 #resultCount' };
+          const realE = window.CsvExporter;
+          const realFetch = window.TaskApi.fetchTaskList;
+          const realToast = window.toast;
+          const toasts = [];
+          let downloads = 0;
+          window.CsvExporter = {
+            fetchAllPages: realE.fetchAllPages,
+            download: () => { downloads += 1; },
+          };
+          window.toast = (m) => { toasts.push(String(m)); };
+          try {
+            // 导出要求「先查询过」，所以先桩好按页取数、点一次查询把 state 喂起来。
+            // 桩按调用方要的 pageSize 给行：查询页给 10 条、导出页给 500 条，total 恒 1200
+            // → 导出应当正好发 3 次请求。
+            let calls = 0;
+            window.TaskApi.fetchTaskList = async (cond, p, size) => {
+              calls += 1;
+              await sleep(40);
+              const n = Number(size) > 0 ? Number(size) : 10;
+              return { ok: true, total: 1200, rows: Array.from({ length: n }, (_, i) => ({ serverNo: `p${p}-${i}` })) };
+            };
+            const q = document.querySelector('#btnQuery');
+            if (!q) return { err: '缺少 #btnQuery' };
+            q.click();
+            for (let i = 0; i < 40 && !/1,?200/.test(rc.textContent); i++) await sleep(25);
+            const queryCalls = calls;
+            calls = 0;
+
+            btn.click();
+            let sawProgress = false;
+            for (let i = 0; i < 30; i++) {
+              await sleep(20);
+              if (/导出中/.test(rc.textContent)) sawProgress = true;
+            }
+            const done = {
+              queryCalls, sawProgress, exportCalls: calls, downloads,
+              toast: toasts.join(' | '), btnText: btn.textContent.trim(),
+            };
+
+            // 取消路径：再点一次应当中止、不落文件、提示是「取消」而不是「失败」
+            toasts.length = 0;
+            calls = 0;
+            downloads = 0;
+            window.TaskApi.fetchTaskList = async (cond, p, size) => {
+              calls += 1;
+              await sleep(80);            // 慢到足够让我们在半路点取消
+              const n = Number(size) > 0 ? Number(size) : 10;
+              return { ok: true, total: 5000, rows: Array.from({ length: n }, (_, i) => ({ serverNo: `c${p}-${i}` })) };
+            };
+            btn.click();
+            await sleep(120);              // 第一页在途
+            btn.click();                   // 再点一次 = 取消
+            await sleep(150);
+            const cancelled = {
+              toast: toasts.join(' | '), calls, downloads,
+              btnText: btn.textContent.trim(),
+              stillCounting: /导出中/.test(rc.textContent),
+            };
+            return { ok: true, done, cancelled };
+          } finally {
+            window.CsvExporter = realE;
+            window.TaskApi.fetchTaskList = realFetch;
+            window.toast = realToast;
+          }
+        });
+        process.stdout.write(`  导出 CSV: ${JSON.stringify(exportCheck)}\n`);
+        const exportOk = !exportCheck.err
+          && exportCheck.done.queryCalls >= 1
+          && exportCheck.done.sawProgress === true
+          && exportCheck.done.exportCalls === 3
+          && exportCheck.done.downloads === 1
+          && /已导出 1200 条/.test(exportCheck.done.toast)
+          && exportCheck.done.btnText !== '取消导出'
+          && /已取消导出/.test(exportCheck.cancelled.toast)
+          && !/导出失败/.test(exportCheck.cancelled.toast)
+          && exportCheck.cancelled.downloads === 0
+          && exportCheck.cancelled.calls <= 2
+          && exportCheck.cancelled.btnText !== '取消导出'
+          && exportCheck.cancelled.stillCounting === false;
+        if (!exportOk) {
+          process.stdout.write(`    [FAIL] 导出进度/取消异常：${JSON.stringify(exportCheck)}\n`);
+          anyFail = true;
+        }
+
         // 下拉面板定位回归（task.html 同时加载了 searchable-select 与 multi-select）：
         //   (a) 贴近视口底部 → 面板必须完整落在视口内（翻上，不被裁）；
         //   (c) 点面板内部不误关（浮动后面板在 body，container 已不含它）。
@@ -2426,6 +2596,8 @@ const PAGES = [
   // ① 评委空态提示：文案不带乱码，且加了评委后要隐藏（原来 JS 零引用、永不隐藏）
   // ② 提交评委：连点只能发一次请求（原来没有 in-flight 锁，会重复写审核数据）
   // ③ 文档弹窗分页栏：每页条数下拉必须被约束成 108px（原来被撑到 804px）
+  // ④ 弹窗内的可访问名称：主循环那条 a11yCheck 跑在弹窗打开之前，评委行还不存在；
+  //    这里弹窗已开、行刚由「＋ 新增」建出来，是覆盖评委行取名口径的窗口
   {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
     const fails = [];
@@ -2476,6 +2648,56 @@ const PAGES = [
         const nameInput = document.querySelector('#judgeTableBody tr.judge-row .judge-name');
         if (nameInput) { nameInput.value = '冒烟探针'; nameInput.dispatchEvent(new Event('input', { bubbles: true })); }
 
+        // ── 弹窗内的「可访问名称」统计：挂在弹窗已打开、评委行已存在之后 ──
+        // 主循环里那条 a11yCheck 跑在页面刚加载完、弹窗还没打开的时候，评委行根本不存在，
+        // 覆盖不到这条路径。而评委行在 <td> 里、字段名只写在表头 <th> 上，**弹窗内没有
+        // 任何可见 label 元素可取** —— 「评委角色」「评委工号」两个下拉的名字完全依赖
+        // subscribe-dialog.js 显式传的 { label: ... }，姓名/部门靠 subscribe-model.js 的
+        // JUDGE_ROW_TEMPLATE。这两处被删掉时页面照常工作、只有读屏念不出字段名，
+        // 所以下面把四个名字写死断言（口径同表头文案）。
+        // 注：.overlay 缺 .show 时是 opacity:0 + pointer-events:none，只判 display:flex
+        //     会把「没真打开」误判成打开（本仓库踩过），所以这里按 classList 判断是否 .show。
+        out.dialogA11y = (() => {
+          const overlay = document.getElementById('subscribeOverlay');
+          const dialog = document.getElementById('subscribeDialog');
+          const nameOf = (el) => (el ? (el.getAttribute('aria-label') || '').trim() : '__MISSING__');
+          const boxes = Array.from(dialog.querySelectorAll(
+            '.searchable-select-input, .msel-display, .judge-name, .judge-dept'));
+          // 无名控件要给「认得出是哪个」的标识：宿主 select 的 id/class，退化到自身类名 + 列号
+          const who = (el) => {
+            const wrap = el.closest('.searchable-select');
+            const host = (wrap && wrap.previousElementSibling)
+              || (el.parentElement && el.parentElement.querySelector('select'));
+            if (host && (host.id || host.className)) return host.id || String(host.className).trim();
+            const td = el.closest('td');
+            const col = td && td.parentElement
+              ? Array.prototype.indexOf.call(td.parentElement.children, td) : -1;
+            return String(el.className).split(/\s+/)[0] + (col >= 0 ? `@第${col + 1}列` : '');
+          };
+          const tr = dialog.querySelector('#judgeTableBody tr.judge-row');
+          const boxNameOf = (hostSel) => {
+            const host = tr && tr.querySelector(hostSel);
+            const ctl = host && host.parentElement.querySelector('.searchable-select-input');
+            return nameOf(ctl);
+          };
+          const inputNameOf = (sel) => {
+            const el = tr && tr.querySelector(sel);
+            return el ? nameOf(el) : '__NO_JUDGE_ROW__';
+          };
+          return {
+            shown: overlay ? overlay.classList.contains('show') : false,
+            rows: dialog.querySelectorAll('#judgeTableBody tr.judge-row').length,
+            total: boxes.length,
+            nameless: boxes.filter((el) => !nameOf(el)).map(who),
+            judge: {
+              role: boxNameOf('.judge-role'),
+              no: boxNameOf('.judge-no'),
+              name: inputNameOf('.judge-name'),
+              dept: inputNameOf('.judge-dept'),
+            },
+          };
+        })();
+
         // ② 连点提交
         const btn = document.getElementById('btnSubmitJudges');
         btn.click();
@@ -2499,7 +2721,10 @@ const PAGES = [
         window.SubscribeDialog.close();
         return out;
       });
+      const dlgA11y = r.dialogA11y;
+      delete r.dialogA11y;   // 单独成行打印，别混进上面那串 JSON
       process.stdout.write(`  空态/防重复提交/文档分页: ${JSON.stringify({ ...r, reviewCalls })}\n`);
+      process.stdout.write(`  订阅弹窗可访问名称: ${JSON.stringify(dlgA11y)}\n`);
       if (/chu/.test(String(r.hintText))) fails.push(`评委空态提示仍含乱码：${r.hintText}`);
       if (!(r.rowsOnOpen > 0)) fails.push(`弹窗打开时应有预置评委行，实际 ${r.rowsOnOpen} 行`);
       if (r.hintHiddenWithRows !== true) fails.push('有评委行时空态提示应隐藏');
@@ -2516,6 +2741,34 @@ const PAGES = [
       }
       if (!(r.docPageSizeInput && r.docPageSizeInput.h === 30)) {
         fails.push(`文档弹窗「每页条数」应与同行控件同高 30px，实际 ${JSON.stringify(r.docPageSizeInput)}`);
+      }
+
+      // ④ 弹窗内的可访问名称（读屏念得出字段名）：评委行那两个下拉没有 label 可取，
+      //    名字只来自 subscribe-dialog.js 显式传的 opts.label —— 这条就是钉住它。
+      if (!dlgA11y) fails.push('订阅弹窗可访问名称没测到（探针没跑到），本段等于没断言');
+      else {
+        if (dlgA11y.shown !== true) {
+          fails.push('订阅弹窗没真的打开（#subscribeOverlay 缺 .show），可访问名称断言不可信');
+        }
+        if (!(dlgA11y.rows > 0)) {
+          fails.push(`弹窗内没有评委行，评委框的可访问名称没被覆盖（rows=${dlgA11y.rows}）`);
+        }
+        if (dlgA11y.total < dlgA11y.rows * 4) {
+          fails.push(`弹窗内可聚焦框只有 ${dlgA11y.total} 个，${dlgA11y.rows} 行评委每行 4 个框至少该有 `
+            + `${dlgA11y.rows * 4} 个 —— 选择器或评委行结构变了，本段统计不再可信`);
+        }
+        if (dlgA11y.nameless && dlgA11y.nameless.length) {
+          fails.push(`弹窗内这些可聚焦框读屏念不出字段名：${JSON.stringify(dlgA11y.nameless)}`);
+        }
+        const wantJudgeName = { role: '评委角色', no: '评委工号', name: '评委姓名', dept: '评委部门' };
+        Object.keys(wantJudgeName).forEach((k) => {
+          const got = dlgA11y.judge ? dlgA11y.judge[k] : undefined;
+          if (got !== wantJudgeName[k]) {
+            fails.push(`评委行「${k}」框的可访问名称应为「${wantJudgeName[k]}」，实际 ${JSON.stringify(got)}`
+              + `（角色/工号来自 subscribe-dialog.js 的 { label }，姓名/部门来自 subscribe-model.js 的 JUDGE_ROW_TEMPLATE`
+              + ` aria-label；弹窗内没有可见 label 可取，删掉这两处就只剩 placeholder）`);
+          }
+        });
       }
     } catch (e) {
       fails.push(`空态/防重复提交段异常：${e.message}`);

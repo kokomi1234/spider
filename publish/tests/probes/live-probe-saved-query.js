@@ -10,11 +10,11 @@
      · 落库记录的 name / summary / labels / v
 
    前置：`cd publish && node proxy.js`（端口 3000），且后端可达。
-   运行：SMOKE_CHROME_PATH="<chrome路径>" node tests/live-probe-saved-query.js
+   运行：SMOKE_CHROME_PATH="<chrome路径>" node tests/probes/live-probe-saved-query.js
    注意：它会在页面上真的点一次「保存到首页」，会往 localStorage 写一条测试记录。 */
 'use strict';
 const path = require('path');
-const { chromium } = require('../vendor/playwright-core');
+const { chromium } = require('../../vendor/playwright-core');
 
 const CHROME = process.env.SMOKE_CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const URL = process.env.VERIFY_URL || 'http://localhost:3000/publish.html';

@@ -153,13 +153,13 @@ test('接线：publish.html 有按钮、index.js 会 init，且脚本顺序正�
   assert.ok(/id="btnTokenManager"/.test(html), 'publish.html 必须有 #btnTokenManager 按钮');
   assert.ok(/js\/ui\/token-manager\.js/.test(html), 'publish.html 必须引入 token-manager.js');
   // 比的是 <script src="..."> 整串：页内注释里出现裸文件名不该被当成脚本位置
-  // （2026-09-18 踩过：注释里写了「见 js/page/index.js 的 loadSysServeNos」，indexOf 直接命中它）。
+  // （2026-09-18 踩过：注释里写了「见 js/page/publish.js 的 loadSysServeNos」，indexOf 直接命中它）。
   assert.ok(
-    html.indexOf('<script src="js/ui/token-manager.js">') < html.indexOf('<script src="js/page/index.js">'),
+    html.indexOf('<script src="js/ui/token-manager.js">') < html.indexOf('<script src="js/page/publish.js">'),
     'token-manager.js 必须排在 index.js 之前（否则 init 时模块还没挂上）',
   );
 
-  const js = fs.readFileSync(path.join(ROOT, 'js/page/index.js'), 'utf8');
+  const js = fs.readFileSync(path.join(ROOT, 'js/page/publish.js'), 'utf8');
   assert.ok(/TokenManager\.init\(\)/.test(js), 'index.js 必须调用 TokenManager.init()');
 });
 
@@ -197,7 +197,7 @@ test('接线：publish.html 有「保存到首页」按钮且引入了 saved-que
   const html = fs.readFileSync(path.join(ROOT, 'publish.html'), 'utf8');
   assert.ok(/id="btnSaveQuery"/.test(html), '查询页必须有 #btnSaveQuery');
   assert.ok(/js\/ui\/saved-query\.js/.test(html), '查询页必须引入 saved-query.js');
-  const js = fs.readFileSync(path.join(ROOT, 'js/page/index.js'), 'utf8');
+  const js = fs.readFileSync(path.join(ROOT, 'js/page/publish.js'), 'utf8');
   assert.ok(/btnSaveQuery/.test(js), 'index.js 必须接线 btnSaveQuery');
   assert.ok(/window\.SavedQuery/.test(js) && /\.save\(/.test(js), 'index.js 必须调用 SavedQuery.save');
   assert.ok(/restoreSavedQuery/.test(js), 'index.js 必须有从首页回填的逻辑');

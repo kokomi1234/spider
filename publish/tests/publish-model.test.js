@@ -170,7 +170,7 @@ test('emptyHint：回放 / 过滤 / 无数据 三态文案决策', () => {
     true,
   );
   assert.strictEqual(
-    PM.emptyHint({ replayLoose: false, dropped: 1, droppedDup: 0 }).includes('不满足筛选条件'),
+    PM.emptyHint({ replayLoose: false, dropped: 1, droppedDup: 0 }).includes('满足筛选条件'),
     true,
   );
   assert.strictEqual(
@@ -187,14 +187,14 @@ test('emptyHint 与 droppedFilterHint 文案稳定（行为锚点）', () => {
   );
   assert.strictEqual(
     PM.emptyHint({ replayLoose: false, dropped: 1, droppedDup: 0 }),
-    '本页数据均不满足筛选条件（部分条件后端未支持，已由前端过滤）',
+    '已加载的数据里没有满足筛选条件的记录（部分条件后端未支持，由前端在全量结果上过滤）',
   );
   assert.strictEqual(
     PM.droppedFilterHint(
       [{ label: '变更批次' }, { label: '部门名称' }],
       3,
     ),
-    'ℹ️ 本页过滤掉 3 条不满足「变更批次、部门名称」的数据（后端未支持该字段）',
+    'ℹ️ 过滤掉 3 条不满足「变更批次、部门名称」的数据（后端未支持该字段，在前端按全量结果筛）',
   );
 });
 
