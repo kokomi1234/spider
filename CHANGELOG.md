@@ -8,7 +8,11 @@
 ## 📌 当前锁定
 
 ```
-【状态：无锁定】任何 Agent 可认领文件。
+【锁定】analysis/output/*.md|json、publish/js/ui/subscribe-*.js、publish/js/{api,page,data}/*、
+        publish/tests/*.test.js、publish/index.html、docs/archive/修复状态核查-2026-09-18.md
+        —— 处理者：等用户定方案；任务：这 24 个入库文件里含**真实姓名 2 个 / 工号 2 个 / 部门码 1 个**
+        （字面值不在这里复述），要不要脱敏、要不要处理 git 历史，未定案前别改、别推。
+        ⚠️ 已核对：凭证字面值（token/Cookie/ssopSessionId/Authorization）**没有**进入任何入库文件。
 ```
 
 <!-- 锁定行格式（一次任务一条，改完删除）：
