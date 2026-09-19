@@ -32,16 +32,40 @@ function makeClassList() {
     add(...cs) { cs.forEach((c) => set.add(c)); },
     remove(...cs) { cs.forEach((c) => set.delete(c)); },
     contains(c) { return set.has(c); },
-    toggle(c) { if (set.has(c)) set.delete(c); else set.add(c); },
+    // 第二个参数 force 是真 DOM 语义（toggle(c, false) = 只删不加）。
+    // searchable-select 的 has-clear / has-value 都是按布尔量刷新的，
+    // 少了 force 就会每次调用翻一次，同一个状态刷两遍反而错。
+    toggle(c, force) {
+      if (force === undefined) { if (set.has(c)) set.delete(c); else set.add(c); }
+      else if (force) set.add(c);
+      else set.delete(c);
+    },
     _set: set,
   };
 }
 
+/** 单个（无逗号的）简单选择器：#id / .class / tag / tag[attr] */
+function matchOne(el, raw) {
+  const sel = String(raw || '').trim();
+  if (!sel) return false;
+  const attrIdx = sel.indexOf('[');
+  const base = attrIdx >= 0 ? sel.slice(0, attrIdx) : sel;
+  const attrTxt = attrIdx >= 0 ? sel.slice(attrIdx + 1).replace(/\]$/, '') : '';
+  let ok = true;
+  if (base[0] === '#') ok = el.id === base.slice(1);
+  else if (base[0] === '.') ok = el.className.split(/\s+/).includes(base.slice(1));
+  else if (base) ok = el.tagName === base.toUpperCase();
+  if (ok && attrTxt) {
+    const name = attrTxt.split(/[=~^$|*]/)[0];
+    ok = !!(el.attrs && name in el.attrs);
+  }
+  return ok;
+}
+
 function matchSel(el, sel) {
   if (!el) return false;
-  if (sel[0] === '#') return el.id === sel.slice(1);
-  if (sel[0] === '.') return el.className.split(/\s+/).includes(sel.slice(1));
-  return el.tagName === String(sel).toUpperCase();
+  // 逗号组选择器（accessibleNameOf 里那句 .form-group,.sub-row,…）逐个试
+  return String(sel).split(',').some((s) => matchOne(el, s));
 }
 
 /** 深度优先找第一个满足 pred 的节点（含 root） */
@@ -60,12 +84,19 @@ function walk(el, cb) {
   for (const c of el.children || []) { cb(c); walk(c, cb); }
 }
 
+/**
+ * 假元素。除既有几个 UI 用例要的那几件事之外，还给 searchable-select 补了
+ * 它真正会用的那几件：dataset / insertBefore / nextSibling / replaceChildren /
+ * DocumentFragment 展开 / dispatchEvent / blur / 滚动几何。
+ * 全是**新增方法或新增字段**，既有用例的行为不变。
+ */
 function makeEl(tag) {
   const el = {
     tagName: String(tag || 'div').toUpperCase(),
     children: [],
     style: {},
     attrs: {},
+    dataset: {},
     classList: makeClassList(),
     _class: '',
     _id: '',
@@ -75,22 +106,54 @@ function makeEl(tag) {
     checked: false,
     textContent: '',
     hidden: false,
+    // 组件里 ensureVisible / maybeLoadMore 会读这些，给确定数值免得比出 NaN
+    scrollTop: 0, clientHeight: 200, scrollHeight: 200, offsetTop: 0, offsetHeight: 32,
     listeners: {},
     parentNode: null,
     parentElement: null,
     get className() { return this._class; },
     set className(v) { this._class = String(v); },
     get id() { return this._id; },
-    set id(v) { this._id = String(v); },
+    set id(v) { this._id = String(v); this.attrs.id = String(v); },
     get innerHTML() { return this._innerHTML; },
     set innerHTML(v) { this._innerHTML = String(v); },
+    get nextSibling() {
+      const p = this.parentNode;
+      if (!p) return null;
+      const i = p.children.indexOf(this);
+      return i < 0 ? null : (p.children[i + 1] || null);
+    },
     setAttribute(k, v) {
       this.attrs[k] = String(v);
       if (k === 'id') this._id = String(v);
       if (k === 'class') this._class = String(v);
     },
     getAttribute(k) { return this.attrs[k]; },
-    appendChild(c) { this.children.push(c); c.parentNode = this; c.parentElement = this; return c; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    hasAttribute(k) { return k in this.attrs; },
+    appendChild(c) {
+      // DocumentFragment：把它的孩子搬过来（组件用 replaceChildren(frag) 批量插选项）
+      if (c && c.isDocumentFragment) {
+        (c.children || []).slice().forEach((kid) => this.appendChild(kid));
+        c.children = [];
+        return c;
+      }
+      this.children.push(c); c.parentNode = this; c.parentElement = this; return c;
+    },
+    insertBefore(c, ref) {
+      if (c && c.isDocumentFragment) {
+        (c.children || []).slice().forEach((kid) => this.insertBefore(kid, ref));
+        c.children = [];
+        return c;
+      }
+      const i = ref ? this.children.indexOf(ref) : -1;
+      if (i < 0) return this.appendChild(c);
+      this.children.splice(i, 0, c); c.parentNode = this; c.parentElement = this; return c;
+    },
+    replaceChildren(...ns) {
+      this.children = [];
+      ns.forEach((n) => this.appendChild(n));
+    },
     append(...cs) { cs.forEach((c) => this.appendChild(c)); },
     remove() {
       if (this.parentNode) {
@@ -102,14 +165,23 @@ function makeEl(tag) {
     addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
     removeEventListener(t, fn) { if (this.listeners[t]) this.listeners[t] = this.listeners[t].filter((f) => f !== fn); },
     dispatch(t, ev) { (this.listeners[t] || []).slice().forEach((fn) => fn(ev)); },
-    click() { this.dispatch('click', { target: this, preventDefault() {}, button: 0 }); },
+    dispatchEvent(ev) { this.dispatch(ev && ev.type, ev); return true; },
+    click() { this.dispatch('click', { type: 'click', target: this, preventDefault() {}, stopPropagation() {}, button: 0 }); },
     focus() {},
+    blur() {},
     closest(sel) { let n = this; while (n) { if (matchSel(n, sel)) return n; n = n.parentNode; } return null; },
     querySelector(sel) { return findIn(this, (e) => matchSel(e, sel)); },
     querySelectorAll(sel) { const out = []; walk(this, (e) => { if (matchSel(e, sel)) out.push(e); }); return out; },
     getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 40, right: 100, bottom: 40 }; },
   };
   return el;
+}
+
+/** 假 DocumentFragment（组件批量插选项用） */
+function makeFragment() {
+  const f = { isDocumentFragment: true, children: [] };
+  f.appendChild = (c) => { f.children.push(c); return c; };
+  return f;
 }
 
 function makeDoc(ids) {
@@ -121,6 +193,7 @@ function makeDoc(ids) {
     body,
     listeners: {},
     createElement(tag) { return makeEl(tag); },
+    createDocumentFragment() { return makeFragment(); },
     getElementById(id) { return ids[id] || findIn(body, (e) => e.id === id) || null; },
     querySelector(sel) { return findIn(body, (e) => matchSel(e, sel)); },
     querySelectorAll(sel) { const out = []; walk(body, (e) => { if (matchSel(e, sel)) out.push(e); }); return out; },
@@ -698,4 +771,250 @@ test('subscribe：持久化 — add 后同 store 重新加载可见', () => {
     const win2 = loadSubscribe(store);
     assert.ok(win2.SubscribeManager.isSubscribed('SRV_X'), '重新加载应读到已保存的订阅');
   } finally { restoreLocalStorage(); }
+});
+
+// ══════════════════════════════════════════════════════════
+// 5) searchable-select.js —— 面板展开时也能一步回到「不限」
+//
+// 缺陷（2026-09-20 真浏览器实测）：展开态的 ✕ 被 theme.css 的
+//   `.searchable-select.is-open .searchable-select-clear-btn { display:none !important }`
+// 连同组件里 `show = hasValue && !isOpen` 一起摘掉，量到 display=none、矩形 0×0、
+// elementFromPoint 打到下层 .wrap；而字典灌进来的选项没有 value==='' 的项，
+// 面板里也没有第二条退路 —— 想改回「不限」必须先关面板。
+// 这里钉住修完的行为 + 两枚图标不再抢位置的 CSS 契约。
+// ══════════════════════════════════════════════════════════
+
+const SS_LIST = [
+  { value: 'a1', label: '甲系统' },
+  { value: 'b2', label: '乙批次' },
+];
+
+/** 建一个「宿主 <select>（无 option，模拟字典灌入）+ .form-group 里的 label」的最小现场 */
+function mountSelect(options = SS_LIST, opts = {}) {
+  const doc = makeDoc();
+  const group = makeEl('div');
+  group.className = 'form-group';
+  doc.body.appendChild(group);
+  const label = makeEl('label');
+  label.textContent = '部门名称 ';
+  group.appendChild(label);
+  const host = makeEl('select');
+  host.id = 'f_demo';
+  host.options = [];              // 宿主里一条 option 都没有：正是缺陷现场
+  host.value = '';
+  group.appendChild(host);
+
+  const win = { addEventListener() {}, removeEventListener() {} };
+  loadScript('js/ui/searchable-select.js', { document: doc }, win);
+  const inst = win.createSearchableSelect(host, options, opts);
+
+  // 容器插在宿主之后（组件用 insertBefore(container, host.nextSibling)）
+  const container = group.children[group.children.indexOf(host) + 1];
+  const has = (c) => findIn(container, (e) => e.className.split(/\s+/).includes(c));
+  const changes = { n: 0 };
+  host.addEventListener('change', () => { changes.n += 1; });   // 页面就是靠这个联动重新查询的
+  return {
+    doc, group, host, inst, container,
+    input: has('searchable-select-input'),
+    clearBtn: has('searchable-select-clear-btn'),
+    arrow: has('searchable-select-arrow'),
+    panel: has('searchable-select-dropdown'),
+    changes,
+  };
+}
+
+/** 派发一个组件真的在听的鼠标事件 */
+function mouseAt(el, type) {
+  el.dispatchEvent({ type, target: el, preventDefault() {}, stopPropagation() {}, button: 0 });
+}
+function keyAt(el, key) {
+  el.dispatchEvent({ type: 'keydown', key, target: el, preventDefault() {}, stopPropagation() {} });
+}
+const shownOptions = (m) => m.panel.querySelectorAll('.searchable-select-option');
+
+test('searchable-select：展开态 ✕ 不被藏（有值时 display 不再是 none），点它一步回到「不限」且面板不关', () => {
+  const m = mountSelect();
+  m.inst.setValue('a1');
+  assert.strictEqual(m.clearBtn.style.display, '', '收起态有值 → ✕ 可见（既有行为）');
+  assert.strictEqual(m.changes.n, 0, 'setValue 是程序赋值，不该派发 change');
+
+  m.inst.open();
+  assert.strictEqual(m.inst.isOpen(), true, '前置条件：面板已展开');
+  assert.notStrictEqual(m.clearBtn.style.display, 'none',
+    '回归钉：展开态不能再把 ✕ 置成 display:none（缺陷就是这么藏掉唯一清除入口的）');
+  assert.strictEqual(m.clearBtn.style.display, '', '有值 → 展开态同样保持可见');
+  assert.ok(m.container.classList.contains('has-clear'), 'has-clear 要在（CSS 靠它给 ✕ 让出槽位）');
+
+  mouseAt(m.clearBtn, 'mousedown');
+  assert.strictEqual(m.inst.getValue(), '', '点 ✕ 应清成「不限」');
+  assert.strictEqual(m.host.value, '', '要写回宿主，页面按宿主页取值');
+  assert.strictEqual(m.inst.isOpen(), true, '清完面板仍开着：这才是「一步」');
+  assert.strictEqual(m.changes.n, 1, '用户清除要派发一次 change（联动重新查询）');
+  assert.strictEqual(m.input.value, '', '展开态输入框不能被回填成已选 label');
+  assert.strictEqual(m.clearBtn.style.display, 'none', '已无值 → ✕ 自己收起来');
+  assert.ok(!m.container.classList.contains('has-clear'), 'has-clear 要摘掉（▼ 回原位）');
+});
+
+test('searchable-select：展开态清成「不限」后面板里的「已选区」消失，选项一条不少', () => {
+  const m = mountSelect();
+  m.inst.setValue('b2');
+  m.inst.open();
+  assert.ok(m.panel.querySelector('.searchable-select-selected-section'), '展开且已选 → 顶部有「已选择数据」区');
+  const before = shownOptions(m).length;
+  mouseAt(m.clearBtn, 'mousedown');
+  assert.ok(!m.panel.querySelector('.searchable-select-selected-section'), '清完之后已选区必须消失（否则用户以为没清）');
+  assert.strictEqual(shownOptions(m).length, before, '清除只动选中态，不该把选项吃掉');
+});
+
+test('searchable-select：没有选中值 / disabled 时展开态也不冒出 ✕（别多出一个无意义的「不限」按钮）', () => {
+  const empty = mountSelect();
+  assert.strictEqual(empty.clearBtn.style.display, 'none', '无值 → 收起态不显示 ✕');
+  empty.inst.open();
+  assert.strictEqual(empty.clearBtn.style.display, 'none', '无值 → 展开态同样不显示');
+  assert.ok(!empty.container.classList.contains('has-clear'), '无值 → 不给 has-clear');
+
+  const off = mountSelect(SS_LIST, { disabled: true });
+  off.inst.setValue('a1');
+  assert.strictEqual(off.clearBtn.style.display, 'none', '禁用实例不给清除入口');
+  off.inst.open();
+  assert.strictEqual(off.inst.isOpen(), false, '禁用实例根本展不开');
+});
+
+test('searchable-select：is-open / has-clear 只加在组件自建容器上，宿主页面无该类（.msel.is-open 多选不受牵连）', () => {
+  const m = mountSelect();
+  m.inst.setValue('a1');
+  m.inst.open();
+  assert.ok(m.container.classList.contains('is-open'), '容器带 is-open（新 CSS 的 .is-open.has-clear 组合据此生效）');
+  assert.ok(m.container.classList.contains('has-clear'), '容器同时带 has-clear');
+  assert.ok(!m.host.classList.contains('is-open'), '宿主不被挂 is-open —— 否则 .msel / 别的容器会被连带命中');
+  assert.ok(!m.host.classList.contains('has-clear'), '宿主不被挂 has-clear');
+  assert.ok(!m.host.classList.contains('searchable-select'), '宿主也不带组件类');
+});
+
+test('searchable-select：可访问名称不串味 —— 输入框始终叫字段名，✕ 固定叫「清除选择」，展开/清除都不改', () => {
+  const m = mountSelect();
+  assert.strictEqual(m.input.getAttribute('aria-label'), '部门名称', '新建 input 从同组 label 取名（口径见 a11y-name.test.js）');
+  assert.strictEqual(m.clearBtn.getAttribute('aria-label'), '清除选择', '✕ 自己的名字是固定动作名，不吃字段名');
+  m.inst.setValue('a1');
+  m.inst.open();
+  assert.strictEqual(m.input.getAttribute('aria-label'), '部门名称', '展开态仍叫字段名（不能变成「甲系统」或 placeholder）');
+  assert.strictEqual(m.clearBtn.getAttribute('aria-label'), '清除选择', '展开态 ✕ 的名字也要在（读屏此刻能念到它 = 本次修复的可达性）');
+  mouseAt(m.clearBtn, 'mousedown');
+  assert.strictEqual(m.input.getAttribute('aria-label'), '部门名称', '清除后仍叫字段名');
+  assert.strictEqual(m.input.getAttribute('role'), 'combobox', 'combobox 语义不变');
+  assert.strictEqual(m.input.getAttribute('aria-expanded'), 'true', '面板还开着，aria-expanded 要对得上');
+});
+
+test('searchable-select：点选项 / 按 Enter 仍然关面板（只有 ✕ 保留面板，两条路径不许混）', () => {
+  const m = mountSelect();
+  m.inst.open();
+  shownOptions(m)[0].click();
+  assert.strictEqual(m.inst.getValue(), 'a1');
+  assert.strictEqual(m.inst.isOpen(), false, '选中一项 → 收起（既有行为）');
+  assert.strictEqual(m.changes.n, 1, '用户选中派发一次 change');
+
+  m.inst.open();
+  keyAt(m.input, 'ArrowDown');
+  keyAt(m.input, 'ArrowDown');
+  keyAt(m.input, 'Enter');
+  assert.strictEqual(m.inst.getValue(), 'b2', '键盘 ↓↓Enter 选到第二项');
+  assert.strictEqual(m.inst.isOpen(), false, '键盘选中同样要收起');
+  assert.strictEqual(m.changes.n, 2, '鼠标选中 + 键盘选中各派发一次 change');
+});
+
+test('searchable-select：既有行为不变 —— updateOptions([]) 后 value 仍在、setValue(未知值) 归零为不限（展开态也要成立）', () => {
+  const m = mountSelect();
+  m.inst.setValue('a1');
+  m.inst.updateOptions([]);        // 字典没回来
+  assert.strictEqual(m.inst.getValue(), 'a1', '选项清空不该丢掉已选值');
+  assert.strictEqual(m.inst.getLabel(), 'a1', '取不到 label 就退回编号本身（smoke 钉的同一条）');
+  m.inst.setValue('9999xx');       // 选项里没有的值
+  assert.strictEqual(m.inst.getValue(), '', '未知值不认账 → 归为不限（smoke 钉的 valueOfUnknown===“”）');
+  assert.strictEqual(m.clearBtn.style.display, 'none', '没值了 → ✕ 收起，不会冒出无意义的清除按钮');
+
+  m.inst.open();
+  assert.strictEqual(m.clearBtn.style.display, 'none', '展开态 + 无值 → 仍不该有 ✕');
+  m.inst.updateOptions(SS_LIST);
+  assert.strictEqual(m.inst.getValue(), '', '换列表不该自己改动值');
+  assert.strictEqual(shownOptions(m).length, 2, '新列表要渲染出来');
+  m.inst.setValue('a1');
+  assert.strictEqual(m.inst.getValue(), 'a1', '展开态赋个认账的值');
+  assert.strictEqual(m.clearBtn.style.display, '', '展开态 + 有值 → ✕ 立刻可用（本次修复的正题）');
+  mouseAt(m.clearBtn, 'mousedown');
+  assert.strictEqual(m.inst.getValue(), '', '再点 ✕ 一步回到不限');
+  assert.strictEqual(m.inst.isOpen(), true, '面板仍开着');
+});
+
+// ── CSS 契约：theme.css 里那三条展开态规则（几何互相咬合，退回一条就会「两个控件抢位置」）
+const themeCss = require('fs').readFileSync(require('path').join(ROOT, 'theme.css'), 'utf8')
+  .replace(/\/\*[\s\S]*?\*\//g, '');   // 去注释，免得注释里的示例选择器被当成规则
+
+/** 把（去注释后的）CSS 拆成 { selector, decl } 列表 */
+function cssRules(text) {
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let mm;
+  while ((mm = re.exec(text))) {
+    out.push({ selector: mm[1].replace(/\s+/g, ' ').trim(), decl: mm[2] });
+  }
+  return out;
+}
+const THEME_RULES = cssRules(themeCss);
+const ruleOf = (sel) => THEME_RULES.find((r) => r.selector === sel);
+const numOf = (decl, prop) => {
+  const mm = new RegExp('(^|;)\\s*' + prop + '\\s*:\\s*([0-9.]+)px').exec(decl + ';');
+  return mm ? parseFloat(mm[2]) : NaN;
+};
+
+test('theme.css 契约：展开态藏 ✕ 的那条 !important 规则不许回来', () => {
+  const hiders = THEME_RULES.filter((r) => /is-open/.test(r.selector)
+    && /searchable-select-clear-btn/.test(r.selector)
+    && /display:\s*none/.test(r.decl));
+  assert.strictEqual(hiders.length, 0,
+    `不能再出现「展开时藏 ✕」的规则，实际找到 ${JSON.stringify(hiders.map((h) => h.selector))}`);
+});
+
+test('theme.css 契约：展开态 ✕ 与 ▼ 各占一个槽位，命中区边界相接不重叠', () => {
+  const CLEAR_BOX = 22;                       // ✕ 外观宽（theme.css 基础规则 width:22px）
+  const HIT_PAD = 6;                          // ::before 外扩 6px
+  const clearBase = ruleOf('.searchable-select .searchable-select-clear-btn');
+  const arrowShift = ruleOf('.searchable-select.is-open.has-clear .searchable-select-arrow');
+  const openPad = ruleOf('.searchable-select.is-open.has-clear .searchable-select-input');
+  const clearHit = ruleOf('.searchable-select.is-open.has-clear .searchable-select-clear-btn::before');
+  assert.ok(clearBase && arrowShift && openPad && clearHit,
+    '四条规则都得在（✕ 宽度 / ▼ 让位 / 输入框留白 / ✕ 命中区内缩）');
+
+  const clearRight = numOf(clearBase.decl, 'right');          // ✕ 距容器右缘
+  const arrowRight = numOf(arrowShift.decl, 'right');         // ▼ 让到多远
+  const arrowW = numOf(ruleOf('.searchable-select .searchable-select-arrow').decl, 'width') || 26;
+  assert.ok(arrowRight > clearRight + CLEAR_BOX,
+    `▼ 必须让到 ✕ 的左边：✕ 左沿在 ${clearRight + CLEAR_BOX}px，实际 ▼ right=${arrowRight}`);
+  // ✕ 的 ::before 左沿不得再往外扩（inset 第四位=左，0 表示不外扩），否则两命中区重叠、
+  // ✕ 的 z-index:2 会吃掉 ▼ 的左沿 —— 想收面板却被清值。
+  assert.ok(/inset:\s*-?\d+px\s+\S+\s+\S+\s+0\b/.test(clearHit.decl),
+    `展开态 ✕ 的 ::before 左沿应内缩到 0，实际 ${clearHit.decl.trim()}`);
+  const clearHitLeft = clearRight + CLEAR_BOX;                // ✕ 命中区左界
+  assert.ok(arrowRight - HIT_PAD >= clearHitLeft,
+    `▼ 命中区右界 ${arrowRight - HIT_PAD}px 不该压到 ✕ 命中区（左界 ${clearHitLeft}px）`);
+  assert.ok(numOf(openPad.decl, 'padding-right') >= arrowRight + arrowW,
+    '输入框留白要盖住 ▼ 的外观左沿，否则文字压到箭头下');
+});
+
+test('theme.css 契约：展开态新规则一律以 .searchable-select 起头，且只走令牌上色（不牵连 .msel 多选）', () => {
+  const touched = THEME_RULES.filter((r) => /is-open/.test(r.selector)
+    && /searchable-select/.test(r.selector));
+  assert.ok(touched.length >= 3, `展开态规则应有 3 条以上，实际 ${touched.length}`);
+  touched.forEach((r) => {
+    r.selector.split(',').forEach((one) => {
+      const s = one.trim();
+      // 最左边的复合必须以容器类 .searchable-select 起头（后面不能直接跟字母，
+      // 免得 .searchable-select-dropdown 之类的被当成锚点）：裸 .is-open 会连带命中
+      // .msel.is-open，多选面板就会被这套 ✕/▼ 规则牵进去。
+      assert.ok(/^\.searchable-select(?![a-z-])/.test(s),
+        `选择器必须以 .searchable-select 起头（裸 .is-open 会连带命中 .msel.is-open 多选）：${s}`);
+    });
+  });
+  const colors = touched.map((r) => r.decl).join(' ');
+  assert.ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(colors),
+    '这几条规则不许写死色值（全站颜色只从 theme.css 的 :root 令牌取）');
 });

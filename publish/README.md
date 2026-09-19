@@ -188,6 +188,7 @@ publish/
 ├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）、
 │                        #   模块化方案评估.md（ESM/注册表的结论与顺序约定）
 ├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）
+│                        #   用例数一直在涨，别在文档里刻死数字：以 `node tests/run.js` 实跑输出为准
 │                        #   + live-probe-saved-query.js（联调诊断，需代理与后端可达）
 ├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
 └── tools/               # 开发工具，不参与页面加载
@@ -212,7 +213,7 @@ publish/
 | 页面字段 | 后端 key | 模式 | 备注 |
 |---|---|---|---|
 | 提供方系统 | `compNum` | api | |
-| 变更批次 | `batch` | both | 后端有效值需抓包确认，前端兜底读 `sheetProductBatch` 等 |
+| 变更批次 | `batch` | both | **后端按 `batch` 筛选是有效的**（抓包定论，见下方「批次字段口径」）：请求带批次时返回行的 `sheetProductBatch` 100% 等于所请求值；但响应里的 `batch` 字段**永远为空**，展示/校验只能取 `sheetProductBatch`，前端兜底也读它 |
 | 提供方应用系统服务编号 | `sysServeNoList` + `sysServeNo` | api | **多选**（2026-09-18 从手输单值改过来），选项由「提供方系统」联动带出，与订阅页同一口径（`ToolApi.fetchInformationProdBatch`）；`sysServeNoList` 承载多选、`sysServeNo` 保持旧行为取第一个 |
 | 服务名称 | `serviceName` | api | |
 | 接口名 | `serverCodingList` | both | 前端兜底匹配 `interfaceCode` / `sysEnName` / `sysServeEnName` |
@@ -222,6 +223,12 @@ publish/
 | 部门名称 | `deptId` | both | 精确匹配；下拉没建起来时退化为按 `deptName` 模糊过滤 |
 | 产品实施单元 | `implementationUnit` | api | |
 | 变更时间（起始 / 结束） | —（纯本地） | local | 后端无对应字段，前端按 `offerEffectiveTime` 兜底；**两个日期框的区间**（2026-09-18 从单值改过来），日历里用虚线连出中间那段（`createDatePicker` 的 `rangeHighlight` 钩子），起止填反了按大小自动交换 |
+
+> **批次字段口径（抓包定论，2026-09-20 复核，原「后端有效值需抓包确认」这条待办已结）**：
+> `getPublishDataList` 响应里的 `batch` 字段 **162/162 全为空**（离线缓存 10 份响应、共 162 行，无一非空），
+> 而请求带 `batch=<批次 label>` 时，返回行的 `sheetProductBatch` **100% 等于所请求值**。
+> 结论：后端按 `batch` 筛选**确实有效**，但展示与校验都只能取 `sheetProductBatch` ——
+> 响应里的 `batch` 永远是空串，拿它做展示会永远空白，拿它判断「筛选没生效」会误判。
 
 > `CHECKOUT/IN 状态` 后端无对应字段，界面上已禁用并标注原因。
 > 完整的字段口径与坑见 `analysis/output/ITAMP接口总览.md`。

@@ -535,7 +535,7 @@ a.outlined, a.filled, a.text-btn {
   background: var(--red-c);
 }
 .searchable-select.has-clear .searchable-select-input {
-  /* X 与箭头共用一个槽位，只预留一枚图标的宽度 */
+  /* 收起态：X 顶掉箭头的位置，只预留一枚图标的宽度 */
   padding-right: 34px;
 }
 .searchable-select.has-clear:not(.is-open) .searchable-select-arrow {
@@ -547,8 +547,30 @@ a.outlined, a.filled, a.text-btn {
   visibility: visible;
   pointer-events: auto;
 }
-.searchable-select.is-open .searchable-select-clear-btn {
-  display: none !important;
+
+/* ── 展开态：✕ 与 ▼ 同时可用，各占一个槽位 ─────────────
+   原来这里是一条 `.is-open .searchable-select-clear-btn { display: none !important; }`，
+   真浏览器实测（1440×900 / headless Chrome，控件「调用方系统/分行」展开+有值）：
+   ✕ computed display=none、矩形 0×0、elementFromPoint 打到下层的 .wrap ——
+   等于把唯一的清除入口藏进「先关面板」这一步里（字典灌入的选项没有 value==='' 的项，
+   面板内没有第二条退路）。现改为展开时 ✕ 留在原地、把 ▼ 让到它左边。
+   让位选 ▼ 不选 ✕：✕ 是收起态就记熟的目标（移动它=移动 precision 目标），
+   而 ▼ 在展开态只多一个「收起」动作，Esc / 点外部 / 选中项同样能收。
+   边界（全部以「距容器右边缘的距离」计，✕ 外观 22px @ right:8 → [8,30]）：
+     · ✕ 命中区（::before 向左不再外扩）  [2 , 30]
+     · ▼ 移到 right:36 → 外观 [36,62]，::before 外扩 6 → 命中区 [30,68]
+   两段在 30 处正好相接、零重叠（✕ 有 z-index:2，重叠就会吃掉 ▼ 命中区左沿）。
+   输入框留白取 64px ≥ ▼ 外观左沿 62 + 2，避免文字压到箭头下。
+   代价：#docPageSize 这类 108px 窄实例展开时只剩约 40px 文字区，占位文案会被省略号截断
+   —— 展开态那格本来就是搜索框，可接受；面板内的选项不受影响。 */
+.searchable-select.is-open.has-clear .searchable-select-arrow {
+  right: 36px;
+}
+.searchable-select.is-open.has-clear .searchable-select-input {
+  padding-right: 64px;
+}
+.searchable-select.is-open.has-clear .searchable-select-clear-btn::before {
+  inset: -6px -6px -6px 0;
 }
 
 /* 展开面板顶部的已选区：不再占用一行“清除选择”文字，清除动作在输入框右侧 ✕ */

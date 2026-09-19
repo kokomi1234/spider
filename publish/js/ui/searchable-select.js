@@ -210,15 +210,29 @@
     }
 
     /**
-     * X 和下拉箭头共用一个图标槽位：
-     *   · 关闭态且已有选择 → 显示 X，方便清除
-     *   · 展开态 → 隐藏 X，显示下拉箭头
-     * 这样输入文字不会同时被两个图标挤占右侧空间。
+     * ✕ 什么时候在？—— **有选中值就在**，展开态也不藏。
+     *
+     * 原先这里写的是 `hasValue && !isOpen`，配合 theme.css 的
+     * `.searchable-select.is-open .searchable-select-clear-btn { display:none !important }`
+     * 把 ✕ 和 ▼ 做成「共用一个槽位、按状态换人」（理由是怕两枚图标挤）。2026-09-20 真浏览器
+     * 实测的结论是这条设计站不住：面板开着的时候 ✕ 量到的是 display:none、矩形 0×0、
+     * 命中测试打到下层 .wrap —— 用户想改回「不限」必须**先关面板**再看 ✕，多一步；
+     * 而字典灌进来的选项里没有 value==='' 的项，面板里也没有别的退路。
+     * 另一个证据：下面的 doClear() 一进函数就有 `if (isOpen) { renderDropdown(); paintOpen(); }`
+     * 分支，在旧规则下永远走不到（✕ 展开时根本点不着），说明原意本来就是「开着也能清」。
+     *
+     * 取舍（为什么选「展开时保留 ✕」而不是「面板顶部加一行常驻『不限』」）：
+     *   · 「不限」这一行是组件层加的，组件分不清宿主是筛选条件还是必填字段 ——
+     *     每页条数（.doc-pager / .pagination 的 #docPageSize）、订阅弹窗的评委角色/工号
+     *     都会跟着冒出一个语义错误的「不限」；要按字段区分就得改各调用方传参，超出本次范围。
+     *   · ✕ 是**已经存在**的清除入口（实测 46 个控件的收起态都有），只是被藏了；
+     *     放出来不新增任何语义，也不会与「面板里两个控件抢位置」——因为 ✕ 根本不在面板里。
+     *   · 槽位冲突改由 CSS 让位解决：✕ 不挪（收起态记的位置就是它），▼ 让到它左边，
+     *     两枚图标的命中区在 theme.css 里量好边界正好相接、零重叠。见该处注释。
      */
     function updateClearBtnVisibility() {
       const hasValue = !!selectedValue && !disabled;
-      const show = hasValue && !isOpen;
-      clearBtn.style.display = show ? '' : 'none';
+      clearBtn.style.display = hasValue ? '' : 'none';
       container.classList.toggle('has-clear', hasValue);
     }
 

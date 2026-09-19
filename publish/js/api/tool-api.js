@@ -6,7 +6,11 @@
  * `output/openapi.json`（由 har2doc.py 从抓包生成）。基础域名
  * http://itamp.bocsys.cn，本地由 proxy.js 转发（前端发完整后端路径）。
  *
- * 抓包确认的接口（16 个）：
+ * 抓包确认的接口（19 个，**0 个留空**）：
+ *   计数口径 = 下面 ENDPOINTS 对象的键数（19 个键 = 19 条路径，全部已配置；
+ *   留空 = 关闭该能力，当前一条都没有）。标题原来写「16 个」是陈旧计数——
+ *   订阅页那两条接口补进 ENDPOINTS 时没同步，下面的清单也一直漏列
+ *   getPublishDataList（现在补齐，逐条对上 19 个键）。
  *   评委信息            → POST /itamp-tool/publish/getJudgeInfo?n=xx
  *                         body { compNum, principal, callerComponent }
  *   订阅评委信息        → POST /itamp-tool/publish/subscriptionReview
@@ -18,6 +22,9 @@
  *   文档/文本数据       → POST /itamp-tool/publish/getTextData  body { assemblyNo }
  *   产品批次列表        → POST /itamp-tool/publish/getInformationProdBatch  body { compNum }
  *                         ⚠️ 响应是三层嵌套（data.data.sysServeNoList），见该函数说明
+ *   发布数据列表        → POST /itamp-tool/publish/getPublishDataList
+ *                         body 见 js/page/publish.js 的 FIELDS；
+ *                         ⚠️ 响应的 batch 字段恒为空，批次要看 sheetProductBatch
  *   服务编码列表        → POST /itamp-tool/publish/getInformationServerCoding body { compNum }
  *   历史记录            → POST /itamp-tool/publish/getHistory   body { dataId, pageNum, pageSize, delFlg }
  *   历史详情            → POST /itamp-tool/publish/getHistoryDetail body { informationId, createTime, publishId }
