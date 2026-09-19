@@ -42,8 +42,10 @@ publish/node_modules/
 # （2026-09-19 清理过 104 个，共 12.8MB；只在 vendor 内忽略，避免误伤正常文件名）
 publish/vendor/**/* 2.*
 
-# Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
-# （2026-09-19：.workbuddy-ai 已换成真 symlink；.opencode.bak 是它改成文本文件前的残留备份，纯垃圾）
+# 各 AI 工具默认读的记忆目录名（都指向同一份 .workbuddy）
+# 实况（2026-09-19 复核，别再记错）：`.workbuddy-ai` 是**10 字节文本文件**（内容 `.workbuddy`），
+# **不是 symlink** —— 之前想改成 symlink，但那步没落地；`.opencode` 是个只含 .gitignore 的目录。
+# 三者都只是"名字指过来"的占位，**不存任何记忆内容**，所以记忆只有一处：`.workbuddy/memory/`。
 .workbuddy-ai
 .opencode
 .opencode.bak
