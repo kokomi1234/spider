@@ -10,8 +10,13 @@
 ```
 【锁定】analysis/output/*.md|json、publish/js/ui/subscribe-*.js、publish/js/{api,page,data}/*、
         publish/tests/*.test.js、publish/index.html、docs/archive/修复状态核查-2026-09-18.md
-        —— 处理者：等用户定方案；任务：这 24 个入库文件里含**真实姓名 2 个 / 工号 2 个 / 部门码 1 个**
-        （字面值不在这里复述），要不要脱敏、要不要处理 git 历史，未定案前别改、别推。
+        —— 处理者：主会话（等用户定合成夹具命名）；任务：**扩大后的实测范围**——入库文件里含
+        **真实同事姓名 6 个 / 工号 5 个 / 真实部门全称 2 个 / 真实任务单号 4 个**（字面值一律不在这里复述，
+        完整清单用 /tmp/inv2.js 可重跑）。分布：测试夹具与断言、`analysis/output/` 的生成文档
+        （openapi.json + 3 份接口 md，由 analysis/har2doc.py 从 HAR 生成，**改文件必须同时改生成脚本**，
+        否则下次重新生成就漏回去）、`subscribe-dryrun.js` 的场景样例、若干代码注释与 index.html 占位文案。
+        已确认**不是**真实数据的：张三/李四/王五/赵六（既有合成占位）、1234567、M-202606-00001、
+        以及 3600000（毫秒常量）、2373777（theme.css 数值）这类误报。
         ⚠️ 已核对：凭证字面值（token/Cookie/ssopSessionId/Authorization）**没有**进入任何入库文件。
 ```
 
