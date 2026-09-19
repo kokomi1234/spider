@@ -114,12 +114,15 @@
     const req = requester();
     return req ? req.isEnabled(name) : Boolean(ENDPOINTS[name]);
   }
-  function request(name, body, query) {
+  // 第 4 个参数透传给传输层（signal 取消 / timeout 覆盖默认超时）。
+  // 以前只转发 3 个参数：api-client 上加了 opts 也没用，别的模块照样传不下去
+  // —— 协议层只有一份实现，转发口径要一致（导出那种长任务将来也要能中止）。
+  function request(name, body, query, opts) {
     const req = requester();
     if (!req) {
       throw new Error(`请求层未就绪：core/api-client.js 未加载（缺少 createRequester，请求 ${name}）`);
     }
-    return req.request(name, body, query);
+    return req.request(name, body, query, opts);
   }
 
   /** 防缓存随机数：抓包里部分请求带 ?n=0.xxx */
@@ -130,7 +133,7 @@
   /**
    * 服务发布数据查询（首页主接口）。
    *
-   * body 的 17 个字段口径见 js/page/index.js 的 FIELDS（抓包确认过，别加减字段）。
+   * body 的 17 个字段口径见 js/page/publish.js 的 FIELDS（抓包确认过，别加减字段）。
    *
    * 为什么返回原始 Response、不在这里解析：响应形态识别与「宽松回放」标记都在
    * js/core/publish-response.js 的 parse()（它要读 X-Cache-Match 响应头），

@@ -97,5 +97,51 @@
     exporter.download(rows, columns, filename);
   }
 
-  window.CsvExporter = Object.freeze({ exportRows, download, downloadRows, csvCell });
+  /**
+   * 按页把服务端分页的结果拉全（导出用），带进度与取消。
+   *
+   * 为什么要抽出来：任务单页的导出是「5000 条 = 串行 10 次请求」的长任务，
+   * 原先只有按钮文案「导出中…」，既看不到进展也停不下来。
+   * 循环本身与 DOM 无关，放这里就能在 node 侧把「取消」「某页失败」「正好拉完」
+   * 这些分支测到（页面脚本要整页假 DOM，测不动）。
+   *
+   * @param {(pageNum:number, pageSize:number)=>Promise<{ok:boolean, rows?:Array, total?:number, error?:string}>} fetchPage
+   *        取一页（形态与 TaskApi.fetchTaskList 一致：失败返回 {ok:false,error}，不抛）
+   * @param {object} opts
+   * @param {number} opts.total 服务端报的总条数
+   * @param {number} [opts.pageSize=500] 每页取多少
+   * @param {number} [opts.max=5000] 最多取多少条（超了只导前 max 条）
+   * @param {(p:{done:number,want:number,page:number})=>void} [opts.onProgress] 每拉完一页调一次
+   * @param {AbortSignal} [opts.signal] 取消信号；中止后返回 {ok:false, aborted:true}
+   * @returns {Promise<{ok:boolean, rows?:Array, want:number, aborted?:boolean, error?:string, truncated?:boolean}>}
+   */
+  async function fetchAllPages(fetchPage, opts) {
+    const o = opts || {};
+    const pageSize = Number(o.pageSize) > 0 ? Number(o.pageSize) : 500;
+    const total = Number(o.total) > 0 ? Number(o.total) : 0;
+    const max = Number(o.max) > 0 ? Number(o.max) : 5000;
+    const signal = o.signal || null;
+    const want = Math.min(total, max);
+    const rows = [];
+    if (typeof fetchPage !== 'function') return { ok: false, want, error: '没有取数函数' };
+    if (!want) return { ok: true, rows: [], want: 0 };
+
+    for (let page = 1; rows.length < want; page++) {
+      if (signal && signal.aborted) return { ok: false, want, aborted: true };
+      const r = await fetchPage(page, pageSize);
+      // 失败要先分清是不是「用户按了取消」：中止不是故障，别报成导出失败
+      if (signal && signal.aborted) return { ok: false, want, aborted: true };
+      if (!r || !r.ok) return { ok: false, want, error: (r && r.error) || '未知错误' };
+      const part = Array.isArray(r.rows) ? r.rows : [];
+      if (!part.length) break;                      // 服务端提前给空页 = 已经到底
+      rows.push(...part.slice(0, Math.max(0, want - rows.length)));
+      if (typeof o.onProgress === 'function') {
+        try { o.onProgress({ done: rows.length, want, page }); } catch (_) { /* 进度回调炸了不该影响导出 */ }
+      }
+    }
+    const out = rows.slice(0, want);
+    return { ok: true, rows: out, want, truncated: total > max };
+  }
+
+  window.CsvExporter = Object.freeze({ exportRows, download, downloadRows, csvCell, fetchAllPages });
 })();

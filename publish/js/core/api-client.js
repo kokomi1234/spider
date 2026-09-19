@@ -169,7 +169,7 @@
       return Boolean(endpoints[name]);
     }
 
-    async function request(name, body, query) {
+    async function request(name, body, query, opts) {
       if (!endpoints[name]) throw new Error(`接口未配置：${name}（缺抓包时不发请求）`);
       // 传输层**延迟取** window.API.call：便于测试替换，也符合项目「window.* 延迟到调用时取」
       // 的约定（在工厂里捕获 call 会让外面替换 API.call 失效）。
@@ -177,6 +177,9 @@
         ? window.API.call
         : call;
       const resp = await send(endpoints[name], {
+        // opts 放最前：调用方（如导出的取消）只该能**加**signal/timeout 这类选项，
+        // 不该能把已经算好的 method/body/query 覆盖掉
+        ...(opts && typeof opts === 'object' ? opts : {}),
         method: methods[name] || 'POST',
         ...(body !== undefined ? { body } : {}),
         ...(query ? { query } : {}),

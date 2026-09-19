@@ -72,12 +72,12 @@
     const req = requester();
     return req ? req.isEnabled(name) : Boolean(ENDPOINTS[name]);
   }
-  function request(name, body, query) {
+  function request(name, body, query, opts) {
     const req = requester();
     if (!req) {
       throw new Error(`请求层未就绪：core/api-client.js 未加载（缺少 createRequester，请求 ${name}）`);
     }
-    return req.request(name, body, query);
+    return req.request(name, body, query, opts);
   }
 
   // ── 任务单列表 ────────────────────────────────────────────
@@ -127,9 +127,11 @@
    * @param {object} cond   筛选条件（见 buildTaskListBody）
    * @param {number} pageNum
    * @param {number} pageSize
+   * @param {object} [apiOpts] 透传给传输层的选项（`signal` 取消、`timeout` 覆盖默认超时）。
+   *        导出要串行拉十几页并能中途取消，所以这里必须留口子。
    * @returns {Promise<{ok:boolean, local?:boolean, total:number, rows:Array, error?:string}>}
    */
-  async function fetchTaskList(cond, pageNum, pageSize) {
+  async function fetchTaskList(cond, pageNum, pageSize, apiOpts) {
     if (!isEnabled('taskList')) {
       return { ok: true, local: true, total: 0, rows: [] };
     }
@@ -137,7 +139,9 @@
       return { ok: false, total: 0, rows: [], error: 'API 客户端未就绪' };
     }
     try {
-      const json = await request('taskList', buildTaskListBody(cond, pageNum, pageSize));
+      // 导出路径的超时比默认 20s 长：一页 500 条在内网是可能超过 20 秒的，
+      // 超了会被当成失败整次导出作废（调用方可用 apiOpts.timeout 指定）
+      const json = await request('taskList', buildTaskListBody(cond, pageNum, pageSize), undefined, apiOpts);
       // 报文：{ total, rows, code, msg, pageNum, pageSize, pageTotals }
       const rows = (json && (json.rows || (json.data && json.data.rows))) || [];
       const total = Number((json && (json.total != null ? json.total : (json.data && json.data.total))) || 0);

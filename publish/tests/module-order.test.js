@@ -83,10 +83,10 @@ test('顺序无关：tool-api.js / user-api.js 先于 api-client.js 加载，请
  */
 const ALLOWED = [
   // ── 命名空间对象：紧接着就解引用成员（PublishModel.FIELDS），错序会当场 TypeError ──
-  ['js/page/index.js', 'const PublishModel    = window.PublishModel;'],
-  ['js/page/index.js', 'const PublishView     = window.PublishView;'],
-  ['js/page/index.js', 'const PublishQuery    = window.PublishQuery;'],
-  ['js/page/index.js', 'const FIELDS          = PublishModel.FIELDS;'],
+  ['js/page/publish.js', 'const PublishModel    = window.PublishModel;'],
+  ['js/page/publish.js', 'const PublishView     = window.PublishView;'],
+  ['js/page/publish.js', 'const PublishQuery    = window.PublishQuery;'],
+  ['js/page/publish.js', 'const FIELDS          = PublishModel.FIELDS;'],
   // ── subscription.js：同上（SubscriptionModel 的成员被立即解引用成局部函数）──
   ['js/page/subscription.js', 'const V = SubscriptionView;   // 纯渲染层'],
   ['js/page/subscription.js', 'const rowKey = SubscriptionModel.rowKey;'],
@@ -161,4 +161,25 @@ test('静态：IIFE 顶层不得再出现会「静默降级」的 window.X 捕�
     'ALLOWED 里有扫不到的条目（扫描逻辑可能已失效，或该处已被改写），请重新核对并更新：\n' +
     stale.map((s) => '  ' + s).join('\n'),
   );
+});
+
+// ── 转发口径要一致（协议层只有一份实现，四个模块都只是薄转发）────────
+// 教训：给 api-client 的 request() 加了第 4 个参数（opts：signal / timeout）之后，
+// 只有 task-api 转发了它，另外三个照样丢掉 —— 于是「别的模块也能取消」这句话
+// 当时是假的。这类「接线」用行为测不出来（不传就是没影响），所以直接钉源码。
+test('四个接口模块都把 opts 透传给协议层（不再只转发 3 个参数）', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  ['service-api', 'task-api', 'tool-api', 'user-api'].forEach((m) => {
+    const src = read('js/api/' + m + '.js');
+    assert.ok(
+      /function request\(name, body, query, opts\)/.test(src),
+      m + '.js 的 request() 少了 opts 形参',
+    );
+    assert.ok(
+      /req\.request\(name, body, query, opts\)/.test(src),
+      m + '.js 没有把 opts 转发给 req.request()',
+    );
+  });
 });

@@ -58,12 +58,15 @@
     const req = requester();
     return req ? req.isEnabled(name) : Boolean(ENDPOINTS[name]);
   }
-  function request(name, body, query) {
+  // 第 4 个参数透传给传输层（signal 取消 / timeout 覆盖默认超时）。
+  // 以前只转发 3 个参数：api-client 上加了 opts 也没用，别的模块照样传不下去
+  // —— 协议层只有一份实现，转发口径要一致（导出那种长任务将来也要能中止）。
+  function request(name, body, query, opts) {
     const req = requester();
     if (!req) {
       throw new Error(`请求层未就绪：core/api-client.js 未加载（缺少 createRequester，请求 ${name}）`);
     }
-    return req.request(name, body, query);
+    return req.request(name, body, query, opts);
   }
 
   /** 防缓存随机数：抓包里每个请求都带 ?n=0.xxx，原样保留 */
