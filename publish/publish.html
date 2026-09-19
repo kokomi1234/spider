@@ -917,6 +917,9 @@
   <script src="js/ui/detail-dialog.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/ui/query-feedback.js"></script>
+  <!-- current-user.js 看着像首页专用，其实不能省：SavedQuery.save() 的归属人兜底读它，
+       本页少了这一行，从本页保存的查询就会 owner 为空，永远进不了「我的」和部门排行（且不报错）。 -->
+  <script src="js/ui/current-user.js"></script>
   <script src="js/ui/saved-query.js"></script>
   <script src="js/core/publish-response.js"></script>
   <script src="js/page/publish-model.js"></script>

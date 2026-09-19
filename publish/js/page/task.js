@@ -586,7 +586,9 @@
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
     const res = SQ.save({ page: 'task', name, fields, summary, labels: collectSavedLabels(fields) });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
-    toast('已保存到首页' + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : ''), 2400);
+    toast('已保存到首页'
+      + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : '')
+      + (typeof SQ.ownerSuffix === 'function' ? SQ.ownerSuffix(res) : ''), 3200);
   }
 
   /**

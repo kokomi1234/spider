@@ -22,6 +22,7 @@
   const $ = (sel) => document.querySelector(sel);
 
   const savedListEl = $('#savedList');
+  const savedTitleEl = $('#savedTitle');
   const savedEmptyEl = $('#savedEmpty');
   const savedCountEl = $('#savedCount');
   const savedSyncEl = $('#savedSync');
@@ -201,20 +202,67 @@
       return;
     }
 
+    const CU = window.CurrentUser;
+    const u = CU ? CU.get() : null;
+    if (savedTitleEl) savedTitleEl.textContent = u ? `我的常用查询（${u.userName || u.userId}）` : '常用查询';
+
+    if (!u) {
+      // 没有身份就宁可空着：显示全部会把同事的查询说成"我的"，那比空列表更误导人
+      clear(savedListEl);
+      if (savedCountEl) savedCountEl.textContent = '';
+      if (savedEmptyEl) {
+        savedEmptyEl.hidden = false;
+        savedEmptyEl.textContent = '先在上方「当前用户」里填工号或姓名，这里才会显示你保存的查询。';
+      }
+      return;
+    }
+
     let items = [];
     try {
-      items = S.list();
+      items = S.listForUser(u);
     } catch (e) {
       console.error('[home] 读取常用查询失败：', e);
       showToast('读取常用查询失败（本地存储不可用？）', 3500, 'error');
     }
+    paintSaved(items);
 
+    // 本机先落地（离线也能看），再用服务端按工号捞的那份覆盖：
+    // 换浏览器 / 换电脑时本机是空的，但记录在共享库里。
+    loadMineFromServer(u);
+  }
+
+  function paintSaved(items) {
     clear(savedListEl);
     items.forEach((it) => savedListEl.appendChild(buildItem(it)));
-
     const empty = items.length === 0;
-    if (savedEmptyEl) savedEmptyEl.hidden = !empty;
+    if (savedEmptyEl) {
+      savedEmptyEl.hidden = !empty;
+      if (empty) {
+        savedEmptyEl.textContent = '你还没有保存过常用查询：到任一查询页填好筛选条件后，点「⭐ 保存到首页」，这里就会出现一键直达的入口。';
+      }
+    }
     if (savedCountEl) savedCountEl.textContent = empty ? '' : `共 ${items.length} 条`;
+  }
+
+  /** 记录「我的列表」这次请求是针对谁的：慢响应回来时人已经换过就不能覆盖（与部门区同一手法） */
+  let mineReqSeq = 0;
+
+  async function loadMineFromServer(u) {
+    const S = window.SavedQuery;
+    if (!S || typeof S.mineFromServer !== 'function') return;
+    const seq = (mineReqSeq += 1);
+    let r = null;
+    try {
+      r = await S.mineFromServer(u);
+    } catch (_) {
+      return;   // 请求炸了不该影响已经渲染好的本机视图
+    }
+    if (seq !== mineReqSeq) return;                            // 已经有更新的请求了
+    const CU = window.CurrentUser;
+    const now = CU ? CU.get() : null;
+    if (!now || String(now.userId || now.userName || '') !== String(u.userId || u.userName || '')) return;
+    if (!r || !r.ok || !Array.isArray(r.items)) return;        // 失败就留着本机渲染的结果
+    paintSaved(r.items);
   }
 
   // ══════════════════════════════════════════════════════
@@ -316,6 +364,9 @@
       clear(userCandsEl);
     }
     syncClearBtn();
+    // 「我的常用查询」和部门排行都随身份变，所以在这里一起刷；
+    // render() 那边就不再单独调 renderSaved()，免得一次首屏发两遍请求
+    renderSaved();
     renderDept();
   }
 
@@ -559,9 +610,8 @@
   // ══════════════════════════════════════════════════════
 
   function render() {
-    renderSaved();
     renderSync();
-    renderUser();   // 内部会连带刷新部门排行
+    renderUser();   // 内部会连带刷新「我的常用查询」与部门排行（两块都按身份过滤）
   }
 
   // 别的标签页改了 localStorage 时同步过来（多开页面是常态）

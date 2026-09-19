@@ -10,7 +10,9 @@
 'use strict';
 
 const assert = require('assert');
-const { loadScript, test } = require('./harness');
+const fs = require('fs');
+const path = require('path');
+const { ROOT, loadScript, test } = require('./harness');
 
 /** 可注入内容的假 localStorage */
 function fakeStorage(initial, opts = {}) {
@@ -927,4 +929,119 @@ test('同步后缀：各页「已保存到首页」的提示与角标同一口�
   const bad = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }));
   await bad.pushToServer();
   assert.ok(/共享同步失败.*500.*先存本机/.test(bad.syncSuffix()), bad.syncSuffix());
+});
+
+// ══════════════════════════════════════════════════════════
+// 8) 归属人（owner）—— 「谁存的」决定这条记录能不能被看见
+//
+// 2026-09-19 的教训：current-user.js 以前只在首页引入，另外三个查询页只引了
+// saved-query.js，于是 save() 里的归属兜底静默变成 null —— 保存是成功的、
+// 不报错、角标也说「已同步」，但那条记录在「我的常用查询」和部门排行里永远隐形。
+// 下面的用例把这个契约钉住，尤其是最后那条静态防线。
+// ══════════════════════════════════════════════════════════
+
+const ME = { userId: '4711510', userName: '甲', teamId: 'T1', teamName: '开发一部' };
+const OTHER = { userId: '6464402', userName: '乙', teamId: 'T2', teamName: '开发二部' };
+
+test('归属：userKeyOf 与服务端 lib/queries-db.js 同口径（有工号用工号，否则姓名）', () => {
+  const S = load(fakeStorage());
+  assert.strictEqual(S.userKeyOf(ME), '4711510');
+  assert.strictEqual(S.userKeyOf({ userName: '甲' }), '甲', '没工号时姓名兜底');
+  assert.strictEqual(S.userKeyOf({ userId: 4711510 }), '4711510', '数字工号要转成字符串');
+  assert.strictEqual(S.userKeyOf(null), '');
+  assert.strictEqual(S.userKeyOf('不是对象'), '', '非对象不能抛');
+});
+
+test('归属：save() 取不到当前用户时 owner 为空，但要把这件事显式回给调用方', () => {
+  const S = load(fakeStorage());   // 没有 CurrentUser
+  const r = S.save({ page: 'publish', name: '没人归属的一条', fields: { f_prodBatch: '2611' } });
+  assert.strictEqual(r.ok, true, '没身份不该阻止保存');
+  assert.strictEqual(r.item.owner, null);
+  assert.strictEqual(r.ownerMissing, true, '必须把「没记到归属」回传，否则三页 toast 无从提示');
+  assert.ok(/归属/.test(S.ownerSuffix(r)), '措辞要提到归属：' + S.ownerSuffix(r));
+  assert.strictEqual(S.ownerSuffix({ ok: true, ownerMissing: false }), '', '正常保存别加话');
+});
+
+test('归属：save() 有当前用户时自动落 owner，且 ownerMissing 为假', () => {
+  const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
+  const r = S.save({ page: 'publish', name: '我存的', fields: { f_prodBatch: '2611' } });
+  assert.strictEqual(r.ownerMissing, false, JSON.stringify(r));
+  assert.strictEqual(S.ownerSuffix(r), '');
+  const saved = S.get(r.item.id);
+  assert.strictEqual(saved.owner.userId, '4711510', '归属人必须真的落盘');
+  assert.strictEqual(saved.owner.teamName, '开发一部', '部门要一起存，否则部门排行算不出');
+});
+
+test('归属：显式传的 owner 优先于「当前用户」（导入/代录场景不该被覆盖）', () => {
+  const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
+  const r = S.save({ page: 'task', name: '替乙存的', fields: {}, owner: OTHER });
+  assert.strictEqual(S.get(r.item.id).owner.userId, '6464402');
+});
+
+test('「我的」列表：没有当前用户时返回空，绝不退化成"显示全部"', () => {
+  const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
+  S.save({ page: 'publish', name: '我的', fields: { a: '1' } });
+  S.save({ page: 'publish', name: '显式给乙的', fields: { a: '1' }, owner: OTHER });
+  assert.deepStrictEqual(S.listForUser(null), [], '拿不到身份就只能空着');
+  assert.deepStrictEqual(S.listForUser({}), [], '空对象也拿不到键');
+  const mine = S.listForUser(ME);
+  assert.strictEqual(mine.length, 1, '不该把同事的记录算进我的');
+  assert.strictEqual(mine[0].name, '我的');
+});
+
+test('「我的」列表：owner 为空的历史记录不属于任何人，limit 与倒序都要生效', () => {
+  const st = fakeStorage();
+  const anon = load(st);   // 故意不注入 CurrentUser：从这种页面存出去的就是孤儿
+  const orphan = anon.save({ page: 'publish', name: '孤儿（没归属）', fields: {} });
+  assert.strictEqual(orphan.ownerMissing, true);
+  const S = load(st, { CurrentUser: { get: () => ME } });
+  // 直接改盘：塞两条我自己的、时间不同（save 同名会覆盖，所以用不同名字）
+  const rows = JSON.parse(st.getItem(KEY)).map((it) => ({ ...it }));   // 存的是裸数组，不是 { items }
+  const withMine = rows.concat([
+    { id: 'm1', page: 'task', name: '早的', fields: {}, owner: ME, hits: 0, saves: 1, at: 100 },
+    { id: 'm2', page: 'task', name: '晚的', fields: {}, owner: ME, hits: 0, saves: 1, at: 900 },
+  ]);
+  st.setItem(KEY, JSON.stringify(withMine));   // 存储就是裸数组，别包一层 { items }
+  const mine = S.listForUser(ME);
+  assert.deepStrictEqual(mine.map((x) => x.name), ['晚的', '早的'], '按最近使用倒序');
+  assert.ok(!mine.some((x) => x.id === orphan.item.id), '没归属的记录不该出现在任何人的列表里');
+  assert.deepStrictEqual(S.listForUser(ME, 1).map((x) => x.name), ['晚的'], 'limit 要生效');
+});
+
+test('「我的」服务端版：mode 不是 user 一律拒绝（否则会把全量当"我的"）', async () => {
+  const noMode = loadSync(fakeStorage(), okJson({ items: [{ id: 'x', page: 'publish', name: '别人的', fields: {} }] }));
+  assert.strictEqual((await noMode.mineFromServer(ME)).ok, false, '没 mode = 没证明自己按人筛过');
+  const allMode = loadSync(fakeStorage(), okJson({ mode: 'all', items: [] }));
+  assert.strictEqual((await allMode.mineFromServer(ME)).ok, false);
+  const good = loadSync(fakeStorage(), okJson({ mode: 'user', items: [{ id: 'y', page: 'publish', name: '我的', fields: {}, owner: ME }] }));
+  const r = await good.mineFromServer(ME);
+  assert.strictEqual(r.ok, true, 'mode=user 才放行');
+  assert.strictEqual(r.items[0].name, '我的');
+  assert.strictEqual((await good.mineFromServer(null)).ok, false, '没身份不发请求');
+});
+
+test('「我的」服务端版：请求要带上工号，且工号做 URL 编码', async () => {
+  const seen = [];
+  const S = loadSync(fakeStorage(), async (url) => {
+    seen.push(url);
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { mode: 'user', items: [] } }) };
+  });
+  await S.mineFromServer({ userId: '甲 乙&丙', userName: '' });
+  assert.ok(/user=%E7%94%B2%20%E4%B9%99%26%E4%B8%99/.test(seen[0]), '必须编码：' + seen[0]);
+});
+
+test('页面接线防线：凡引用 saved-query.js 的页面，必须同时引用 current-user.js 且在它之前', () => {
+  // 为什么钉这条（而不是只写进文档）：漏引 current-user.js 不会产生任何报错，
+  // 只会让从那一页保存的查询 owner 为空 —— 用户表现为「我存了但首页没有」，
+  // 排查时又会先怀疑同步、再怀疑 SQLite，成本极高（2026-09-19 就是这么坏的）。
+  const pages = ['index.html', 'publish.html', 'subscription.html', 'task.html'];
+  pages.forEach((f) => {
+    const html = fs.readFileSync(path.join(ROOT, f), 'utf8');
+    const src = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map((m) => m[1]);
+    const iSaved = src.findIndex((s) => /saved-query\.js$/.test(s));
+    if (iSaved < 0) return;   // 这页不用常用查询模块，不该被这条用例管
+    const iUser = src.findIndex((s) => /current-user\.js$/.test(s));
+    assert.ok(iUser >= 0, `${f} 引了 saved-query.js 却没引 current-user.js：从本页保存的查询会没有归属人`);
+    assert.ok(iUser < iSaved, `${f} 的 current-user.js 必须排在 saved-query.js 之前`);
+  });
 });

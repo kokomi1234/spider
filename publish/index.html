@@ -424,14 +424,14 @@
     <!-- ═══ 常用查询（快捷入口）═══ -->
     <div class="card">
       <div class="card-head">
-        <h2>常用查询</h2>
+        <h2 id="savedTitle">我的常用查询</h2>
         <div class="toolbar">
           <span class="result-count" id="savedCount" aria-live="polite"></span>
           <!-- 同步是静默的（失败就退回本机），所以把这个状态显式摆出来。
                数据来自 SavedQuery.lastSyncState()，代理响应里的 file 就是它实际读写的库文件 -->
           <span class="sync-state is-local" id="savedSync" aria-live="polite" hidden></span>
-          <!-- 数据在本机 localStorage：换浏览器/换电脑就看不到别人的，
-               同团队要对齐就用这两个按钮交换（导出的是本机全部，不只本部门） -->
+          <!-- 列表按「当前用户」过滤（服务端 ?user=<工号>，回落本机），所以换人就会换列表；
+               导出/导入导的是**本机全部记录**，不只当前用户这几条 -->
           <button type="button" class="outlined btn-xs" id="btnExportQueries"
                   title="把本机全部常用查询导出成 JSON，发给同团队的人">导 出</button>
           <button type="button" class="outlined btn-xs" id="btnImportQueries"

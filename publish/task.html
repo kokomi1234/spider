@@ -476,6 +476,8 @@
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/ui/query-feedback.js"></script>
+  <!-- 不能省：SavedQuery.save() 的归属人兜底读 CurrentUser，缺了会让本页保存的查询 owner 静默为空 -->
+  <script src="js/ui/current-user.js"></script>
   <script src="js/ui/saved-query.js"></script>
   <script src="js/core/bootstrap.js"></script>
   <script src="js/page/task.js"></script>

@@ -664,7 +664,8 @@
     const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
     showToast((r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达')
-      + (typeof S.syncSuffix === 'function' ? S.syncSuffix() : ''), 2400, 'success');
+      + (typeof S.syncSuffix === 'function' ? S.syncSuffix() : '')
+      + (typeof S.ownerSuffix === 'function' ? S.ownerSuffix(r) : ''), 3200, 'success');
   }
 
   const btnSaveQuery = $('#btnSaveQuery');

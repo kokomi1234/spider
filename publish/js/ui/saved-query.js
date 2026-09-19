@@ -109,6 +109,16 @@
     return String(u.teamId || u.teamName || u.orgId || u.orgName || '').trim();
   }
 
+  /**
+   * 一个人的键：有工号用工号，否则用姓名。
+   * **口径必须与服务端 lib/queries-db.js 的 userKeyOf 一致**，否则
+   * 本机过滤与服务端 `?user=` 会切出两套不同的「我的」。
+   */
+  function userKeyOf(owner) {
+    const o = owner && typeof owner === 'object' ? owner : {};
+    return String(o.userId || o.userName || '').trim();
+  }
+
   /** labels 只收 string（展示用），空值丢弃 */
   function cleanLabels(labels) {
     const out = {};
@@ -260,6 +270,24 @@
       .slice(0, n);
   }
 
+  /**
+   * 「我保存的」——本机口径（服务端补充走 mineFromServer）。
+   * 与 listByDept 的区别：这里**不聚合**（同一个人存两份相同条件是两条不同的命名查询，
+   * 都该看见），也不按人数排，只按最近使用倒序。
+   *
+   * @param {{userId?:string, userName?:string}} user 当前用户；取不到键就返回空
+   *        （**绝不退化成"显示全部"** —— 那会把同事的记录当成我的）
+   */
+  function listForUser(user, limit) {
+    const key = userKeyOf(user);
+    if (!key) return [];
+    const mine = list()
+      .filter((it) => userKeyOf(it.owner) === key)
+      .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || (b.at - a.at));
+    const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+    return n ? mine.slice(0, n) : mine;
+  }
+
   /** 从首页点开一次 → 计一次打开（「高频」的依据；纯本地计数，不上报） */
   function hit(id) {
     if (!id) return fail('缺少 id');
@@ -306,15 +334,19 @@
 
     const items = list();
     const exists = items.find((it) => it.page === page && it.name === title);
+    // 谁保存的（用于「我的常用查询」与部门排行）。没显式传就取「当前用户」。
+    // ⚠️ 这个兜底**要求每个引用本模块的页面都加载了 current-user.js** ——
+    // 少引一个脚本不会报错，只会让 owner 静默变成 null，那条记录就永远进不了
+    // 任何按人/按部门的视图（2026-09-19 的三个查询页正是这么坏的）。
+    // 所以这里把「取不到归属」显式回给调用方，由页面 toast 说给用户听。
+    const ownerInfo = cleanOwner(owner || (window.CurrentUser && window.CurrentUser.get()));
     const item = {
       id: exists ? exists.id : newId(),
       page,
       name: title,
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
-      // 谁保存的（用于部门排行）。没显式传就取「当前用户」——
-      // 三个查询页因此不必各自接一次线，少三处漏传的可能。
-      owner: cleanOwner(owner || (window.CurrentUser && window.CurrentUser.get())),
+      owner: ownerInfo,
       // 同名同页覆盖时累加保存次数，而不是重置——「高频」既看打开也看保存
       saves: exists ? (exists.saves || 1) + 1 : 1,
       hits: exists ? (exists.hits || 0) : 0,
@@ -333,7 +365,11 @@
     }
     const w = writeRaw(next);
     if (w.ok) autoPush();
-    return w.ok ? { ok: true, item, updated: !!exists } : w;
+    if (w.ok && !ownerInfo) {
+      // 有声失败：没归属的记录在按人/按部门两种视图里都是隐形的，不给提示就会变成"我明明存了"
+      console.warn('[saved-query] 这条查询没有归属人（当前用户没设置，或本页没加载 current-user.js）');
+    }
+    return w.ok ? { ok: true, item, updated: !!exists, ownerMissing: !ownerInfo } : w;
   }
 
   function rename(id, name) {
@@ -586,6 +622,39 @@
     }
   }
 
+  /**
+   * 「我的常用查询」的服务端版本（?user=&lt;工号&gt;）。
+   * 为什么要走服务端：换浏览器 / 换电脑时本机 localStorage 是空的，
+   * 但记录在共享库里，按工号还能捞回来 —— 这才是「这个人存过哪些」的完整答案。
+   *
+   * 与 deptTopFromServer 同一条命门：**mode 必须严格等于 'user'**。
+   * JSON 存储或静态服务器会忽略查询参数、回全量列表，照渲染就等于把同事的记录显示成"我的"。
+   *
+   * @returns {Promise<{ok:boolean, items?:Array, storage?:string, error?:string}>}
+   */
+  async function mineFromServer(user, limit) {
+    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    const key = userKeyOf(user);
+    if (!key) return fail('未设置当前用户');
+    const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+    try {
+      const r = await window.fetch(
+        `${SERVER_URL}?user=${encodeURIComponent(key)}&limit=${n}`,
+        { headers: { Accept: 'application/json' }, cache: 'no-store' },
+      );
+      if (!r.ok) return fail('我的查询请求失败：HTTP ' + r.status);
+      const json = await r.json();
+      const data = json && json.data;
+      if (!data) return fail('我的查询返回异常（没有 data）');
+      if (data.mode !== 'user') return fail('存储后端不支持按人查询（回落到本机计算）');
+      const items = Array.isArray(data.items) ? data.items.map(sanitize).filter(Boolean) : null;
+      if (!items) return fail('我的查询返回异常（没有 items）');
+      return { ok: true, items, storage: String(data.storage || '') };
+    } catch (e) {
+      return fail('我的查询请求失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
   /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total, file?} 或 {ok:false,error} */
   async function syncFromServer() {
     if (!canSync()) return recordSync(noEndpoint('当前环境没有同步端点（静态部署或离线）'));
@@ -707,6 +776,17 @@
     return '';
   }
 
+  /**
+   * 保存结果里「没记到归属人」时追加的那半句 —— 措辞只这一处，三个查询页共用。
+   * 不说清的话，用户会觉得「我明明存了，首页怎么没有」：没归属的记录在
+   * 「我的常用查询」和部门排行里都是隐形的，而保存本身是成功的。
+   */
+  function ownerSuffix(r) {
+    return (r && r.ownerMissing)
+      ? ' · 但没记到归属人（先在首页设好当前用户），这条不会出现在「我的」和部门排行里'
+      : '';
+  }
+
   /** 各页跳转地址（与 proxy.js 的干净路由一致） */
   function hrefFor(page, id) {
     const base = page === 'task' ? '/task' : page === 'subscription' ? '/subscription' : '/publish';
@@ -727,6 +807,9 @@
     listByDept,
     deptTopFromServer,
     deptKeyOf,
+    listForUser,
+    mineFromServer,
+    userKeyOf,
     fingerprintOf,
     exportJson,
     importJson,
@@ -735,6 +818,7 @@
     lastSyncState,
     onSyncStateChange,
     syncSuffix,
+    ownerSuffix,
     remove,
     clear,
     hrefFor,

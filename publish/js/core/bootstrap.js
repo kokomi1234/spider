@@ -24,7 +24,8 @@
     // 少了谁都不能让它白屏，所以把 SavedQuery 点名在这里（渲染列表要用）。
     home: [
       ['SavedQuery', () => has(window.SavedQuery, 'list') && has(window.SavedQuery, 'save')
-        && has(window.SavedQuery, 'listByDept')],
+        && has(window.SavedQuery, 'listByDept') && has(window.SavedQuery, 'listForUser')
+        && has(window.SavedQuery, 'mineFromServer')],
       ['CurrentUser', () => has(window.CurrentUser, 'get') && has(window.CurrentUser, 'lookup')],
       ['UserApi', () => has(window.UserApi, 'fetchUserList')],
       ['toast', () => typeof window.toast === 'function'],
@@ -48,6 +49,10 @@
       ['SubscribeModel', () => has(window.SubscribeModel, 'displayBatch')],
       ['SubscribeDryRun', () => has(window.SubscribeDryRun, 'run')],
       ['DocPicker', () => has(window.DocPicker, 'open')],
+      // SavedQuery 与 CurrentUser 成对：前者负责「⭐ 保存到首页」，后者提供归属人兜底。
+      // 只引前者不引后者不会报错，但存出去的记录 owner 为空（2026-09-19 就是这么坏的）。
+      ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
+      ['CurrentUser', () => has(window.CurrentUser, 'get')],
     ],
     subscription: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
@@ -60,12 +65,16 @@
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
       ['SubscriptionModel', () => has(window.SubscriptionModel, 'rowKey')],
+      ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
+      ['CurrentUser', () => has(window.CurrentUser, 'get')],
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
+      ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
+      ['CurrentUser', () => has(window.CurrentUser, 'get')],
     ],
   };
 

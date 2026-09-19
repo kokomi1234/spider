@@ -60,10 +60,10 @@ const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition'] },
-  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery'] },
+  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
-  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition'] },
+  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
 ];
 
 (async () => {
@@ -124,11 +124,17 @@ const PAGES = [
 
           // ① 空态：还没存过常用查询
           out.emptyShown = !document.getElementById('savedEmpty').hidden;
+          out.emptyHintNoUser = document.getElementById('savedEmpty').textContent;
           out.items0 = document.querySelectorAll('#savedList .saved-item').length;
 
           // ② 存一条（走真实模块，不直接改 DOM），再渲染
           const S = window.SavedQuery;
           if (!S) return Object.assign(out, { err: 'SavedQuery 未加载' });
+          // 列表自 2026-09-19 起按当前用户过滤：没有身份时**故意什么都不显示**，
+          // 所以这一段要先立身份，才能验「存 → 渲染 → 删除」这条往返。
+          const CU = window.CurrentUser;
+          if (!CU) return Object.assign(out, { err: 'CurrentUser 未加载' });
+          CU.set({ userId: '9001', userName: '冒烟甲', teamId: 'T9', teamName: '开发九部' });
           const r = S.save({
             page: 'publish',
             name: '冒烟常用查询',
@@ -137,6 +143,8 @@ const PAGES = [
           });
           out.saved = r.ok;
           window.HomePage.render();
+          // 标题要跟着身份走（渲染之后才有名字）
+          out.titleAfterRender = document.getElementById('savedTitle').textContent;
           const card = document.querySelector('#savedList .saved-item');
           out.items1 = document.querySelectorAll('#savedList .saved-item').length;
           out.cardText = card ? card.textContent : '';
@@ -150,6 +158,7 @@ const PAGES = [
           out.countText = document.getElementById('savedCount').textContent;
 
           // ③ 删除（确认弹窗走 DialogUtils，点「确 认」）
+          if (!card) return Object.assign(out, { err: '存了但列表没渲染出卡片（按人过滤把身份弄丢了？）' });
           card.querySelector('.saved-ops button.danger').click();
           await new Promise((res) => setTimeout(res, 80));
           const ov = document.querySelector('.dlg-util-overlay');
@@ -158,6 +167,7 @@ const PAGES = [
           await new Promise((res) => setTimeout(res, 120));
           out.items2 = document.querySelectorAll('#savedList .saved-item').length;
           out.storageCleared = window.SavedQuery.list().length;
+          CU.clear();   // 后面几段各自会立自己的身份，这里别留残留
           return out;
         });
 
@@ -166,7 +176,10 @@ const PAGES = [
         const homeOk = !homeCheck.err
           && JSON.stringify(homeCheck.entries) === JSON.stringify(['/publish', '/task', '/subscription'])
           && homeCheck.emptyShown === true && homeCheck.items0 === 0
+          // 没设身份时空列表必须给"去设置当前用户"的指引，而不是显示别人的/全部的
+          && /当前用户/.test(homeCheck.emptyHintNoUser || '')
           && homeCheck.saved === true && homeCheck.items1 === 1
+          && /冒烟甲/.test(homeCheck.titleAfterRender || '')
           && homeCheck.badge === '服务发布数据查询'
           && /\/publish\?saved=/.test(homeCheck.href || '')
           && JSON.stringify(homeCheck.opsButtons) === JSON.stringify(['重命名', '删除'])
@@ -449,11 +462,19 @@ const PAGES = [
           const S = window.SavedQuery;
           if (!S) return { err: 'SavedQuery 未加载' };
           S.clear();
+          // 主列表自 2026-09-19 起**按当前用户过滤**（以前显示本机全集，换人列表纹丝不动），
+          // 所以这里先立一个身份。下面「同事发来的文件」那条归属是 1001，不该出现在我的列表里。
+          const CU = window.CurrentUser;
+          if (!CU) return { err: 'CurrentUser 未加载（本页没引 current-user.js？）' };
+          CU.set({ userId: '9001', userName: '冒烟甲', teamId: 'T9', teamName: '开发九部' });
           out.hasButtons = !!document.getElementById('btnExportQueries')
             && !!document.getElementById('btnImportQueries');
           if (!S.importJson || !S.exportJson) return { err: '缺少 exportJson / importJson' };
 
-          S.save({ page: 'publish', name: '本机查询', fields: {}, owner: null });
+          S.save({ page: 'publish', name: '本机查询', fields: {} });
+          // 存的时候自动带上归属人（current-user.js 在场），且不再报 ownerMissing
+          out.mineOwnerSaved = !!(S.list()[0] && S.list()[0].owner);
+          out.ownerMissingFlag = S.save({ page: 'publish', name: '第二条', fields: {} }).ownerMissing === false;
           const text = S.exportJson();
           out.exportHasApp = /"app":\s*"spider-saved-queries"/.test(text);
           out.exportCount = (JSON.parse(text).items || []).length;
@@ -471,7 +492,24 @@ const PAGES = [
           out.firstImport = { ok: r1.ok, added: r1.added, total: r1.total };
           const r2 = S.importJson(incoming);   // 重复导入应幂等
           out.secondImport = { added: r2.added, merged: r2.merged, total: r2.total };
-          out.renderedCount = (window.HomePage.render(), document.querySelectorAll('#savedList .saved-item').length);
+          const rendered = () => document.querySelectorAll('#savedList .saved-item').length;
+          const renderedNames = () => [...document.querySelectorAll('#savedList .saved-name')].map((e) => e.textContent);
+          window.HomePage.render();
+          out.renderedCount = rendered();
+          out.renderedNames = renderedNames();
+          out.titleSaysMine = /我的常用查询/.test(document.getElementById('savedTitle').textContent);
+
+          // 换成那位同事 → 列表必须跟着换成人家的（这条是"按人过滤"的反向证据）
+          CU.set({ userId: '1001', userName: '李四', teamId: 'M2534', teamName: '中国银行软件中心（深圳）开发一部' });
+          window.HomePage.render();
+          out.afterSwitchCount = rendered();
+          out.afterSwitchNames = renderedNames();
+
+          // 没身份 → 空列表 + 指引文案，**不能**退回显示全部
+          CU.clear();
+          window.HomePage.render();
+          out.noUserCount = rendered();
+          out.noUserHint = document.getElementById('savedEmpty').textContent;
 
           // 共享同步：冒烟用的是自带静态服务器，没有 /local/saved-queries 端点，
           // 所以这里只验「能力就位 + 失败时安静降级」，真实共享由联调脚本验。
@@ -483,16 +521,25 @@ const PAGES = [
           S.clear();
           return out;
         });
-        process.stdout.write(`  导出/导入: ${JSON.stringify(ioCheck)}\n`);
+        process.stdout.write(`  导出/导入 + 按人过滤: ${JSON.stringify(ioCheck)}\n`);
         const ioOk = !ioCheck.err && ioCheck.hasButtons && ioCheck.exportHasApp
-          && ioCheck.exportCount === 1
+          && ioCheck.mineOwnerSaved === true && ioCheck.ownerMissingFlag === true
+          && ioCheck.exportCount === 2
           && ioCheck.firstImport && ioCheck.firstImport.ok && ioCheck.firstImport.added === 1
-          && ioCheck.firstImport.total === 2
-          && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 2
+          && ioCheck.firstImport.total === 3
+          && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 3
+          // 我的两条 + 同事的那条不该出现
           && ioCheck.renderedCount === 2
+          && ioCheck.renderedNames && !ioCheck.renderedNames.some((n) => /同事的查询/.test(n))
+          && ioCheck.titleSaysMine === true
+          // 换人之后只剩同事那一条
+          && ioCheck.afterSwitchCount === 1
+          && ioCheck.afterSwitchNames && ioCheck.afterSwitchNames.some((n) => /同事的查询/.test(n))
+          // 没身份 → 0 条 + 指引（关键防线：不许静默退回"显示全部"）
+          && ioCheck.noUserCount === 0 && /当前用户/.test(ioCheck.noUserHint || '')
           && ioCheck.hasSyncApi === true && ioCheck.pushWithoutEndpoint === true;
         if (!ioOk) {
-          process.stdout.write(`    [FAIL] 导出/导入异常：${JSON.stringify(ioCheck)}\n`);
+          process.stdout.write(`    [FAIL] 导出/导入 / 按人过滤异常：${JSON.stringify(ioCheck)}\n`);
           anyFail = true;
         }
 

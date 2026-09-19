@@ -122,6 +122,18 @@ function makeSavedQuery(seed, syncState) {
       subscription: '服务订阅关系查询',
     },
     list() { return store.slice(); },
+    // 与真实实现同口径：有工号用工号、否则姓名；取不到键就是「没有我的」，绝不退回全部
+    userKeyOf: (u) => String((u && (u.userId || u.userName)) || ''),
+    listForUser(user) {
+      const key = String((user && (user.userId || user.userName)) || '');
+      if (!key) return [];
+      return store
+        .filter((it) => String((it.owner && (it.owner.userId || it.owner.userName)) || '') === key)
+        .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || ((b.at || 0) - (a.at || 0)));
+    },
+    // 默认不提供服务端数据：让首页停在「本机渲染」这条分支上（也顺带钉住
+    // 「服务端这条路失败就别覆盖本机结果」）。要用服务端数据的用例自己覆盖它。
+    mineFromServer: async () => ({ ok: false, error: '测试替身默认不供服务端数据' }),
     get(id) { return store.find((it) => it.id === id) || null; },
     save(item) { store = [item, ...store]; return { ok: true, item }; },
     hit(id) {
@@ -208,7 +220,13 @@ function buildEnv(opts = {}) {
   };
   const doc = fakeDocument(els);
 
-  const sq = makeSavedQuery(opts.items || [], opts.syncState);
+  // 默认已设置当前用户：主列表自 2026-09-19 起按人过滤，不设置的人看到的是空列表。
+  // 要测「未设置」那种情况，用例自己传 currentUser: null。
+  const cu = opts.currentUser === undefined ? ME : opts.currentUser;
+  // 没写 owner 的种子按「就是当前用户存的」补；显式写了 owner: null 的保持无归属
+  // （那是专门用来验证「没归属的记录不该出现在任何人的列表里」的场景）
+  const seed = (opts.items || []).map((it) => (it && 'owner' in it ? it : { ...(it || {}), owner: cu }));
+  const sq = makeSavedQuery(seed, opts.syncState);
 
   const toasts = [];
   const ls = new Map(Object.entries(opts.localStorage || {}));
@@ -224,7 +242,7 @@ function buildEnv(opts = {}) {
   if (opts.loadSavedQuery !== false) win.SavedQuery = sq;
 
   // 可控的当前用户：null = 未设置
-  const cuState = { user: opts.currentUser || null };
+  const cuState = { user: cu };
   win.CurrentUser = {
     STORAGE_KEY: 'spider.currentUser.v1',
     get: () => cuState.user,
@@ -440,6 +458,7 @@ test('SavedQuery.list() 抛异常（localStorage 坏了）→ render() 吞异常
   const { win, els, toasts } = buildEnv({ items: [{ id: 'q1', page: 'publish', name: 'a', at: 1 }] });
   // 让 list 抛错，模拟 localStorage 损坏（render 内部已 try/catch）
   win.SavedQuery.list = () => { throw new Error('localStorage 不可用'); };
+  win.SavedQuery.listForUser = () => { throw new Error('localStorage 不可用'); };
   // 重新触发一次 render（加载时那次是好的，这里测坏路径）
   assert.doesNotThrow(() => win.HomePage.render(), 'list 抛错时 render() 不应抛异常');
   assert.strictEqual(els.savedList.children.length, 0, '读失败时应渲染空列表');
