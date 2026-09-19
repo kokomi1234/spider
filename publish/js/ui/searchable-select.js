@@ -23,10 +23,61 @@
 
   let instanceSeq = 0;
 
+  /**
+   * 取一个元素「该叫什么」，给组件内部**后建**的可聚焦元素当可访问名称。
+   *
+   * 为什么需要：这个组件是「隐藏宿主 + 显示一个新建的 input」，而页面上的
+   * `<label for>` 指的是宿主 —— 名字传不到真正能被聚焦的那个框上，读屏软件
+   * 只会念出 placeholder 或选中值，用户不知道这栏是「部门名称」还是「调用方系统」。
+   * 取名的优先级（显式传入 > 元素自己的 aria-label > 关联 label 文案 >
+   * 同组 label > title）覆盖三种写法：for 型 label、包裹式 label、
+   * 以及压根没有 label 的（评委行那种，只能由调用方显式传 opts.label）。
+   *
+   * 只读结构、不改结构：这条是待办里明确的约束（改 DOM 会牵动弹出层定位与样式契约）。
+   *
+   * @param {Element} el 宿主元素
+   * @param {{label?:string}} [opts] 调用方显式指定的字段名（没有 label 可取的控件用这个）
+   * @returns {string} 去掉多余空白的名称；取不到就是空串（空串就不要写 aria-label）
+   */
+  function accessibleNameOf(el, opts) {
+    if (opts && opts.label) return String(opts.label).replace(/\s+/g, ' ').trim();
+    if (!el || typeof el.getAttribute !== 'function') return '';
+    const own = el.getAttribute('aria-label');
+    if (own && String(own).trim()) return String(own).trim();
+
+    const one = (t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim();
+    const parts = [];
+    // 原生 .labels 同时覆盖 for 型与包裹式；假 DOM / 老浏览器上没有，退回按 id 查
+    const labels = el.labels;
+    if (labels && labels.length) {
+      for (let i = 0; i < labels.length; i++) parts.push(one(labels[i].textContent));
+    } else if (el.id && typeof document !== 'undefined' && document.querySelector) {
+      const sel = 'label[for="' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(el.id) : el.id) + '"]';
+      const l = document.querySelector(sel);
+      if (l) parts.push(one(l.textContent));
+    }
+    if (!parts.filter(Boolean).length && typeof el.closest === 'function') {
+      const wrap = el.closest('label');
+      if (wrap) parts.push(one(wrap.textContent));
+    }
+    let name = parts.filter(Boolean).join(' ');
+
+    // 多选控件那种「label 与容器是兄弟、没写 for」的写法：退到同一表单组里的 label
+    if (!name && typeof el.closest === 'function') {
+      const group = el.closest('.form-group,.sub-row,.doc-filter-item,.field,.filter-item');
+      const gl = group && group.querySelector ? group.querySelector('label') : null;
+      name = one(gl && gl.textContent);
+    }
+    return name || one(el.getAttribute('title'));
+  }
+
   function createSearchableSelect(targetEl, options = [], opts = {}) {
     const isSelect = targetEl.tagName === 'SELECT';
     const disabled = !!(opts && opts.disabled);
-    const basePlaceholder = targetEl.getAttribute('placeholder') || '请输入或选择';
+    // placeholder 原先只从宿主属性取，调用方传的 opts.placeholder 是死参数
+    // （subscribe-dialog 里就白传过一次），这里接上，优先级仍是宿主属性在前
+    const basePlaceholder = targetEl.getAttribute('placeholder')
+      || (opts && opts.placeholder) || '请输入或选择';
 
     // SELECT 分支：未显式传选项时，从原 <select> 的静态 options 读取（单一数据源）
     let list = [];
@@ -53,6 +104,10 @@
     input.autocomplete = 'off';
     input.spellcheck = false;
     if (disabled) input.disabled = true;
+    // 可访问名称：页面上的 label 指的是被隐藏的那个宿主，传不到这个新建的框上，
+    // 所以显式把字段名写上来（取不到名字就不写，免得留一个空 aria-label）
+    const hostName = accessibleNameOf(targetEl, opts);
+    if (hostName) input.setAttribute('aria-label', hostName);
 
     const arrow = document.createElement('span');
     arrow.className = 'searchable-select-arrow';
@@ -658,5 +713,8 @@
 
   if (typeof window !== 'undefined') {
     window.createSearchableSelect = createSearchableSelect;
+    // 取名这件事只留一份实现：本文件在 multi-select.js 之前加载（三页都是），
+    // 多选的 display 框同样是「后建的、label 指不到它」，共用同一个口径。
+    window.createSearchableSelect.accessibleNameOf = accessibleNameOf;
   }
 })();

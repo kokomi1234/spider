@@ -19,6 +19,7 @@ require('./data-parsers.test');
 require('./tool-api.test');
 require('./user-api.test');
 require('./publish-response.test');
+require('./a11y-name.test');
 require('./publish-model.test');
 require('./publish-view.test');
 require('./publish-query.test');

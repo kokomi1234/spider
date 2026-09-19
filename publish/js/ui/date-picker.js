@@ -119,11 +119,31 @@
     inputWrapper.appendChild(arrowButton);
     wrapper.appendChild(panel);
 
+    /**
+     * 这一栏叫什么 —— 全站 60 个日历箭头以前都叫「打开日期选择器」，
+     * 读屏 Tab 过去完全分不清是哪一栏的日期。取名口径与可搜索下拉共用一份
+     * （label[for] / 包裹式 label / aria-label / title 依次兜底），拿不到就退回原样。
+     */
+    function fieldLabel() {
+      const factory = window.createSearchableSelect;
+      if (factory && typeof factory.accessibleNameOf === 'function') {
+        try {
+          const n = factory.accessibleNameOf(inputEl);
+          if (n) return n;
+        } catch (_) { /* 取不到就用下面的兜底 */ }
+      }
+      return String(inputEl.getAttribute('aria-label') || inputEl.placeholder || '').trim();
+    }
+
     function updateDisplay() {
       const value = selectedDate ? formatDate(selectedDate) : '';
       inputEl.value = value;
       inputEl.placeholder = selectedDate ? '' : '选择日期';
-      arrowButton.setAttribute('aria-label', selectedDate ? '重新选择日期' : '打开日期选择器');
+      const who = fieldLabel();
+      const prefix = who ? `${who} · ` : '';
+      const action = selectedDate ? '重新选择日期' : '打开日期选择器';
+      arrowButton.setAttribute('aria-label', prefix + action);
+      panel.setAttribute('aria-label', prefix + '日期选择器');
     }
 
     function updateOpenState() {

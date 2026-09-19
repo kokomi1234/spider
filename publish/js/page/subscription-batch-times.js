@@ -144,9 +144,11 @@
     tbody.innerHTML = batchTimeData.map((item, idx) => `<tr>
         <td class="batch-label">${esc(item.batch)}</td>
         <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="testDate"
-                   value="${esc(item.testDate)}" placeholder="选择日期" readonly></td>
+                   value="${esc(item.testDate)}" placeholder="选择日期" readonly
+                   aria-label="${esc(item.batch)} 功能测试时间"></td>
         <td><input type="text" class="batch-time-date" data-idx="${idx}" data-field="releaseDate"
-                   value="${esc(item.releaseDate)}" placeholder="选择日期" readonly></td>
+                   value="${esc(item.releaseDate)}" placeholder="选择日期" readonly
+                   aria-label="${esc(item.batch)} 上线时间"></td>
       </tr>`).join('');
 
     const inputs = Array.from(tbody.querySelectorAll('input.batch-time-date'));

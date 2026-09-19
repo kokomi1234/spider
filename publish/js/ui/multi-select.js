@@ -46,12 +46,21 @@
 
     const selected = new Set();
     let list = Array.isArray(options) ? options.slice() : [];
-    const label = placeholder || '全部';
+    // 占位文案与「这栏叫什么」是两件事：原先第三个参数同时当两者用，读屏念出来的是
+    // 「全部批次」而不是字段名「排期批次」。名字改成从宿主推（口径与可搜索下拉共用一份，
+    // 见 searchable-select.js 的 accessibleNameOf），推不到才退回占位文案。
+    const phText = (typeof placeholder === 'string' && placeholder.trim()) ? placeholder.trim() : '全部';
+    const factory = window.createSearchableSelect;
+    const hostName = (factory && typeof factory.accessibleNameOf === 'function')
+      ? factory.accessibleNameOf(host) : '';
+    // 页面上的 label 本身就写着「排期批次（可多选）」，再后缀一次会变成
+    // 「排期批次（可多选）（可多选）」—— 先剥掉宿主名里已有的那层
+    const label = String(hostName || phText).replace(/[（(]\s*可多选\s*[)）]\s*$/, '').trim() || phText;
     // 面板 id 唯一：aria-controls 要指向它（同页多个多选控件不能撞 id）
     const panelId = 'msel-panel-' + (++mselSeq);
 
     host.innerHTML = `
-      <input type="text" class="msel-display" readonly placeholder="${esc(label)}"
+      <input type="text" class="msel-display" readonly placeholder="${esc(phText)}"
              role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="${panelId}"
              aria-label="${esc(label + '（可多选）')}"
              title="点击或按回车 / 空格选择（可多选）">

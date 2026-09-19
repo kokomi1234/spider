@@ -849,13 +849,14 @@
           <button type="button" class="outlined btn-xs" id="btnDocPrev">‹ 上一页</button>
           <span class="doc-page-num" id="docPageInfo">1 / 1</span>
           <button type="button" class="outlined btn-xs" id="btnDocNext">下一页 ›</button>
-          <select id="docPageSize" class="doc-page-size">
+          <select id="docPageSize" class="doc-page-size" aria-label="文档列表每页条数">
             <option value="10">10 条/页</option>
             <option value="30">30 条/页</option>
             <option value="50">50 条/页</option>
           </select>
           <span class="doc-jump">
-            跳至 <input type="number" id="docPageJump" class="doc-jump-input" min="1" value="1"> 页
+            跳至 <input type="number" id="docPageJump" class="doc-jump-input" min="1" value="1"
+                   aria-label="跳转到指定页码"> 页
           </span>
         </div>
       </div>
@@ -922,6 +923,6 @@
   <script src="js/page/publish-view.js"></script>
   <script src="js/page/publish-query.js"></script>
   <script src="js/core/bootstrap.js"></script>
-  <script src="js/page/index.js"></script>
+  <script src="js/page/publish.js"></script>
 </body>
 </html>
