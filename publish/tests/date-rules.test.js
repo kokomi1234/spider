@@ -124,7 +124,7 @@ test('窗口：任意基准月都是连续的 12 个月，不重不跳（含跨�
 // ── 4. 跨时区：同一个物理时刻，结果与机器时区无关 ────────
 
 test('业务时区：同一个物理时刻在任意机器时区下，"今天"和窗口都一致', () => {
-  const probe = path.join(__dirname, 'tz-probe.js');
+  const probe = path.join(__dirname, 'probes', 'tz-probe.js');
   // 2026-09-30T20:00Z == 北京时间 2026-10-01 04:00（UTC/纽约还是 9/30 —— 正是会偏一个月的时刻）
   const at = Date.UTC(2026, 8, 30, 20, 0);
 

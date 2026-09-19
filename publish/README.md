@@ -10,7 +10,7 @@
 | 页面 | 用途 | 入口脚本 |
 |---|---|---|
 | `index.html` | **首页**：三个查询页入口 + 常用查询快捷卡片 | `js/page/home.js` |
-| `publish.html` | 服务发布数据查询（含订阅管理、CSV 导出） | `js/page/index.js` |
+| `publish.html` | 服务发布数据查询（含订阅管理、CSV 导出） | `js/page/publish.js` |
 | `task.html` | 任务单查询 | `js/page/task.js` |
 | `subscription.html` | 服务订阅关系查询（投产优先级、列宽拖拽） | `js/page/subscription.js` |
 
@@ -22,8 +22,10 @@
 
 ### 常用查询（保存到首页）
 
-三个查询页的筛选区都有「⭐ 保存到首页」：把当前筛选条件存一份到 `localStorage`
-（模块 `js/ui/saved-query.js`，**不上传、不参与请求**），首页渲染成卡片，
+三个查询页的筛选区都有「⭐ 保存到首页」：把当前筛选条件先存一份到 `localStorage`
+（模块 `js/ui/saved-query.js`，**不进任何 ITAMP 请求**），起了本地代理时再与它的共享库
+双向同步（首页卡头那个角标如实显示「已同步 N 条 / 仅本机 / 同步失败」），
+首页渲染成卡片，
 点卡片任意处即跳 `/publish?saved=<id>` 并自动回填条件 + 查一次（整块主体就是链接，
 没有单独的打开按钮；右侧只留重命名 / 删除）。
 
@@ -78,6 +80,11 @@ POST /local/saved-queries                        → body { items, deletedIds }�
 - 要跨机器共享，在根目录 `.env` 里把位置指到一个所有人都能访问的**同一个库**：
   `PROXY_QUERIES_DB=\\nas\share\saved-queries.db`（Windows 网络盘；macOS/Linux 写挂载点路径）。
   同一个文件路径就是同一个团队库。
+- **降级那条路也有自己的位置变量**：`PROXY_QUERIES_FILE`（JSON 降级用，默认仓库根的
+  `shared/saved-queries.json`）。上面「回落 JSON」**不只发生在 Node < 22.5**：SQLite **打不开**
+  （目录/文件权限不够、库被别的进程独占）时同样会回落，而 `.db` 与 `.json` 是两个不同的后端 ——
+  只配 `PROXY_QUERIES_DB` 的话，一旦降级就等于换到一份空库上。触发条件、部门排行会退化成什么、
+  两个变量怎么一起配，都写在 **`shared/README.md`** 里（`.env.example` 里也有这两行注释）。
 - 合并规则与前端一致：按 id 或「同页面同名」判重，`hits/saves/lastAt` 取 **max**
   （所以反复提交同一个文件是幂等的，刷不出高频排行）。
 - **删除带墓碑**：删除意图随 POST 提交（`deletedIds`），服务端把它记进 `deleted`
@@ -86,12 +93,16 @@ POST /local/saved-queries                        → body { items, deletedIds }�
 - 前端：首页打开时同步一次（提交本机 + 取回全集）；保存 / 重命名 / 删除会自动回推；
   点卡片跳走时用 `sendBeacon` 补一次，保证「打开次数」也带得走。
   没有端点（静态部署 / 离线 / 冒烟环境）时全部安静失败，只用本机数据。
+  **安静不代表看不见**：`SavedQuery.lastSyncState()` 把每次同步的结果如实记下来
+  （shared / local / fail / pending），首页「常用查询」卡头的 `#savedSync` 角标就是它的翻译
+  —— 「已同步 N 条 / 仅本机 / 同步失败」，库文件路径、存储类型、保存者人数都在 title 里；
+  还没同步过（pending）时不显示，免得首屏闪一个假的「仅本机」。
 - 还有一个不依赖代理的兜底：首页「导 出 / 导 入」JSON 文件交换。
 
 ## 🚀 快速开始
 
 ```bash
-cd publish && node proxy.js        # 端口 3000，注入 token + CORS，并同时提供静态服务
+cd publish && node proxy.js        # 默认只绑 127.0.0.1:3000；注入 token + CORS，并同时提供静态服务
 ```
 
 然后打开 `http://localhost:3000/`（自动跳 `/home`，即首页）；
@@ -170,9 +181,7 @@ publish/
 │                        #   + live-probe-saved-query.js（联调诊断，需代理与后端可达）
 ├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
 └── tools/               # 开发工具，不参与页面加载
-    ├── har-import.js        # HAR → cache/（离线回放的数据来源）
-    ├── mock-data.js         # 手写 Mock 数据（调试用）
-    ├── mock-proxy.js        # Mock 代理，端口 3001（调试用）
+    ├── har-import.js        # HAR → cache/（离线回放的数据来源；原来手写的 mock 后端已移除）
     └── my-subscribed-services.txt  # 订阅导入的测试数据
 ```
 
@@ -181,9 +190,14 @@ publish/
 
 ## ✨ 页面功能与字段映射
 
-### index.html（服务发布数据查询）
+### index.html（首页：三页入口 + 常用查询 + 当前用户 + 部门排行）
 
-筛选条件与后端字段的对应关系定义在 `js/page/index.js` 的 `FIELDS`：
+不查后端接口，只读本地代理的 `/local/saved-queries`（见上面「常用查询」一节）。
+脚本 `js/page/home.js`；同步状态角标 `#savedSync`、部门排行 `#deptList` 都在这页。
+
+### publish.html（服务发布数据查询）
+
+筛选条件与后端字段的对应关系定义在 `js/page/publish.js` 的 `FIELDS`：
 
 | 页面字段 | 后端 key | 模式 | 备注 |
 |---|---|---|---|
@@ -208,6 +222,11 @@ publish/
 ### task.html（任务单查询）
 
 多条件查询 + 结果表格 + 详情弹窗；筛选项集中在「更多筛选项」折叠区。
+
+导出 CSV：按页拉全（`EXPORT_PAGE_SIZE 500`，上限 `EXPORT_MAX 5000`，串行），循环与取消
+都在 `CsvExporter.fetchAllPages` 里；**进展写在 `#resultCount`**（「· 导出中 x/y 条」，
+不占按钮宽度），期间按钮文案变「取消导出」，**再点一次 = `AbortController.abort()`**，
+中止与失败分开提示（取消不会被说成「导出失败」，也不会生成文件）。
 
 ### subscription.html（服务订阅关系查询）
 
@@ -267,8 +286,6 @@ node tools/har-import.js ../analysis/har/进入请求.har
 # 从 HAR 生成接口文档 / OpenAPI
 python3 ../analysis/har2doc.py ../analysis/har/进入请求.har -o ../analysis/output --format md
 
-# 本地 Mock 调试（不需要后端，端口 3001）
-node tools/mock-proxy.js
 ```
 
 ## 📝 接口文档

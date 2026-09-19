@@ -43,8 +43,10 @@ publish/node_modules/
 publish/vendor/**/* 2.*
 
 # Symlink aliases so every AI tool reads the same memory dir (.workbuddy)
+# （2026-09-19：.workbuddy-ai 已换成真 symlink；.opencode.bak 是它改成文本文件前的残留备份，纯垃圾）
 .workbuddy-ai
 .opencode
+.opencode.bak
 
 # 个人订阅清单（含真实 serverCoding / 组件编号，属内部数据，不入库）
 publish/tools/my-subscribed-services.txt

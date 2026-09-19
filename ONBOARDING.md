@@ -32,13 +32,16 @@ PROXY_OFFLINE=1 node proxy.js
 spider/
 ├── ONBOARDING.md            ← 本文，上手入口
 ├── publish/                 ← 前端项目（唯一交付物）
-│   ├── index.html           # 页面①：服务发布数据查询
+│   ├── index.html           # 首页：三页入口 + 常用查询 + 当前用户 + 部门排行
+│   ├── publish.html         # 页面①：服务发布数据查询（2026-09-18 起从 index.html 迁出）
 │   ├── task.html            # 页面②：任务单查询（首页工具栏有入口）
 │   ├── subscription.html    # 页面③：服务订阅关系查询
 │   ├── theme.css            # 全站唯一样式来源（令牌 + 组件 + 弹窗）
 │   ├── proxy.js             # 代理：转发/录制/离线回放（entry，勿挪）
 │   ├── README.md            # 运行细节（mock/离线/缓存管理）
 │   ├── API接入与上线指南.md   # 请求链路、生产部署、新接口接入流程
+│   ├── lib/                 # 只给代理用的服务端库：queries-db.js（常用查询的 SQLite 存储层，
+│   │                        #   Node 内置 node:sqlite，零 npm 依赖；不可用/打不开时回落 JSON）
 │   ├── js/
 │   │   ├── core/            # 运行时基建：runtime-config / api-client / bootstrap
 │   │   ├── api/             # 接口层（每域一个文件，ENDPOINTS+METHODS 模式）
@@ -52,6 +55,9 @@ spider/
 │   ├── docs/                # 设计规范（design-system.md）、订阅导入说明
 │   ├── tools/               # 开发工具：har-import（HAR→缓存）、mock-proxy
 │   └── cache/               # 代理录制的离线响应（gitignore，勿提交）
+├── shared/                  ← 跨机器共享库（首页「常用查询」落盘在这里：saved-queries.db /
+│                              降级用的 saved-queries.json）；**怎么配才算同一个团队库见
+│                              `shared/README.md`**，文件不入库
 ├── analysis/                ← 抓包分析线（接口事实的唯一来源）
 │   ├── har/                 # 原始抓包：进入请求/查询接口/userinfo/任务单查询 + 订阅.json
 │   ├── har2doc.py           # HAR → 接口文档生成器
@@ -72,6 +78,7 @@ spider/
 | 订阅关系页的设计方案（含各字段设计意图） | `publish/docs/服务订阅关系查询页面设计.md` |
 | 当前还欠什么、在等什么 | `TODO.md`（根目录） |
 | 订阅列表导入测试数据 | `publish/docs/导入说明.md` |
+| **跨机器共享怎么配**（常用查询的团队库、SQLite 与 JSON 降级、端点与合并规则） | `shared/README.md` |
 | 项目长期约定与踩坑史 | `.workbuddy/memory/MEMORY.md` |
 
 ## 安全与保密（务必遵守）
