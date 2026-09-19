@@ -18,6 +18,7 @@ test('SubscribeModel：暴露预期接口且冻结', () => {
     'displayBatch', 'batchLabel', 'batchSortKey', 'buildDocBatchOptions',
     'pickField', 'normalizeDigits', 'judgeFieldsFromApi', 'roleOptionsWith', 'toServiceNoOptions',
     'deriveCallerServiceNo', 'toJudgeInfoList', 'validateSubscribe', 'validateJudgeSubmit',
+    'judgeQueryIsEmpNo', 'judgeSearchOutcome',
     'createUserCache', 'opts',
   ].forEach((k) => assert.strictEqual(typeof SM[k], 'function', '缺少函数 ' + k));
   ['DICT', 'SEARCHABLE_FIELDS', 'DOC_SEARCHABLE_IDS', 'TEXT_FIELDS'].forEach((k) => {
@@ -512,4 +513,97 @@ test('JUDGE_ROW_TEMPLATE：仍是 6 个单元格的评委行', () => {
   ['judge-check', 'judge-idx', 'judge-role', 'judge-no', 'judge-name', 'judge-dept']
     .forEach((cls) => assert.ok(SM.JUDGE_ROW_TEMPLATE.includes(cls), '缺 ' + cls));
   assert.ok(SM.JUDGE_ROW_TEMPLATE.includes('placeholder="请输入工号"'));
+});
+
+// ══════════════════════════════════════════════════════════
+// 评委搜索结果核对（从 subscribe-dialog 的搜索闭包里抽出来的那段判断）
+// ══════════════════════════════════════════════════════════
+//
+// 抽出来的动机：后端会**忽略查询参数**（2026-09-18 实测：按姓名搜返回的是 token
+// 对应的登录人）。这段核对以前只有浏览器冒烟覆盖，node 侧测不到；
+// 而它守的是「把评委填成别人」——评委要提交给后端审批，填错人代价很高。
+
+const LOGINER = { userId: '4711510', userName: '兰春武', teamName: '开发三部' };
+
+test('judgeQueryIsEmpNo：纯数字算工号，带空格也算；汉字/混合都不算', () => {
+  assert.strictEqual(SM.judgeQueryIsEmpNo('4711510'), true);
+  assert.strictEqual(SM.judgeQueryIsEmpNo('  4711510 '), true, '输入要 trim 后再判');
+  assert.strictEqual(SM.judgeQueryIsEmpNo('郑梓辉'), false);
+  assert.strictEqual(SM.judgeQueryIsEmpNo('4711510a'), false);
+  assert.strictEqual(SM.judgeQueryIsEmpNo(''), false);
+  assert.strictEqual(SM.judgeQueryIsEmpNo(null), false, 'null/undefined 不能抛');
+});
+
+test('工号搜索：返回的就是那个工号 → 给下拉用', () => {
+  const o = SM.judgeSearchOutcome({ ok: true, user: LOGINER }, '4711510');
+  assert.strictEqual(o.byEmpNo, true);
+  assert.strictEqual(o.kind, 'users');
+  assert.deepStrictEqual(o.users, [LOGINER]);
+});
+
+test('工号搜索：后端返回了**别人**（忽略了参数）→ 绝不进下拉，只提示不一致', () => {
+  const o = SM.judgeSearchOutcome({ ok: true, user: LOGINER }, '8404725');
+  assert.strictEqual(o.kind, 'busy', '不是 users —— 填错评委比搜不到严重得多');
+  assert.ok(/8404725/.test(o.text) && /4711510/.test(o.text), '要说清输入的是什么、返回的是什么：' + o.text);
+  assert.ok(/不一致/.test(o.text));
+});
+
+test('工号搜索：后端返回数字工号也要能对上（报文里 userId 有时是 number）', () => {
+  const o = SM.judgeSearchOutcome({ ok: true, user: { userId: 4711510, userName: '兰春武' } }, '4711510');
+  assert.strictEqual(o.kind, 'users', 'String(userId) !== kw 的比较必须先把数字转字符串');
+});
+
+test('工号搜索：没这个人 → 明说按 userId 精确匹配；接口失败 → 带上原因', () => {
+  assert.strictEqual(SM.judgeSearchOutcome({ ok: true, user: null }, '4711510').text,
+    '未找到该工号（接口按 userId 精确匹配）');
+  const f = SM.judgeSearchOutcome({ ok: false, error: 'HTTP 500' }, '4711510');
+  assert.strictEqual(f.kind, 'busy');
+  assert.ok(/HTTP 500/.test(f.text), f.text);
+});
+
+test('姓名搜索：只认「名字里真的含关键字」的人，登录人不算命中', () => {
+  const other = { userId: '1001', userName: '郑梓辉' };
+  const o = SM.judgeSearchOutcome({ ok: true, list: [LOGINER, other] }, '郑梓辉');
+  assert.strictEqual(o.byEmpNo, false);
+  assert.strictEqual(o.kind, 'users');
+  assert.deepStrictEqual(o.users, [other], '登录人必须被筛掉，否则选中就把评委填成了他');
+});
+
+test('姓名搜索：返回的全是不相干的人（典型=登录人）→ 提示改用工号，不进下拉', () => {
+  const o = SM.judgeSearchOutcome({ ok: true, list: [LOGINER] }, '郑梓辉');
+  assert.strictEqual(o.kind, 'busy');
+  assert.ok(/请直接填工号/.test(o.text), o.text);
+});
+
+test('姓名搜索：空列表 / 缺 list / 接口失败，三种情况文案各不同', () => {
+  assert.ok(/只认完整姓名/.test(SM.judgeSearchOutcome({ ok: true, list: [] }, '郑梓辉').text));
+  assert.ok(/只认完整姓名/.test(SM.judgeSearchOutcome({ ok: true }, '郑梓辉').text),
+    '后端给了 ok 但没有 list 数组时不该抛，也不该当命中');
+  assert.ok(/搜索失败/.test(SM.judgeSearchOutcome({ ok: false, error: '查询失败' }, '郑梓辉').text));
+});
+
+test('姓名搜索：脏记录（null / 没 userName）不影响其余人命中，也不会进结果', () => {
+  const other = { userId: '1001', userName: '郑梓辉' };
+  const o = SM.judgeSearchOutcome({ ok: true, list: [null, { userId: '2' }, other] }, '郑梓辉');
+  assert.deepStrictEqual(o.users, [other]);
+});
+
+test('核对口径不依赖调用方传的 byEmpNo：由输入自己判', () => {
+  // 传第三个参数也不该改变行为（避免有人以为可以从外面指定）
+  const o = SM.judgeSearchOutcome({ ok: true, user: LOGINER }, '郑梓辉');
+  assert.strictEqual(o.byEmpNo, false, '非纯数字一律按姓名口径');
+  assert.ok(/只认完整姓名/.test(o.text) || /填工号/.test(o.text), o.text);
+});
+
+test('结果核对的畸形入参：list 不是数组 / user 没有工号，都不许进下拉', () => {
+  // 后端偶尔会把 list 给成字符串或类数组；照着 .length / .filter 走会直接抛，
+  // 抛出去就被搜索闭包的 catch 吞掉 —— 表现是「输入了但什么都不发生」。
+  const strList = SM.judgeSearchOutcome({ ok: true, list: '张三' }, '张三');
+  assert.strictEqual(strList.kind, 'busy', 'list 不是数组时不能当命中');
+  const arrayLike = SM.judgeSearchOutcome({ ok: true, list: { length: 1 } }, '张三');
+  assert.strictEqual(arrayLike.kind, 'busy');
+  // 工号搜索但回来的人没有 userId：拿不到可核对的工号 = 不采用
+  const noId = SM.judgeSearchOutcome({ ok: true, user: { userName: '张三' } }, '4711510');
+  assert.strictEqual(noId.kind, 'busy', '没有 userId 就没法核对，绝不能填进评委');
+  assert.ok(/未找到该工号/.test(noId.text), noId.text);
 });

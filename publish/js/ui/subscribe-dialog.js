@@ -682,7 +682,9 @@
       const roleKey = 'judge-role-' + judgeSeq;
       tr._roleKey = roleKey;
       const roleList = M.DICT.judgeRole || [];
-      tr._roleInstance = window.createSearchableSelect(roleSel, roleList, { placeholder: '请选择' });
+      // label：评委行在 <td> 里，字段名只存在于表头 <th>，组件从宿主推不出名字，
+      // 只能显式给（文案与 publish.html 评委表的表头一致）
+      tr._roleInstance = window.createSearchableSelect(roleSel, roleList, { label: '评委角色', placeholder: '请选择' });
       if (!roleList.length) tr._roleInstance.setBusy(M.PLACEHOLDER_TEXT);
       bindTypedCapture(roleKey, roleSel);
       presetRole(tr._roleInstance, role);
@@ -706,7 +708,7 @@
     // 来源两条：「拉取评委」的 judgeDeptId，或选中人员的 teamId（抓包样本里两者相等）。
     tr._judgeDeptId = '';
     if (typeof window.createSearchableSelect === 'function') {
-      tr._noInstance = window.createSearchableSelect(noSel, [], {});
+      tr._noInstance = window.createSearchableSelect(noSel, [], { label: '评委工号' });
       bindTypedCapture(noKey, noSel);
       bindJudgeUserSearch(tr, noSel);
     } else {
@@ -747,8 +749,7 @@
   // judgeUserCache，下次输入同批人能立刻本地过滤出来。
   const JUDGE_SEARCH_MIN = 2;      // 少于 2 个字不打请求
   const JUDGE_SEARCH_DELAY = 300;  // 防抖：够快又不至于每个字母都发请求
-  /** 工号形态：抓包样本都是纯数字（4711510 / 8404725 / 6464402） */
-  const EMPNO_RE = /^\d+$/;
+  // 「纯数字 = 工号」的判据在 SubscribeModel.judgeQueryIsEmpNo（要与结果核对同一口径）
 
   /** 结果回来时面板若不巧关了就再展开一次（只在输入框仍有焦点时，避免抢焦点） */
   function ensurePanelOpen(inst, targetEl) {
@@ -786,7 +787,7 @@
         if (!window.UserApi) return;
         const seq = ++searchSeq;
         // 按抓包口径分流：纯数字 = 工号 → getUserInfo(userId)；否则 = 姓名 → getUserList(userName)
-        const byEmpNo = EMPNO_RE.test(kw);
+        const byEmpNo = M.judgeQueryIsEmpNo(kw);
         if (byEmpNo ? typeof window.UserApi.fetchUserDetail !== 'function'
           : typeof window.UserApi.fetchUserList !== 'function') return;
         const r = byEmpNo
@@ -796,37 +797,15 @@
         if (seq !== searchSeq || !inst2) return;
         if (readInput() !== kw) return;
 
-        // ⚠️ 结果必须核对过才能用：2026-09-18 实测该接口会**忽略查询参数**
-        // （按姓名搜时，传任意关键字甚至错误参数名，后端都返回 token 对应的登录人）。
-        // 原实现直接采信返回值，于是「在工号框里输入任何姓名，下拉里都只蹦出登录人，
-        // 选中就把评委填成了他」—— 评委是要提交给后端审批的，填错人代价很高。
+        // ⚠️ 结果必须核对过才能用（口径见 subscribe-model.js 的 judgeSearchOutcome）：
+        // 后端会忽略查询参数、把登录人当成你搜的那个人，选中就是把评委填错。
         try {
-          if (byEmpNo) {
-            // getUserInfo 只返回单个对象，没有「列表」可筛，所以核对工号是否就是输入的那个
-            const u = r && r.ok ? r.user : null;
-            if (u && u.userId && String(u.userId) !== kw) {
-              inst2.setBusy(`⚠️ 接口返回的是工号 ${u.userId}，与输入的 ${kw} 不一致（后端忽略了查询参数），请核对`);
-            } else if (u && u.userId) {
-              judgeUserCache.cacheUsers([u]);
-              inst2.updateOptions(judgeUserCache.cachedUserOptions());
-            } else if (r && r.ok) {
-              inst2.setBusy('未找到该工号（接口按 userId 精确匹配）');
-            } else {
-              inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
-            }
-          } else if (r && r.ok && r.list.length) {
-            // 按姓名：只认「名字里真的含关键字」的人，其余一律不展示、不缓存
-            const matched = r.list.filter((u) => u && u.userName && String(u.userName).includes(kw));
-            if (matched.length) {
-              judgeUserCache.cacheUsers(matched);
-              inst2.updateOptions(judgeUserCache.cachedUserOptions());
-            } else {
-              inst2.setBusy('⚠️ 接口当前不按姓名过滤（返回的是登录人），请直接填工号');
-            }
-          } else if (r && r.ok) {
-            inst2.setBusy('未找到匹配姓名（接口只认完整姓名，如「郑梓辉」）');
+          const out = M.judgeSearchOutcome(r, kw);
+          if (out.kind === 'users') {
+            judgeUserCache.cacheUsers(out.users);
+            inst2.updateOptions(judgeUserCache.cachedUserOptions());
           } else {
-            inst2.setBusy(`⚠️ 搜索失败：${(r && r.error) || '未知错误'}`);
+            inst2.setBusy(out.text);
           }
           ensurePanelOpen(inst2, noSel);
         } catch (_) { /* 实例已销毁（行被删除），忽略 */ }

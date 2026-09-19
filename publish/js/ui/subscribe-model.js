@@ -336,8 +336,8 @@
       <td class="c-idx judge-idx">—</td>
       <td><select class="judge-role sub-ctl"></select></td>
       <td><select class="judge-no sub-ctl" placeholder="请输入工号"></select></td>
-      <td><input type="text" class="judge-name sub-input" placeholder="选中后自动带出"></td>
-      <td><input type="text" class="judge-dept sub-input" placeholder="选中后自动带出"></td>
+      <td><input type="text" class="judge-name sub-input" placeholder="选中后自动带出" aria-label="评委姓名"></td>
+      <td><input type="text" class="judge-dept sub-input" placeholder="选中后自动带出" aria-label="评委部门"></td>
     `;
 
   /**
@@ -545,6 +545,58 @@
     };
   }
 
+  /**
+   * 评委搜索框的输入是不是「纯数字 = 工号」（抓包样本都是纯数字：4711510 / 8404725 / 6464402）。
+   * 它同时决定走 getUserInfo 还是 getUserList、以及用哪种核对 ——
+   * 两边必须同一口径，所以只留这一处（原先是 subscribe-dialog 里的局部 EMPNO_RE）。
+   */
+  const judgeQueryIsEmpNo = (kw) => /^\d+$/.test(String(kw || '').trim());
+
+  /**
+   * 评委搜索结果核对（纯函数）。
+   *
+   * ⚠️ 这段判断原先长在 subscribe-dialog.js 的搜索闭包里，只能靠浏览器冒烟测；
+   * 抽出来是因为它守的是「**填错人**」这种代价很高的错：
+   * 2026-09-18 实测 getUserList / getUserInfo 会**忽略查询参数** —— 按姓名搜时，
+   * 传任意关键字甚至错误的参数名，后端都返回 token 对应的那个登录人。
+   * 直接采信返回值的话，「在工号框里输入任何姓名，下拉里都只蹦出登录人，
+   * 选中就把评委填成了他」。所以：**结果必须核对过才能用**。
+   *
+   * @param {{ok:boolean, user?:object, list?:Array, error?:string}} r 接口返回
+   * @param {string} kw 用户输入的工号或姓名（纯数字按工号处理，与抓包口径一致）
+   * @returns {{byEmpNo:boolean, kind:'users', users:Array} | {byEmpNo:boolean, kind:'busy', text:string}}
+   *          kind='users' → 可以填进下拉；kind='busy' → 只把这个提示显示给用户
+   */
+  function judgeSearchOutcome(r, kw) {
+    const k = String(kw || '').trim();
+    const byEmpNo = judgeQueryIsEmpNo(k);
+    const failText = `⚠️ 搜索失败：${(r && r.error) || '未知错误'}`;
+
+    if (byEmpNo) {
+      // getUserInfo 只返回单个对象，没有「列表」可筛，所以核对工号是不是输入的那个
+      const u = r && r.ok ? r.user : null;
+      if (u && u.userId && String(u.userId) !== k) {
+        return { byEmpNo, kind: 'busy', text: `⚠️ 接口返回的是工号 ${u.userId}，与输入的 ${k} 不一致（后端忽略了查询参数），请核对` };
+      }
+      if (u && u.userId) return { byEmpNo, kind: 'users', users: [u] };
+      if (r && r.ok) return { byEmpNo, kind: 'busy', text: '未找到该工号（接口按 userId 精确匹配）' };
+      return { byEmpNo, kind: 'busy', text: failText };
+    }
+
+    if (r && r.ok) {
+      const list = Array.isArray(r.list) ? r.list : [];
+      if (list.length) {
+        // 只认「名字里真的含关键字」的人，其余一律不展示、不缓存
+        const matched = list.filter((u) => u && u.userName && String(u.userName).includes(k));
+        return matched.length
+          ? { byEmpNo, kind: 'users', users: matched }
+          : { byEmpNo, kind: 'busy', text: '⚠️ 接口当前不按姓名过滤（返回的是登录人），请直接填工号' };
+      }
+      return { byEmpNo, kind: 'busy', text: '未找到匹配姓名（接口只认完整姓名，如「郑梓辉」）' };
+    }
+    return { byEmpNo, kind: 'busy', text: failText };
+  }
+
   window.SubscribeModel = Object.freeze({
     // 常量
     DICT,
@@ -578,6 +630,8 @@
     // 校验
     validateSubscribe,
     validateJudgeSubmit,
+    judgeQueryIsEmpNo,
+    judgeSearchOutcome,
     // 缓存工厂
     createUserCache,
   });
