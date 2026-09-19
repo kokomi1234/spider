@@ -329,6 +329,9 @@
         inputEl.type = 'text';
         inputEl.placeholder = o.placeholder || '';
         inputEl.value = o.value || '';
+        // 这里收的是查询名 / 服务编码一类业务串，别让拼写检查画红波浪线
+        inputEl.spellcheck = false;
+        inputEl.setAttribute('autocomplete', 'off');
         group.append(label, inputEl);
         body.appendChild(group);
       },

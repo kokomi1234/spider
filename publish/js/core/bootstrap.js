@@ -164,10 +164,52 @@
     });
   }
 
+  const INPUT_NO_SPELL_TYPES = ['text', 'search', 'url', 'email', 'tel', 'number'];
+
+  /** 给一个输入框打上「业务串」的标记（想保留拼写检查就加 data-spellcheck） */
+  function hygeneOne(el) {
+    if (!el || !el.tagName) return;
+    const tag = String(el.tagName).toUpperCase();
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA') return;
+    if (typeof el.hasAttribute === 'function' && el.hasAttribute('data-spellcheck')) return;
+    if (tag === 'INPUT' && INPUT_NO_SPELL_TYPES.indexOf(String(el.type || 'text')) === -1) return;
+    el.spellcheck = false;
+    if (typeof el.setAttribute === 'function') {
+      if (!el.getAttribute('autocomplete')) el.setAttribute('autocomplete', 'off');
+      if (!el.getAttribute('autocapitalize')) el.setAttribute('autocapitalize', 'off');
+    }
+  }
+
+  /**
+   * 输入框统一卫生
+   * ------------------------------------------------------------
+   * 全站业务输入框填的是工号 / 编号 / 编码 / 批次号这类「机器串」，
+   * 浏览器拼写检查会在下面画红波浪线 —— 用户会以为填错了。
+   * 实测四个页面 40 多个文本输入没有一处关过，所以统一处理。
+   *
+   * 用 focusin **委托**而不是只在启动时扫一遍：弹窗、动态表格里的输入是后建的，
+   * 一次性扫描覆盖不到（保存常用查询、评委搜索、文档选择都会现建输入框）。
+   */
+  function installInputHygiene() {
+    if (window.__APP_INPUT_HYGIENE__) return;
+    window.__APP_INPUT_HYGIENE__ = true;
+    if (!document || typeof document.addEventListener !== 'function') return;
+    document.addEventListener('focusin', (e) => hygeneOne(e.target), true);
+  }
+
+  /** DOM 就绪后扫一遍已存在的输入框（键盘还没聚焦过的也不该有波浪线） */
+  function sweepInputHygiene() {
+    try {
+      document.querySelectorAll('input, textarea').forEach(hygeneOne);
+    } catch (_) { /* 环境不支持（单测假 DOM）就只靠 focusin 那条 */ }
+  }
+
   installErrorGuard();
+  installInputHygiene();
 
   function start() {
     const page = currentPage();
+    sweepInputHygiene();
     report(page);
     // 统一的服务注册表：模块从这里取跨模块回调（已移除旧的 window._xxx 私有桥）。
     window.AppServices = window.AppServices || {};

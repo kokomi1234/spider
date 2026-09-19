@@ -142,19 +142,60 @@
       padding: 10px 12px;
     }
 
-    /* 当前用户 */
-    .home-user { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-    .home-user .user-label {
+    /* 当前用户
+       ⚠️ 这几条 [hidden] 规则不能省：下面的 display:flex 会盖掉 hidden 属性自带的
+       display:none（类选择器优先于 UA 样式），未设置时「切换用户」按钮会漏出来、
+       设置完输入框也不消失（2026-09-19 截图复核过）。 */
+    .home-user[hidden],
+    .home-user-form[hidden],
+    .home-user-cands[hidden] { display: none; }
+
+    .home-user { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    /* 头像圈：姓名首字，一眼看出「这条是我」 */
+    .home-user .user-avatar {
+      flex-shrink: 0;
+      width: 38px;
+      height: 38px;
+      border-radius: var(--r-pill);
+      background: var(--primary-c);
+      color: var(--on-primary-c);
+      font-size: var(--fs-lg);
+      font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .home-user .user-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .home-user .user-name {
       font-size: var(--fs-md);
       font-weight: 600;
       color: var(--on-surface);
       word-break: break-all;
     }
-    .home-user-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .home-user .user-dept {
+      font-size: var(--fs-nano);
+      color: var(--muted);
+      word-break: break-all;
+    }
+    /* 「切换用户」跟着身份条走，不推到卡片最右边 —— 卡片全宽时会把按钮甩出老远 */
+    .home-user #btnUserChange { margin-left: 4px; }
+
+    /* 输入组：label 在上、控件定宽在下，和查询页筛选区同一套语言。
+       原来输入框 flex:1 撑满 1100+px，和按钮离得太远，整行都是散的。 */
+    .home-user-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+    .home-field { display: flex; flex-direction: column; gap: 6px; }
+    .home-field-label {
+      font-size: var(--fs-nano);
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: .02em;
+    }
+    .home-input-wrap { position: relative; display: block; }
     .home-input {
-      flex: 1 1 260px;
-      min-width: 0;
-      padding: 8px 12px;
+      width: 300px;
+      max-width: 100%;
+      box-sizing: border-box;
+      padding: 8px 34px 8px 12px;   /* 右侧留给清空按钮 */
       font-size: var(--fs-md);
       font-family: inherit;
       color: var(--on-surface);
@@ -163,28 +204,67 @@
       border-radius: var(--r-xs);
       min-height: 38px;
     }
+    .home-input::placeholder { color: var(--muted); }
+    .home-input:hover { border-color: var(--primary-hover, var(--primary)); }
     .home-input:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow: 0 0 0 2px var(--primary-c);
     }
-    .home-user-cands { margin-top: 10px; display: grid; gap: 6px; }
-    .home-user-cands .cand {
-      display: flex;
+    .home-input-clear {
+      position: absolute;
+      top: 50%;
+      right: 6px;
+      transform: translateY(-50%);
+      width: 22px;
+      height: 22px;
+      display: inline-flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
+      justify-content: center;
+      border: none;
+      border-radius: var(--r-pill);
+      background: transparent;
+      color: var(--muted);
+      font-size: var(--fs-sm);
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+    }
+    .home-input-clear:hover { background: var(--surface-1); color: var(--on-surface); }
+    .home-input-clear[hidden] { display: none; }
+    /* 窄屏：输入框跟按钮各占一行，不挤成半截 */
+    @media (max-width: 560px) {
+      .home-user-form { align-items: stretch; }
+      .home-input { width: 100%; }
+      .home-user-form #btnUserSearch { width: 100%; }
+    }
+
+    .home-user-cands { margin-top: 10px; display: grid; gap: 6px; max-width: 520px; }
+    .home-user-cands .cand {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: baseline;
+      column-gap: 10px;
+      row-gap: 2px;
+      padding: 8px 12px;
       border: 1px solid var(--outline-soft);
       border-radius: var(--r-xs);
       background: var(--surface);
       cursor: pointer;
-      text-align: left;
+      text-align: left;          /* 按钮默认居中，这里必须显式覆盖，否则整行文字居中 */
       font-family: inherit;
       font-size: var(--fs-sm);
       color: var(--on-surface);
       width: 100%;
     }
-    .home-user-cands .cand:hover { border-color: var(--primary); background: var(--surface-1); }
+    .home-user-cands .cand:hover,
+    .home-user-cands .cand:focus-visible { border-color: var(--primary); background: var(--surface-1); }
+    .home-user-cands .cand .cand-name { font-weight: 600; }
+    .home-user-cands .cand .cand-dept {
+      grid-column: 1 / -1;
+      color: var(--muted);
+      font-size: var(--fs-nano);
+    }
     .home-user-cands .cand .cand-id { color: var(--muted); font-size: var(--fs-nano); }
 
     /* 部门排行：条数切换 */
@@ -278,20 +358,35 @@
         <span class="result-count" id="userHint" aria-live="polite"></span>
       </div>
       <div class="card-body">
+        <!-- 已设置：身份条（头像 + 姓名工号 + 部门），比原来一行纯文本好扫读 -->
         <div class="home-user" id="userSet" hidden>
-          <span class="user-label" id="userLabel"></span>
-          <button type="button" class="outlined btn-xs" id="btnUserChange">切换</button>
+          <span class="user-avatar" id="userAvatar" aria-hidden="true"></span>
+          <span class="user-info">
+            <span class="user-name" id="userLabel"></span>
+            <span class="user-dept" id="userDept"></span>
+          </span>
+          <button type="button" class="outlined btn-xs" id="btnUserChange">切换用户</button>
         </div>
+
+        <!-- 未设置：定宽输入组（对齐查询页「label + 控件」的版式，不再撑满整行） -->
         <div class="home-user-form" id="userForm">
-          <input type="text" id="userKeyword" class="home-input"
-                 placeholder="输入工号，如 4711510" aria-label="工号或姓名">
+          <label class="home-field" for="userKeyword">
+            <span class="home-field-label">你的工号</span>
+            <span class="home-input-wrap">
+              <input type="text" id="userKeyword" class="home-input"
+                     placeholder="如 4711510" inputmode="numeric"
+                     autocomplete="off" autocapitalize="off" spellcheck="false">
+              <button type="button" class="home-input-clear" id="btnUserClear" hidden
+                      aria-label="清空输入" title="清空">✕</button>
+            </span>
+          </label>
           <button type="button" class="filled btn-sm" id="btnUserSearch">查 询</button>
         </div>
         <div class="home-user-cands" id="userCands" hidden></div>
         <p class="field-note">
-          用于把常用查询归到你的部门（可在首页看本部门的常用查询）。
-          只保存在这台电脑上，不上传。<br>
-          提示：<strong>按工号查询最可靠</strong>；实测后端不按姓名过滤，填姓名会提示改用工号。
+          用于把常用查询归到你的部门（首页「部门常用查询」按它过滤）。
+          数据只写进本地代理的库文件，不提交给 ITAMP 服务端。<br>
+          提示：<strong>按工号查询最可靠</strong>——实测后端不按姓名过滤，填姓名会提示改用工号。
         </p>
       </div>
     </div>

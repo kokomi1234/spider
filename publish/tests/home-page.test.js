@@ -44,6 +44,7 @@ function fakeEl(tag) {
     parent: null,
     _innerHTML: '',
     setAttribute(k, v) { this.attrs[k] = String(v); },
+    removeAttribute(k) { delete this.attrs[k]; },   // 真实 DOM 有；缺了会让身份条清空那步抛错
     appendChild(c) { this.children.push(c); c.parent = this; return c; },
     removeChild(c) { this.children = this.children.filter((x) => x !== c); return c; },
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
@@ -164,8 +165,11 @@ function buildEnv(opts = {}) {
   const savedCount = mk('savedCount');
   // 当前用户 + 部门排行所需的节点
   const userSet = mk('userSet'); userSet.hidden = true;
+  const userAvatar = mk('userAvatar');
   const userLabel = mk('userLabel');
+  const userDept = mk('userDept');
   const userForm = mk('userForm'); userForm.hidden = false;
+  const userClear = mk('btnUserClear', 'button');
   const userKeyword = mk('userKeyword', 'input');
   const userCands = mk('userCands');
   const userHint = mk('userHint');
@@ -178,7 +182,10 @@ function buildEnv(opts = {}) {
 
   const els = {
     savedList, savedEmpty, savedCount,
-    userSet, userLabel, userForm, userKeyword, userCands, userHint, btnUserSearch, btnUserChange,
+    userSet, userAvatar, userLabel, userDept, userForm, userKeyword, userCands, userHint, btnUserSearch, btnUserChange,
+    // 注意：fakeDocument 是按 id 取元素的，key 必须和元素 id 完全一致，
+    // 写成 userClear 就取不到 #btnUserClear（表现是回调静默不执行、断言拿到 undefined）
+    btnUserClear: userClear,
     deptTitle, deptList, deptEmpty, deptTopN,
   };
   const doc = fakeDocument(els);
@@ -460,14 +467,29 @@ test('当前用户：未设置时部门区给引导，标题回到默认', () =>
   assert.strictEqual(win.HomePage.deptCount(), 0);
 });
 
-test('当前用户：已设置时显示身份、隐藏表单、标题带部门名', () => {
+test('当前用户：已设置时显示身份条（头像/姓名工号/部门），并收起输入表单', () => {
   const { win, els } = buildEnv({ currentUser: ME, items: [] });
   win.HomePage.render();
   assert.strictEqual(els.userSet.hidden, false);
-  assert.strictEqual(els.userForm.hidden, true);
-  assert.ok(/张三/.test(els.userLabel.textContent) && /开发三部/.test(els.userLabel.textContent),
-    '要能看出是谁、哪个部门（团队优先）：' + els.userLabel.textContent);
+  // 这条断言是防「CSS display:flex 盖掉 hidden」那个 bug 的：设了用户就必须收起输入框
+  assert.strictEqual(els.userForm.hidden, true, '已设置后输入表单要收起，否则页面上两套 UI 并存');
+  assert.ok(/张三/.test(els.userLabel.textContent) && /4711510/.test(els.userLabel.textContent),
+    '姓名与工号要能一眼看到：' + els.userLabel.textContent);
+  assert.ok(/开发三部/.test(els.userDept.textContent),
+    '部门单独一行显示（teamName 优先于 orgName）：' + els.userDept.textContent);
+  assert.strictEqual(els.userAvatar.textContent, '张', '头像圈用姓名首字，便于一眼确认「是我」');
   assert.ok(/开发三部/.test(els.deptTitle.textContent), '标题要写明是哪个部门（teamName 优先于 orgName）');
+});
+
+test('当前用户：未设置时清空身份条、显示表单，且不显示清空按钮', () => {
+  const { win, els } = buildEnv({ currentUser: null, items: [] });
+  win.HomePage.render();
+  assert.strictEqual(els.userSet.hidden, true, '未设置时身份条必须隐藏（hidden 不能被 display 盖掉）');
+  assert.strictEqual(els.userForm.hidden, false);
+  assert.strictEqual(els.userLabel.textContent, '');
+  assert.strictEqual(els.userDept.textContent, '');
+  assert.strictEqual(els.userAvatar.textContent, '');
+  assert.strictEqual(els.btnUserClear.hidden, true, '输入框空着时不该出现清空按钮');
 });
 
 test('部门排行：只列本部门的记录，且是只读视图（无重命名/删除）', () => {

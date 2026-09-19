@@ -58,7 +58,8 @@
       <span class="msel-arrow" aria-hidden="true">▼</span>
       <div class="msel-panel" id="${panelId}" role="listbox" aria-multiselectable="true"
            aria-label="${esc(label + ' 选项')}">
-        <input type="text" class="msel-search" placeholder="搜索" aria-label="搜索选项">
+        <input type="text" class="msel-search" placeholder="搜索" aria-label="搜索选项"
+               autocomplete="off" spellcheck="false">
         <div class="msel-list"></div>
         <div class="msel-foot">
           <button type="button" class="outlined btn-xs" data-act="all">全 选</button>

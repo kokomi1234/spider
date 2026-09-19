@@ -150,6 +150,9 @@
         input.type = 'text';
         input.id = 'tm-token-input';
         input.placeholder = '粘贴新的 PROXY_TOKEN 值';
+        // token 是一长串机器字符，拼写检查会在整串下画红波浪线
+        input.spellcheck = false;
+        input.setAttribute('autocomplete', 'off');
         group.appendChild(label);
         group.appendChild(input);
         body.appendChild(group);

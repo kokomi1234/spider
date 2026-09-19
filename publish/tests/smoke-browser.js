@@ -320,8 +320,23 @@ const PAGES = [
           document.getElementById('btnUserSearch').click();
           await new Promise((r) => setTimeout(r, 250));
           out.userLabel = document.getElementById('userLabel').textContent;
+          // 2026-09-19 版式改版：身份条拆成「姓名（工号）」+ 部门两行 + 头像圈首字
+          out.userDept = document.getElementById('userDept').textContent;
+          out.userAvatar = document.getElementById('userAvatar').textContent;
+          out.clearBtnHidden = document.getElementById('btnUserClear').hidden;
           out.userPersisted = !!(CU.get() && CU.get().teamId === 'K4229');
           out.formHidden = document.getElementById('userForm').hidden;
+
+          // ②b 清空按钮：有内容才出现，点了要清空并把焦点还回输入框
+          const kw2 = document.getElementById('userKeyword');
+          const clearBtn = document.getElementById('btnUserClear');
+          kw2.value = '4711510';
+          kw2.dispatchEvent(new Event('input', { bubbles: true }));
+          out.clearShownWithText = clearBtn.hidden === false;
+          clearBtn.click();
+          out.clearAfterClick = kw2.value === '' && clearBtn.hidden === true;
+          // 焦点回到输入框（无头环境偶尔不给焦点，只记录不判失败）
+          out.activeAfterClear = (document.activeElement && document.activeElement.id) || '';
 
           // ③ 保存一条（走真实保存链路，owner 自动取当前用户）
           const s = S.save({
@@ -407,7 +422,11 @@ const PAGES = [
         process.stdout.write(`  当前用户/部门排行: ${JSON.stringify(deptCheck)}\n`);
         const deptOk = !deptCheck.err
           && deptCheck.emptyHintHasGuide === true && deptCheck.deptCountBefore === 0
-          && /张三/.test(deptCheck.userLabel || '') && /开发三部/.test(deptCheck.userLabel || '')
+          && /张三/.test(deptCheck.userLabel || '') && /4711510/.test(deptCheck.userLabel || '')
+          && /开发三部/.test(deptCheck.userDept || '')      // 部门单独一行（原来挤在同一行）
+          && deptCheck.userAvatar === '张'                  // 头像圈用姓名首字
+          && deptCheck.clearBtnHidden === true              // 提交后输入框已清空，清空按钮应隐藏
+          && deptCheck.clearShownWithText === true && deptCheck.clearAfterClick === true
           && deptCheck.userPersisted === true && deptCheck.formHidden === true
           && deptCheck.saved === true && deptCheck.deptCount === 1
           && /开发三部/.test(deptCheck.deptTitle || '')

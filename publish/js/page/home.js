@@ -26,9 +26,12 @@
   const savedCountEl = $('#savedCount');
 
   const userSetEl = $('#userSet');
+  const userAvatarEl = $('#userAvatar');
   const userLabelEl = $('#userLabel');
+  const userDeptEl = $('#userDept');
   const userFormEl = $('#userForm');
   const userKeywordEl = $('#userKeyword');
+  const userClearEl = $('#btnUserClear');
   const userCandsEl = $('#userCands');
   const userHintEl = $('#userHint');
 
@@ -217,6 +220,13 @@
   // 当前用户
   // ══════════════════════════════════════════════════════
 
+  /** 输入框有内容时才显示「清空」，空着时别多一个无意义的叉 */
+  function syncClearBtn() {
+    if (!userClearEl) return;
+    const hasText = !!(userKeywordEl && String(userKeywordEl.value || '').trim());
+    userClearEl.hidden = !hasText;
+  }
+
   function renderUser() {
     const CU = window.CurrentUser;
     if (!CU) {
@@ -227,12 +237,26 @@
     const has = !!u;
     if (userSetEl) userSetEl.hidden = !has;
     if (userFormEl) userFormEl.hidden = has;
-    if (userLabelEl) userLabelEl.textContent = has ? CU.label(u) : '';
+    if (has) {
+      // 拆成三段填：头像用姓名首字，正文只放「姓名（工号）」，部门单独一行小字。
+      // 每个节点都判空 —— 单测用的是精简假 DOM，不判空会直接抛。
+      const name = u.userName || '（未填姓名）';
+      if (userAvatarEl) userAvatarEl.textContent = name.slice(0, 1);
+      if (userLabelEl) userLabelEl.textContent = u.userId ? `${name}（${u.userId}）` : name;
+      if (userDeptEl) userDeptEl.textContent = CU.deptLabel(u) || '（未识别部门）';
+      if (userSetEl) userSetEl.title = CU.label(u) || name;   // hover 看完整一行
+    } else {
+      if (userAvatarEl) userAvatarEl.textContent = '';
+      if (userLabelEl) userLabelEl.textContent = '';
+      if (userDeptEl) userDeptEl.textContent = '';
+      if (userSetEl) userSetEl.removeAttribute('title');
+    }
     if (userHintEl) userHintEl.textContent = has ? '已设置' : '未设置';
     if (userCandsEl) {
       userCandsEl.hidden = true;
       clear(userCandsEl);
     }
+    syncClearBtn();
     renderDept();
   }
 
@@ -243,13 +267,20 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'cand';
+      // 两列栅格：左「姓名」右「工号」，部门独占第二行小字。
+      // 原来是两个 span 挤在一行居中，姓名和部门粘在一起看不出层级。
       const name = document.createElement('span');
-      name.textContent = `${u.userName || '（无名）'}　${u.orgName || '（无部门）'}`;
+      name.className = 'cand-name';
+      name.textContent = u.userName || '（无名）';
       const id = document.createElement('span');
       id.className = 'cand-id';
       id.textContent = u.userId ? `工号 ${u.userId}` : '';
+      const dept = document.createElement('span');
+      dept.className = 'cand-dept';
+      dept.textContent = u.teamName || u.orgName || '（未识别部门）';
       btn.appendChild(name);
       btn.appendChild(id);
+      btn.appendChild(dept);
       btn.addEventListener('click', () => onPick(u));
       userCandsEl.appendChild(btn);
     });
@@ -308,8 +339,18 @@
   function switchUser() {
     const CU = window.CurrentUser;
     if (CU) CU.clear();
+    if (userKeywordEl) userKeywordEl.value = '';
     renderUser();
     if (userKeywordEl) userKeywordEl.focus();
+  }
+
+  /** 清空输入框（不改「当前用户」，就是重打一遍） */
+  function clearKeyword() {
+    if (userKeywordEl) {
+      userKeywordEl.value = '';
+      userKeywordEl.focus();
+    }
+    syncClearBtn();
   }
 
   // ══════════════════════════════════════════════════════
@@ -476,11 +517,16 @@
   if ($('#btnImportQueries')) $('#btnImportQueries').addEventListener('click', importQueries);
   if ($('#btnUserSearch')) $('#btnUserSearch').addEventListener('click', doUserSearch);
   if ($('#btnUserChange')) $('#btnUserChange').addEventListener('click', switchUser);
+  if ($('#btnUserClear')) $('#btnUserClear').addEventListener('click', clearKeyword);
   if (userKeywordEl) {
     userKeywordEl.addEventListener('keydown', (e) => {
+      // 回车即查（输入框没有别的键盘语义，不必 stopPropagation）
       if (e.key === 'Enter') { e.preventDefault(); doUserSearch(); }
     });
+    // 有内容才显示「清空」；粘贴/输入法都走 input 事件，覆盖得住
+    userKeywordEl.addEventListener('input', syncClearBtn);
   }
+  syncClearBtn();
   if (deptTopNEl) {
     deptTopNEl.addEventListener('change', () => {
       writeTopN(Number(deptTopNEl.value) || DEFAULT_TOPN);
