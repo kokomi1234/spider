@@ -24,6 +24,7 @@
   const savedListEl = $('#savedList');
   const savedEmptyEl = $('#savedEmpty');
   const savedCountEl = $('#savedCount');
+  const savedSyncEl = $('#savedSync');
 
   const userSetEl = $('#userSet');
   const userAvatarEl = $('#userAvatar');
@@ -214,6 +215,64 @@
     const empty = items.length === 0;
     if (savedEmptyEl) savedEmptyEl.hidden = !empty;
     if (savedCountEl) savedCountEl.textContent = empty ? '' : `共 ${items.length} 条`;
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 同步状态角标（「现在看的是团队库，还是只有本机这一份」）
+  // ══════════════════════════════════════════════════════
+  //
+  // 同步本来就是静默的：成功就合并、失败就退回本机，页面上看不出差别。
+  // 角标只如实转达存储层记下的那一次结果，自己不做任何判断 ——
+  // 判断（哪个状态、算不算故障）留在 js/ui/saved-query.js 的 recordSync 里，
+  // 这样三个查询页和本机视图看到的是同一套口径。
+
+  /** 多久之前：只用于「最近同步于…」这类提示，避免把时区/格式问题引进标题里 */
+  function agoLabel(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '很久之前';
+    if (ms < 5000) return '刚刚';
+    if (ms < 60000) return `${Math.floor(ms / 1000)} 秒前`;
+    if (ms < 3600000) return `${Math.floor(ms / 60000)} 分钟前`;
+    return `${Math.floor(ms / 3600000)} 小时前`;
+  }
+
+  function renderSync() {
+    if (!savedSyncEl) return;
+    const S = window.SavedQuery;
+    const st = (S && typeof S.lastSyncState === 'function') ? S.lastSyncState() : null;
+    // 还没同步过：不显示，免得首屏闪一个「仅本机」的假信号
+    if (!st || st.state === 'pending') {
+      savedSyncEl.hidden = true;
+      savedSyncEl.textContent = '';
+      savedSyncEl.title = '';   // 用赋值而不是 removeAttribute：假 DOM 里两者不是同一份存储
+      return;
+    }
+
+    const ago = agoLabel(Date.now() - (Number(st.at) || 0));
+    let text = '';
+    let title = '';
+    if (st.state === 'shared') {
+      text = `已同步 ${Number(st.total) || 0} 条`;
+      title = [`正与共享库同步（${ago}）`, `库文件：${st.file || '（代理未告知）'}`];
+      if (st.storage) title.push(`存储：${st.storage === 'sqlite' ? 'SQLite' : st.storage}`);
+      if (Number(st.people) > 0) title.push(`保存过查询的人：${st.people} 个`);
+      title.push('这个文件里有哪些人的记录，这里就能看到哪些');
+    } else if (st.state === 'fail') {
+      text = '同步失败';
+      title = [`这次没能与共享库同步（${ago}）`, `原因：${st.error || '未知错误'}`, '现在看到的是这台浏览器里存过的记录'];
+    } else {
+      text = '仅本机';
+      title = ['没连上共享库', st.error ? `原因：${st.error}` : '静态部署或代理没提供这个端点',
+        '现在看到的是这台浏览器里存过的记录，同事的看不到',
+        // 口径（2026-09-19 定）：**一份代理大家连**，而不是多人各写同一个库文件 ——
+        // 后者实测会 database is locked 并真丢记录。代理默认只绑 127.0.0.1，
+        // 要跨机器连同一份得显式设 PROXY_HOST + PROXY_ADMIN_TOKEN（见 shared/README.md）。
+        '想互相看到：只跑一份代理、大家连它（跨机器时设 PROXY_HOST=0.0.0.0 + PROXY_ADMIN_TOKEN）；'
+        + '单机对不上就用上面的「导 出 / 导 入」交换'];
+    }
+    savedSyncEl.hidden = false;
+    savedSyncEl.className = `sync-state is-${st.state}`;
+    savedSyncEl.textContent = text;
+    savedSyncEl.title = title.join('\n');
   }
 
   // ══════════════════════════════════════════════════════
@@ -501,6 +560,7 @@
 
   function render() {
     renderSaved();
+    renderSync();
     renderUser();   // 内部会连带刷新部门排行
   }
 
@@ -512,6 +572,12 @@
     const CU = window.CurrentUser;
     if (CU && e.key === CU.STORAGE_KEY) renderUser();
   });
+
+  // 同步状态一变（首屏那次、以及每次「写完本地顺手推一次」回来）就刷新角标。
+  // 不在各个写入口分别接线：那样只要有人新增一条写路径就会漏掉，角标又变成旧的。
+  if (window.SavedQuery && typeof window.SavedQuery.onSyncStateChange === 'function') {
+    window.SavedQuery.onSyncStateChange(renderSync);
+  }
 
   if ($('#btnExportQueries')) $('#btnExportQueries').addEventListener('click', exportQueries);
   if ($('#btnImportQueries')) $('#btnImportQueries').addEventListener('click', importQueries);
@@ -574,6 +640,7 @@
   window.HomePage = {
     render,
     renderDept,
+    renderSync,
     count: () => (savedListEl ? savedListEl.children.length : -1),
     deptCount: () => (deptListEl ? deptListEl.children.length : -1),
   };

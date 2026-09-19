@@ -95,10 +95,27 @@ function fakeDocument(els) {
 // 可控的 SavedQuery 替身（不依赖真实 localStorage，便于断言「返回 false 时数据不变」）
 // ══════════════════════════════════════════════════════════
 
-function makeSavedQuery(seed) {
+function makeSavedQuery(seed, syncState) {
   let store = (seed || []).map((it) => ({ ...it }));
+  const subs = [];
   return {
     STORAGE_KEY: 'spider.savedQueries.v1',
+    // 同步状态：真实实现里由代理响应驱动（js/ui/saved-query.js 的 recordSync）。
+    // 首页角标只如实翻译这份状态，所以这里做成可注入 + 可广播，用来验「订阅回调到了就把角标换掉」。
+    _sync: { state: 'pending', total: 0, file: '', storage: '', people: 0, error: '', at: 0, ...(syncState || {}) },
+    lastSyncState() { return { ...this._sync }; },
+    onSyncStateChange(fn) {
+      subs.push(fn);
+      return () => { const i = subs.indexOf(fn); if (i >= 0) subs.splice(i, 1); };
+    },
+    /** 模拟「一次同步回来了」：改状态 + 通知订阅方 */
+    _emitSync(patch) {
+      Object.assign(this._sync, patch);
+      // 快照自己拼，不走 lastSyncState() —— 有条用例要把那个方法删掉来验组件的容错
+      const snap = { ...this._sync };
+      subs.slice().forEach((fn) => fn(snap));
+      return this._sync;
+    },
     PAGES: {
       publish: '服务发布数据查询',
       task: '任务单查询',
@@ -163,6 +180,7 @@ function buildEnv(opts = {}) {
   const savedList = mk('savedList');
   const savedEmpty = mk('savedEmpty');
   const savedCount = mk('savedCount');
+  const savedSync = mk('savedSync', 'span'); savedSync.hidden = true;
   // 当前用户 + 部门排行所需的节点
   const userSet = mk('userSet'); userSet.hidden = true;
   const userAvatar = mk('userAvatar');
@@ -181,7 +199,7 @@ function buildEnv(opts = {}) {
   const deptTopN = mk('deptTopN', 'select'); deptTopN.value = '10';
 
   const els = {
-    savedList, savedEmpty, savedCount,
+    savedList, savedEmpty, savedCount, savedSync,
     userSet, userAvatar, userLabel, userDept, userForm, userKeyword, userCands, userHint, btnUserSearch, btnUserChange,
     // 注意：fakeDocument 是按 id 取元素的，key 必须和元素 id 完全一致，
     // 写成 userClear 就取不到 #btnUserClear（表现是回调静默不执行、断言拿到 undefined）
@@ -190,7 +208,7 @@ function buildEnv(opts = {}) {
   };
   const doc = fakeDocument(els);
 
-  const sq = makeSavedQuery(opts.items || []);
+  const sq = makeSavedQuery(opts.items || [], opts.syncState);
 
   const toasts = [];
   const ls = new Map(Object.entries(opts.localStorage || {}));
@@ -561,3 +579,84 @@ test('切换用户：清空当前用户后回到输入表单', () => {
   assert.strictEqual(els.userForm.hidden, false);
   assert.strictEqual(els.userSet.hidden, true);
 });
+
+// ══════════════════════════════════════════════════════════
+// 同步状态角标（「已同步 / 仅本机 / 同步失败」）
+// ══════════════════════════════════════════════════════════
+//
+// 这条待办的原话是「同步是静默的，用户无从判断当前看的是本机数据还是团队数据」。
+// 判定口径在 js/ui/saved-query.js（那里有用例），这里守的是**翻译层**：
+// 三种状态各有各的文案与配色类，而且「为什么」必须写在 title 里 —— 角标只有一行字，
+// 讲不清原因就等于没解决问题。
+
+test('角标：还没同步过时不显示（首屏不该闪一个假的「仅本机」）', () => {
+  const { els } = buildEnv({ items: [] });
+  assert.strictEqual(els.savedSync.hidden, true, 'pending 时应隐藏');
+  assert.strictEqual(els.savedSync.textContent, '');
+});
+
+test('角标：已同步 → 「已同步 N 条」+ is-shared，title 里能看到代理在读写哪个库文件', () => {
+  const { els } = buildEnv({
+    items: [],
+    syncState: { state: 'shared', total: 12, file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 4, at: Date.now() },
+  });
+  assert.strictEqual(els.savedSync.hidden, false);
+  assert.strictEqual(els.savedSync.textContent, '已同步 12 条');
+  assert.strictEqual(els.savedSync.className, 'sync-state is-shared');
+  assert.ok(/saved-queries\.db/.test(els.savedSync.title), 'title 要含库文件：' + els.savedSync.title);
+  assert.ok(/SQLite/.test(els.savedSync.title), 'title 要说清存储类型');
+  assert.ok(/4 个/.test(els.savedSync.title), 'title 要带上保存者人数');
+});
+
+test('角标：仅本机 → 「仅本机」+ is-local，title 讲清「同事的看不到」和怎么才能看到', () => {
+  const { els } = buildEnv({ items: [], syncState: { state: 'local', total: 3, at: Date.now() } });
+  assert.strictEqual(els.savedSync.textContent, '仅本机');
+  assert.strictEqual(els.savedSync.className, 'sync-state is-local');
+  assert.ok(/同事的看不到/.test(els.savedSync.title), els.savedSync.title);
+  assert.ok(/只跑一份代理/.test(els.savedSync.title), '要给出可操作的下一步：' + els.savedSync.title);
+  // 别把人往「多个进程各写同一个库文件」上引 —— 实测那样会 database is locked 且真丢记录
+  assert.ok(!/指到双方都能访问的文件/.test(els.savedSync.title), els.savedSync.title);
+});
+
+test('角标：同步失败 → 「同步失败」+ is-fail，title 带上失败原因（不是笼统一句「失败」）', () => {
+  const { els } = buildEnv({
+    items: [],
+    syncState: { state: 'fail', total: 0, error: '同步失败：HTTP 500', at: Date.now() },
+  });
+  assert.strictEqual(els.savedSync.textContent, '同步失败');
+  assert.strictEqual(els.savedSync.className, 'sync-state is-fail');
+  assert.ok(/HTTP 500/.test(els.savedSync.title), els.savedSync.title);
+  assert.ok(/这台浏览器里存过的记录/.test(els.savedSync.title), '还要说明现在看到的是哪一份');
+});
+
+test('角标：同步状态一变就自己刷新，不需要重画整页', () => {
+  const { els, sq } = buildEnv({ items: [] });
+  assert.strictEqual(els.savedSync.hidden, true);
+  sq._emitSync({ state: 'shared', total: 5, file: '/srv/x.db', at: Date.now() });
+  assert.strictEqual(els.savedSync.hidden, false, '回调到了就该显示');
+  assert.strictEqual(els.savedSync.textContent, '已同步 5 条');
+});
+
+test('角标：回到 pending 要清掉上一次的残留（文案/类名/title 都不能留）', () => {
+  const { els, sq } = buildEnv({ items: [] });
+  // 先留一份可见的旧状态，再退回 pending —— 只断 hidden 是假通过：
+  // 新建的假元素 textContent 本来就是空串，必须先把脏数据写进去才能验「清没清」。
+  sq._emitSync({ state: 'shared', total: 9, file: 'x.db', storage: 'sqlite', at: Date.now() });
+  assert.strictEqual(els.savedSync.hidden, false);
+  assert.ok(els.savedSync.textContent && els.savedSync.title, '前置：先有残留');
+  sq._emitSync({ state: 'pending', total: 0, file: '', storage: '', at: 0 });
+  assert.strictEqual(els.savedSync.hidden, true);
+  assert.strictEqual(els.savedSync.textContent, '', '文案要清掉');
+  assert.ok(!els.savedSync.title, 'title 也要清掉，否则悬停还会读到旧的库文件');
+});
+
+test('角标：存储层没给 lastSyncState（旧版替身）时安静跳过，不抛', () => {
+  const { els, sq } = buildEnv({ items: [] });
+  delete sq.lastSyncState;
+  els.savedSync.textContent = '残留';
+  sq._sync = { state: 'shared', total: 9, at: Date.now() };
+  // _emitSync 仍会广播（订阅方是 renderSync），此时 renderSync 取不到 lastSyncState 就该收起角标
+  sq._emitSync({});
+  assert.strictEqual(els.savedSync.hidden, true, '拿不到状态就把角标收起来，别显示旧的');
+});
+

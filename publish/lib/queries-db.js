@@ -118,7 +118,12 @@ function open(file) {
     throw e;
   }
   const db = new mod.DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL');   // 多人同时读写时，写不阻塞读
+  // busy_timeout：实测两个进程同时开同一个库时，约 2.5% 的 POST 会直接
+  // 400「database is locked」（默认等 0 毫秒就放弃）。等 2 秒能把绝大多数撞上变成排队。
+  try { db.exec('PRAGMA busy_timeout = 2000'); } catch (_) { /* 老版本不认就不设 */ }
+  // WAL 让「写不阻塞读」，但库已被别的进程以独占方式打开时这句会抛 ——
+  // 那不是「这台 Node 不支持 SQLite」，不该冒泡成静默回落 JSON（两套后端会把数据分家）。
+  try { db.exec('PRAGMA journal_mode = WAL'); } catch (_) { /* 保持库当前的日志模式 */ }
   db.exec(SCHEMA);
 
   // ── 语句 ────────────────────────────────────────────────
@@ -246,7 +251,8 @@ function open(file) {
      * @param {number} [limit]
      */
     byUser(userKey, limit) {
-      const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
+      // 上限要钳住：?limit=1e21 是有限数，直接进 SQLite 的 LIMIT 会 500（datatype mismatch）
+      const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 50;
       const rows = db.prepare(`
         SELECT * FROM saved_queries q
         JOIN saved_query_savers s ON s.query_id = q.id
@@ -266,7 +272,7 @@ function open(file) {
     deptTop(deptKey, limit) {
       const key = String(deptKey || '');
       if (!key) return [];
-      const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 10;
+      const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 10;
       // 聚合口径：同一份条件（fingerprint 相同）算同一个查询；没填条件的各自成组。
       // 代表行取「最近有人保存的那条」，名字/摘要用它 —— 也就是当前大家在用的那份。
       const rows = db.prepare(`
@@ -282,7 +288,7 @@ function open(file) {
           SELECT gid,
                  COUNT(DISTINCT user_key) AS savers,
                  MAX(saved_at) AS last_saved,
-                 GROUP_CONCAT(DISTINCT user_name) AS people
+                 GROUP_CONCAT(user_name, '"|;"') AS people
           FROM scoped
           GROUP BY gid
         )
@@ -298,9 +304,12 @@ function open(file) {
       `).all(key, n);
       // people 已经是**整个组**（同一份条件）的本部门人员名单：
       // 只取代表行那一条的话，会把同组其它人的名字埋掉。
+      // 不用 GROUP_CONCAT 的默认逗号：姓名里带逗号会被拆成两个人（实测「王,五」→ 两人）。
+      // 换成几乎不可能出现在人名里的标记，DISTINCT 交给 JS 做
+      // （SQLite 的 DISTINCT 聚合不允许带第二个参数，写了会直接报错）。
       return rows.map((r) => {
         const rec = toRecord(r);
-        const names = String(r.people || '').split(',').map((s) => s.trim()).filter(Boolean);
+        const names = [...new Set(String(r.people || '').split('"|;"').map((x) => x.trim()).filter(Boolean))];
         return {
           ...rec,
           savers: Number(r.savers) || rec.savers,

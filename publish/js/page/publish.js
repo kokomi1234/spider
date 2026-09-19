@@ -392,7 +392,7 @@
       }
       // 批次：原生 select 的 value 是 "2706pc" 这类代码，但行数据与请求体
       // 用的都是 label（"2706批次"）。口径必须与请求体一致，否则本地兜底
-      // 过滤会把整页结果误杀（症状：toast「本页数据均不满足筛选条件」）。
+      // 过滤会把整页结果误杀（症状：空态提示「已加载的数据里没有满足筛选条件的记录」）。
       if (f.id === 'f_prodBatch') {
         const r = resolveBatchLabel();   // 与请求体同源，口径必须一致
         if (r.value && !r.label) {
@@ -663,7 +663,8 @@
 
     const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
-    showToast(r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达', 2400, 'success');
+    showToast((r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达')
+      + (typeof S.syncSuffix === 'function' ? S.syncSuffix() : ''), 2400, 'success');
   }
 
   const btnSaveQuery = $('#btnSaveQuery');

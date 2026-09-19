@@ -481,6 +481,71 @@
     return typeof window.fetch === 'function' && typeof window.location !== 'undefined';
   }
 
+  // ── 同步状态（首页那个「已同步 / 仅本机」角标的唯一数据源）──────
+  //
+  // 为什么要显式记一份：同步一直是静默的 —— 成功合并、失败退回本机，页面上
+  // 看不出任何差别，用户无从判断自己看到的是「团队库」还是「只有本机这一份」。
+  // 代理在 GET/POST 响应里已经带了 file（它实际在读写哪个库文件），
+  // 所以这个状态不需要新接口，只要把每次同步的结果如实留下来。
+  //
+  // state：'shared' 连上了共享库 / 'local' 没有端点（静态部署、离线）
+  //        / 'fail' 端点在但这次失败 / 'pending' 还没同步过
+  const syncState = { state: 'pending', total: 0, file: '', storage: '', people: 0, error: '', at: 0 };
+  const syncListeners = new Set();
+
+  /** @returns {{state:string,total:number,file:string,storage:string,people:number,error:string,at:number}} 最近一次同步的结果（副本，改不坏内部状态） */
+  function lastSyncState() {
+    return { ...syncState };
+  }
+
+  /**
+   * 订阅「同步状态变了」，首页角标靠它刷新。
+   * @param {(st:object)=>void} fn
+   * @returns {() => void} 取消订阅
+   */
+  function onSyncStateChange(fn) {
+    if (typeof fn !== 'function') return () => {};
+    syncListeners.add(fn);
+    return () => syncListeners.delete(fn);
+  }
+
+  /** 端点根本不存在（静态部署 / 没起代理）：这不是故障，别报成「同步失败」 */
+  function isMissingEndpoint(err) {
+    // 「响应不是 JSON」这类（SPA 站点会把未知路径 fallback 成 200 + HTML）也算没有端点，
+    // 报成故障会让人以为共享库坏了。
+    return /HTTP 40[45]|HTTP 50[123]|Failed to fetch|NetworkError|Load failed|not found|没有同步端点|is not valid JSON|Unexpected .*in JSON/i
+      .test(String(err || ''));
+  }
+
+  /** 「这个环境压根没有同步端点」：显式标注，免得被误判成故障 */
+  function noEndpoint(msg) {
+    return Object.assign(fail(msg), { noEndpoint: true });
+  }
+
+  /** 把一次同步的结果落到 syncState；beacon 那条路径拿不到响应，不能拿它覆盖状态 */
+  function recordSync(r) {
+    if (!r || r.beacon) return r;
+    syncState.at = Date.now();
+    if (r.ok) {
+      syncState.state = r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local');
+      syncState.total = Number(r.total) || 0;
+      // 只留文件名，不把代理机器的绝对路径摆到页面上（代理默认监听所有网卡，
+      // 角标是每个打开首页的人都会看的；真要看全路径，title 里的文件名足够定位）
+      if (r.file) syncState.file = String(r.file).split(/[\\/]/).filter(Boolean).pop() || String(r.file);
+      if (r.storage) syncState.storage = String(r.storage);
+      if (Number(r.people) > 0) syncState.people = Number(r.people);
+      syncState.error = '';
+    } else {
+      const msg = (r.error && String(r.error)) || '未知错误';
+      syncState.state = (r.noEndpoint || isMissingEndpoint(msg)) ? 'local' : 'fail';
+      syncState.error = msg;
+    }
+    // 「写完本地顺手推一次」的调用方（save/rename/删除/导入）拿不到这个 Promise，
+    // 所以角标靠订阅刷新，不靠它们各自传回调 —— 少接线就少漏接。
+    syncListeners.forEach((fn) => { try { fn(lastSyncState()); } catch (_) { /* 订阅方炸了不影响存储层 */ } });
+    return r;
+  }
+
   /**
    * 向服务端要「部门高频查询」排行。
    *
@@ -508,9 +573,11 @@
       const json = await r.json();
       const data = json && json.data;
       if (!data) return fail('部门排行返回异常（没有 data）');
-      // 关键防线：mode 必须是 dept。JSON 存储/静态服务器会忽略我们的查询参数，
+      // 关键防线：**明确**要求 mode 是 dept。JSON 存储/静态服务器会忽略我们的查询参数、
       // 直接回全量 —— 那一刻要是照渲染，部门卡就名不副实了。
-      if (data.mode && data.mode !== 'dept') return fail('存储后端不支持部门排行（回落到本机计算）');
+      // （旧写法 `data.mode && data.mode !== 'dept'` 在 mode **缺失**时放行，
+      //   而 JSON 兜底分支恰恰不发 mode：实测那样会把全部门记录当成本部门排行。2026-09-19 改严）
+      if (data.mode !== 'dept') return fail('存储后端不支持部门排行（回落到本机计算）');
       const items = Array.isArray(data.items) ? data.items.map(sanitize).filter(Boolean) : null;
       if (!items) return fail('部门排行返回异常（没有 items）');
       return { ok: true, items, people: Number(data.people) || 0, storage: String(data.storage || '') };
@@ -519,21 +586,24 @@
     }
   }
 
-  /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total} 或 {ok:false,error} */
+  /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total, file?} 或 {ok:false,error} */
   async function syncFromServer() {
-    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    if (!canSync()) return recordSync(noEndpoint('当前环境没有同步端点（静态部署或离线）'));
     try {
       const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-      if (!r.ok) return fail('同步失败：HTTP ' + r.status);
+      if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
       const json = await r.json();
-      const incoming = (json && json.data && Array.isArray(json.data.items)) ? json.data.items : [];
-      const valid = incoming.map(sanitize).filter(Boolean);
-      if (!valid.length) return { ok: true, added: 0, merged: 0, total: list().length };
-      const { items, added, merged } = mergeItems(list(), valid);
+      const data = (json && json.data) || {};
+      const incoming = Array.isArray(data.items) ? data.items : [];
+      const meta = { file: data.file, storage: data.storage, people: data.people };
+      if (!incoming.length) {
+        return recordSync({ ok: true, added: 0, merged: 0, total: list().length, ...meta });
+      }
+      const { items, added, merged } = mergeItems(list(), incoming.map(sanitize).filter(Boolean));
       const w = writeRaw(items);
-      return w.ok ? { ok: true, added, merged, total: items.length } : w;
+      return recordSync(w.ok ? { ok: true, added, merged, total: items.length, ...meta } : w);
     } catch (e) {
-      return fail('同步失败：' + ((e && e.message) || String(e)));
+      return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
     }
   }
 
@@ -548,36 +618,44 @@
     const payload = JSON.stringify({ items: list(), deletedIds: pendingDeletes });
 
     if (o.beacon) {
+      // beacon 是「发完就走」：拿不到响应，所以这条路径**不记同步状态**（beacon: true 让
+      // recordSync 跳过它）。否则关页面时的 sendBeacon 不可用会把一个好好的「已同步」
+      // 角标翻成「同步失败」，而用户其实什么都没做错。
       try {
         // sendBeacon 不带自定义头，但代理只解析 body，够用
         const nav = window.navigator;
         if (nav && typeof nav.sendBeacon === 'function') {
           const okSent = nav.sendBeacon(SERVER_URL, new Blob([payload], { type: 'application/json' }));
           if (okSent) { writePendingDeletes([]); return { ok: true, beacon: true }; }
-          return fail('浏览器拒绝发送');
+          return { ...fail('浏览器拒绝发送'), beacon: true };
         }
       } catch (_) { /* 落到普通 fetch */ }
-      return fail('当前环境不支持 sendBeacon');
+      return { ...fail('当前环境不支持 sendBeacon'), beacon: true };
     }
 
-    if (!canSync()) return fail('当前环境没有同步端点（静态部署或离线）');
+    if (!canSync()) return recordSync(noEndpoint('当前环境没有同步端点（静态部署或离线）'));
     try {
       const r = await window.fetch(SERVER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload,
       });
-      if (!r.ok) return fail('同步失败：HTTP ' + r.status);
+      if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
       const json = await r.json();
-      const items = (json && json.data && Array.isArray(json.data.items)) ? json.data.items : null;
-      if (!items) return { ok: true, total: list().length };
+      // data 整块缺失 = 这个 200 根本不是代理给的（静态站的 fallback 页也会 200）。
+      // 不能当成「同步成功」，否则角标会说「已同步」。
+      if (!json || !json.data) return recordSync(noEndpoint('同步端点的响应不是预期 JSON'));
+      const data = json.data;
+      const meta = { file: data.file, storage: data.storage, people: data.people };
+      const items = Array.isArray(data.items) ? data.items : null;
+      if (!items) return recordSync({ ok: true, total: list().length, ...meta });
       const valid = items.map(sanitize).filter(Boolean);
       const w = writeRaw(valid);
       // 服务端已收到这批删除意图（返回的 items 里也没有它们），本地清空待办
       if (w.ok) writePendingDeletes([]);
-      return w.ok ? { ok: true, total: valid.length } : w;
+      return recordSync(w.ok ? { ok: true, total: valid.length, ...meta } : w);
     } catch (e) {
-      return fail('同步失败：' + ((e && e.message) || String(e)));
+      return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
     }
   }
 
@@ -612,6 +690,23 @@
       .catch(() => { /* 静默：端点不可用就只留本机 */ });
   }
 
+  /**
+   * 给各页「⭐ 保存到首页」那句提示用的短后缀。
+   *
+   * 为什么要：保存后的自动回推是 fire-and-forget 的，用户看不到「这次进没进共享库」，
+   * 与首页角标当年那个「同步是静默的」是同一个毛病。首页角标不在查询页的视野里，
+   * 所以让三个查询页的 toast 也带上同一份口径 —— 判定还是只在 recordSync 一处。
+   * 措辞刻意是「连接状态」而不是「这条已上传」：推送此刻还没回来，不能替它下结论。
+   * @returns {string} 以 ` · ` 开头的后缀；还没同步过时返回空串（不瞎猜）
+   */
+  function syncSuffix() {
+    const st = lastSyncState();
+    if (st.state === 'shared') return ' · 共享库已连上';
+    if (st.state === 'local') return ' · 仅本机（没连上共享库）';
+    if (st.state === 'fail') return ` · 共享同步失败（${st.error || '未知错误'}），先存本机`;
+    return '';
+  }
+
   /** 各页跳转地址（与 proxy.js 的干净路由一致） */
   function hrefFor(page, id) {
     const base = page === 'task' ? '/task' : page === 'subscription' ? '/subscription' : '/publish';
@@ -637,6 +732,9 @@
     importJson,
     syncFromServer,
     pushToServer,
+    lastSyncState,
+    onSyncStateChange,
+    syncSuffix,
     remove,
     clear,
     hrefFor,

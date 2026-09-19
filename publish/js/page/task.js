@@ -63,6 +63,11 @@
   const PAGE_SIZE = 10;   // 与抓包里的 pageSize 默认值一致
   const EXPORT_PAGE_SIZE = 500;
   const EXPORT_MAX = 5000;
+  const EXPORT_BTN_TITLE = '导出当前筛选结果（全部，不限当前页）';
+  // 进行中的导出：ctl 让「再点一次」能取消，progress 给 #resultCount 报数
+  // （5000 条要串行拉 10 页，是页面里最长的一个动作，不能只有一个「导出中…」）
+  let exportCtl = null;
+  let exportProgress = null;
 
   // ═══════════════════════════════════════════════════
   // 状态
@@ -350,7 +355,8 @@
       ? `${currentUser.userName || '—'}${currentUser.teamName ? ' · ' + currentUser.teamName : ''}`
       : '—';
     $('#resultCount').textContent =
-      `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条`;
+      `共 ${num(state.total)} 条 · 本页 ${state.rows.length} 条`
+      + (exportProgress ? ` · 导出中 ${exportProgress.done}/${exportProgress.want} 条` : '');
   }
 
   // ═══════════════════════════════════════════════════
@@ -375,50 +381,72 @@
     $('#taskDetailOverlay').classList.remove('show');
   }
 
-  // CSV 导出走 js/ui/csv-export.js 的 CsvExporter.downloadRows（含模块缺失保护）
+  // 导出的两件工具都在 js/ui/csv-export.js：fetchAllPages（按页拉全 + 进度 + 取消）、download（写文件）
 
   /**
    * 导出当前筛选条件的结果。
    * 服务端分页，所以按页循环拉取；上限 EXPORT_MAX 条，避免误导出 9 万条。
+   *
+   * 5000 条 = 串行 10 次请求，是本页最长的一个动作，所以：
+   *   · 进展写在 #resultCount 上（按钮文案换着显示会让按钮宽度跳，见 C 组文案那条教训）；
+   *   · 按钮不置灰 —— 再点一次就是取消（AbortController 中断在途请求，不生成文件）。
    */
   async function exportCsv() {
+    if (exportCtl) { exportCtl.abort(); return; }
     if (!state.queried || !state.total) { toast('⚠️ 请先查询再导出', 2200); return; }
+    const E = window.CsvExporter;
+    if (!E || typeof E.fetchAllPages !== 'function') { toast('⚠️ 导出模块未加载', 2600, 'error'); return; }
+    if (!window.TaskApi || typeof window.TaskApi.fetchTaskList !== 'function') {
+      toast('⚠️ 接口层未就绪，无法导出', 2600, 'error');
+      return;
+    }
+
     const btn = $('#btnExportCsv');
     // 初始文案从 HTML 取一次存下来：原来复位写死成「导 出」，与初始的「导出 CSV」不一致，
     // 导出过一次后按钮标签就永久变了（宽度也跳）
     if (btn) {
       if (!btn.dataset.label) btn.dataset.label = btn.textContent.trim();
-      btn.disabled = true;
-      btn.textContent = '导出中…';
+      btn.textContent = '取消导出';
+      btn.title = '点击取消本次导出（不会生成文件）';
     }
+    exportCtl = (typeof window.AbortController === 'function') ? new window.AbortController() : null;
+    const signal = exportCtl ? exportCtl.signal : null;
+    // 进展写 #resultCount（本统计函数是 renderStats；订阅页那个同名函数是它自己的私有实现）
+    const setProgress = (p) => { exportProgress = p; renderStats(); };
 
     try {
-      const want = Math.min(state.total, EXPORT_MAX);
-      const out = [];
-      for (let p = 1; out.length < want; p++) {
-        const res = await window.TaskApi.fetchTaskList(state.cond, p, EXPORT_PAGE_SIZE);
-        if (!res.ok) throw new Error(res.error || '未知错误');
-        if (!res.rows.length) break;
-        out.push(...res.rows);
+      setProgress({ done: 0, want: Math.min(state.total, EXPORT_MAX) });
+      const r = await E.fetchAllPages(
+        (p, size) => window.TaskApi.fetchTaskList(state.cond, p, size, { signal }),
+        {
+          total: state.total, pageSize: EXPORT_PAGE_SIZE, max: EXPORT_MAX,
+          signal, onProgress: (pp) => setProgress({ done: pp.done, want: pp.want }),
+        },
+      );
+      if (!r.ok) {
+        if (r.aborted) toast('已取消导出，没有生成文件', 2400, 'warn');
+        else toast(`⚠️ 导出失败：${r.error || '未知错误'}`, 3000, 'error');
+        return;
       }
-      const rows = out.slice(0, want);
       // 文件名时间戳按业务时区取：toISOString() 是 UTC，北京时间 00:00~08:00 会落成前一天
       const stamp = (window.Fmt && typeof window.Fmt.stamp === 'function')
         ? window.Fmt.stamp()
         : new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-      window.CsvExporter.downloadRows(rows, DETAIL_FIELDS, `任务单查询_${stamp}.csv`);
+      E.download(r.rows, DETAIL_FIELDS, `任务单查询_${stamp}.csv`);
       toast(
-        rows.length >= state.total
-          ? `✅ 已导出 ${rows.length} 条`
-          : `✅ 已导出前 ${rows.length} 条（共 ${state.total} 条，超出上限 ${EXPORT_MAX}）`,
-        2600
+        r.rows.length >= state.total
+          ? `✅ 已导出 ${r.rows.length} 条`
+          : `✅ 已导出前 ${r.rows.length} 条（共 ${state.total} 条，超出上限 ${EXPORT_MAX}）`,
+        2600, 'success'
       );
     } catch (e) {
-      toast(`⚠️ 导出失败：${errText(e)}`, 3000);
+      toast(`⚠️ 导出失败：${errText(e)}`, 3000, 'error');
     } finally {
+      exportCtl = null;
+      setProgress(null);
       if (btn) {
-        btn.disabled = false;
         btn.textContent = btn.dataset.label || '导出 CSV';
+        btn.title = EXPORT_BTN_TITLE;
       }
     }
   }
@@ -558,7 +586,7 @@
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
     const res = SQ.save({ page: 'task', name, fields, summary, labels: collectSavedLabels(fields) });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
-    toast('已保存到首页', 2000);
+    toast('已保存到首页' + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : ''), 2400);
   }
 
   /**

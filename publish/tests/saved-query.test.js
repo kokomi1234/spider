@@ -641,6 +641,9 @@ function loadSync(storage, fetchStub) {
   return win.SavedQuery;
 }
 
+/** 让 microtask + 一次 setTimeout(0) 都跑完：等「fire-and-forget」的那次推送落定 */
+const flush = async () => { await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
+
 const okJson = (data) => async () => ({ ok: true, status: 200, json: async () => ({ code: 200, data }) });
 
 test('sync：没有端点能力时安静跳过，不抛也不假装成功', async () => {
@@ -730,4 +733,198 @@ test('sync：HTTP 500 与坏 JSON 都要被当成失败而不是崩', async () =
   const b = await S2.pushToServer();
   assert.strictEqual(b.ok, false);
   assert.ok(b.error);
+});
+
+// ══════════════════════════════════════════════════════════
+// 8) 同步状态（首页「已同步 / 仅本机 / 同步失败」角标的唯一数据源）
+// ══════════════════════════════════════════════════════════
+//
+// 守的是**口径**而不是样式：角标本身只是把 lastSyncState() 如实翻译出来，
+// 判断（哪种情况算连上、哪种算故障）全在这里。之前同步是静默的，
+// 用户看不出自己看的是团队库还是本机那一份，所以这套判定必须有用例钉住。
+
+test('同步状态：没同步过之前是 pending，不给任何结论', () => {
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/saved-queries.db' }));
+  assert.strictEqual(S.lastSyncState().state, 'pending');
+});
+
+test('同步状态：成功且代理报了库文件 → shared，file/storage/people/total 都记下来', async () => {
+  const S = loadSync(fakeStorage(), okJson({
+    items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 3,
+  }));
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.file, '/srv/shared/saved-queries.db', '返回值也要带 file，首页角标之外的人要用');
+  const st = S.lastSyncState();
+  assert.strictEqual(st.state, 'shared');
+  // 状态里只留**文件名**，不留代理机器的绝对路径（角标人人可见，代理又默认监听所有网卡）
+  assert.strictEqual(st.file, 'saved-queries.db');
+  assert.strictEqual(st.storage, 'sqlite');
+  assert.strictEqual(st.people, 3);
+  assert.strictEqual(st.error, '');
+  assert.ok(Number(st.at) > 0, '要记下这次同步发生在什么时候');
+});
+
+test('同步状态：端点 404（没起代理 / 静态部署）算「仅本机」，不算故障', async () => {
+  const S = loadSync(fakeStorage(), async () => ({ ok: false, status: 404, json: async () => ({}) }));
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, false, '返回值照实说失败');
+  assert.strictEqual(S.lastSyncState().state, 'local', '但状态是「仅本机」：没有端点不是谁的错');
+});
+
+test('同步状态：网络断了（Failed to fetch）也算「仅本机」，HTTP 500 才算故障', async () => {
+  const a = loadSync(fakeStorage(), async () => { throw new Error('Failed to fetch'); });
+  await a.pushToServer();
+  assert.strictEqual(a.lastSyncState().state, 'local');
+
+  const b = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }));
+  await b.syncFromServer();
+  assert.strictEqual(b.lastSyncState().state, 'fail');
+  assert.ok(/500/.test(b.lastSyncState().error), '故障要把原因留给角标的 title');
+});
+
+test('同步状态：压根没有 fetch 能力时是 local，不是 fail', async () => {
+  const S = load(fakeStorage());   // 没有 location / fetch
+  await S.pushToServer();
+  assert.strictEqual(S.lastSyncState().state, 'local');
+  assert.ok(/没有同步端点/.test(S.lastSyncState().error));
+});
+
+test('同步状态：坏 JSON / 抛异常这类真故障要落 fail 并带上原因', async () => {
+  const S = loadSync(fakeStorage(), async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } }));
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(S.lastSyncState().state, 'fail');
+  assert.ok(/Unexpected token/.test(S.lastSyncState().error));
+});
+
+test('同步状态：sendBeacon 那条路拿不到响应，不能把「已同步」翻成「同步失败」', async () => {
+  const win = {
+    localStorage: fakeStorage(),
+    location: { href: 'http://localhost:3000/' },
+    fetch: okJson({ items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite' }),
+  };
+  loadScript('js/ui/saved-query.js', {}, win);
+  const S = win.SavedQuery;
+  await S.pushToServer();
+  assert.strictEqual(S.lastSyncState().state, 'shared');
+
+  // 关页面：navigator 里没有 sendBeacon（或被拒），只是发不出去，不代表同步出了错
+  const r = await S.pushToServer({ beacon: true });
+  assert.strictEqual(r.ok, false, '没 sendBeacon 时该照实返回不可用');
+  assert.strictEqual(r.beacon, true, '但要标出这是 beacon 路径');
+  assert.strictEqual(S.lastSyncState().state, 'shared', '角标不该被这条路径改写');
+});
+
+test('同步状态：save() 之后的顺手推送会自动更新状态，调用方不必自己传回调', async () => {
+  const peer = { id: 'peer1', page: 'publish', name: '同事的', fields: {}, hits: 1, saves: 1,
+    owner: { userId: '1001', userName: '李四', teamName: '开发一部' } };
+  // 真实代理返回的是「合并后的全集」，桩也照这个来（只回同事那条会把本地的挤掉）
+  const S = loadSync(fakeStorage(), async (url, opts) => ({
+    ok: true, status: 200,
+    json: async () => ({
+      code: 200,
+      data: { items: [...JSON.parse(opts.body).items, peer], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 2 },
+    }),
+  }));
+  assert.strictEqual(S.lastSyncState().state, 'pending');
+  S.save({ page: 'publish', name: '我的', fields: {} });   // autoPush 是 fire-and-forget
+  await flush();
+  await flush();
+  const st = S.lastSyncState();
+  assert.strictEqual(st.state, 'shared', '写完本地顺手推的那次也要落到状态里');
+  assert.strictEqual(st.total, 2, '条数是合并后的全集（自己的 + 同事的）');
+});
+
+test('同步状态：订阅能收到变化，取消订阅后不再收到；返回值是副本', async () => {
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
+  const seen = [];
+  const off = S.onSyncStateChange((st) => seen.push(st.state));
+  await S.syncFromServer();
+  assert.deepStrictEqual(seen, ['shared']);
+
+  const st = S.lastSyncState();
+  st.state = '篡改';
+  assert.strictEqual(S.lastSyncState().state, 'shared', 'lastSyncState 要给副本，改不坏内部状态');
+
+  off();
+  await S.syncFromServer();
+  assert.deepStrictEqual(seen, ['shared'], '取消订阅后不该再被叫到');
+});
+
+test('同步状态：订阅方自己抛异常，不能把存储层的同步带崩', async () => {
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
+  S.onSyncStateChange(() => { throw new Error('订阅方炸了'); });
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true, '同步本身该成功');
+  assert.strictEqual(S.lastSyncState().state, 'shared');
+});
+
+test('同步状态：代理没报 file 就不能说「已同步」，要退回 local', async () => {
+  // 角标的判据是「代理告诉我们在读写哪个库」；少了这句话，就不该给用户一个共享的结论
+  const S = loadSync(fakeStorage(), okJson({ items: [] }));
+  await S.syncFromServer();
+  assert.strictEqual(S.lastSyncState().state, 'local', '没 file 就没证据：不能报 shared');
+});
+
+test('同步状态：已经 shared 过之后，一次拿不到 file 的成功不该把它打成 local', async () => {
+  // 首屏 push 通常能拿到 file，之后的顺手推送若遇到一个不报 file 的实现，
+  // 把「已同步」翻成「仅本机」会让人以为共享库掉了 —— 粘性是对的方向。
+  let n = 0;
+  const S = loadSync(fakeStorage(), async (...a) => {
+    n += 1;
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: n === 1 ? { items: [], file: '/srv/a.db' } : { items: [] } }) };
+  });
+  await S.pushToServer();
+  assert.strictEqual(S.lastSyncState().state, 'shared');
+  await S.pushToServer();
+  assert.strictEqual(S.lastSyncState().state, 'shared', '第一次的证据要能撑住后续这些无证据的成功');
+});
+
+test('同步状态：从失败恢复到成功后，要把上一次的 error 清掉', async () => {
+  let fail = true;
+  const S = loadSync(fakeStorage(), async () => (fail
+    ? { ok: false, status: 500, json: async () => ({}) }
+    : { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [], file: '/srv/a.db', storage: 'sqlite' } }) }));
+  await S.pushToServer();
+  assert.strictEqual(S.lastSyncState().state, 'fail');
+  fail = false;
+  await S.pushToServer();
+  const st = S.lastSyncState();
+  assert.strictEqual(st.state, 'shared');
+  assert.strictEqual(st.error, '', '恢复之后还留着旧原因，title 会自相矛盾');
+});
+
+test('同步状态：200 但回来的不是 JSON（静态站的 fallback 页）算「没有端点」，不是故障', async () => {
+  const S = loadSync(fakeStorage(), async () => ({
+    ok: true, status: 200,
+    json: async () => { throw new Error('Unexpected token < in JSON at position 0'); },
+  }));
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(S.lastSyncState().state, 'local',
+    'SPA 站点会把未知路径 fallback 成 200 + HTML，这时候说「同步失败」会让人以为共享库坏了');
+});
+
+test('同步状态：后端明确不支持部门排行时（mode 缺失或不是 dept）一律拒绝采用', async () => {
+  // JSON 兜底分支以前不发 mode —— 旧防线 `data.mode && ...` 在 mode 缺失时放行，
+  // 会把「全部门全量」当成本部门排行渲染到首页卡片上。现在要求**明确**是 dept。
+  const ME = { userId: '1', userName: '甲', teamId: 'T1', teamName: '开发一部' };
+  const noMode = loadSync(fakeStorage(), okJson({ items: [{ id: 'x', page: 'publish', name: '别人的', fields: {} }] }));
+  const a = await noMode.deptTopFromServer(ME, 10);
+  assert.strictEqual(a.ok, false, '没有 mode = 没证明自己按部门筛过，不能用');
+  const allMode = loadSync(fakeStorage(), okJson({ mode: 'all', items: [] }));
+  assert.strictEqual((await allMode.deptTopFromServer(ME, 10)).ok, false);
+  const deptMode = loadSync(fakeStorage(), okJson({ mode: 'dept', items: [], people: 0 }));
+  assert.strictEqual((await deptMode.deptTopFromServer(ME, 10)).ok, true, 'mode=dept 才放行');
+});
+
+test('同步后缀：各页「已保存到首页」的提示与角标同一口径，没同步过时不加话', async () => {
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/a.db', storage: 'sqlite' }));
+  assert.strictEqual(S.syncSuffix(), '', '还没同步过就别瞎猜');
+  await S.pushToServer();
+  assert.ok(/共享库已连上/.test(S.syncSuffix()), S.syncSuffix());
+  const bad = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }));
+  await bad.pushToServer();
+  assert.ok(/共享同步失败.*500.*先存本机/.test(bad.syncSuffix()), bad.syncSuffix());
 });

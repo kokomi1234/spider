@@ -834,7 +834,7 @@
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
     const res = SQ.save({ page: 'subscription', name, fields, summary, labels: collectSavedLabels(fields) });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
-    toast('已保存到首页', 2000);
+    toast('已保存到首页' + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : ''), 2400);
   }
 
   // 启动恢复：仅当 URL 带 ?saved=<id> 时回填并自动查询。

@@ -142,6 +142,36 @@
       padding: 10px 12px;
     }
 
+    /* 同步状态角标：告诉用户「现在看的是团队库还是只有本机这一份」。
+       ⚠️ display 会把 hidden 属性盖掉（类选择器优先于 UA 样式），所以必须补 [hidden] 那条 */
+    .sync-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: var(--fs-nano);
+      line-height: 1.6;
+      border-radius: var(--r-pill);
+      padding: 2px 9px;
+      border: 1px solid var(--outline-soft);
+      background: var(--surface-1);
+      /* --muted 对 --surface-1 只有 4.08:1，12px 小字不过 WCAG AA；这页本来就在用 --on-variant */
+      color: var(--on-variant);
+      cursor: default;
+      white-space: nowrap;
+    }
+    .sync-state[hidden] { display: none; }
+    .sync-state::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .sync-state.is-shared { color: var(--ok-ink); border-color: currentColor; }
+    .sync-state.is-local { color: var(--on-variant); border-color: currentColor; }
+    .sync-state.is-fail { color: var(--warn-ink); border-color: currentColor; }
+
     /* 当前用户
        ⚠️ 这几条 [hidden] 规则不能省：下面的 display:flex 会盖掉 hidden 属性自带的
        display:none（类选择器优先于 UA 样式），未设置时「切换用户」按钮会漏出来、
@@ -397,6 +427,9 @@
         <h2>常用查询</h2>
         <div class="toolbar">
           <span class="result-count" id="savedCount" aria-live="polite"></span>
+          <!-- 同步是静默的（失败就退回本机），所以把这个状态显式摆出来。
+               数据来自 SavedQuery.lastSyncState()，代理响应里的 file 就是它实际读写的库文件 -->
+          <span class="sync-state is-local" id="savedSync" aria-live="polite" hidden></span>
           <!-- 数据在本机 localStorage：换浏览器/换电脑就看不到别人的，
                同团队要对齐就用这两个按钮交换（导出的是本机全部，不只本部门） -->
           <button type="button" class="outlined btn-xs" id="btnExportQueries"
@@ -443,7 +476,8 @@
 
     <p class="home-note">
       数据来自 ITAMP 内网服务，需通过本地代理（<code>node proxy.js</code>）访问；
-      常用查询与当前用户只存在本机浏览器（localStorage），不上传、不共享。
+      常用查询与当前用户<b>先落本机浏览器（localStorage）</b>，起了代理时才会与它的共享库双向同步
+      —— 上面那个角标就是当前的同步状态，「仅本机」意味着同事的记录你这边看不到。
     </p>
   </div>
 

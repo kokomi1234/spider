@@ -59,6 +59,11 @@ const crypto = require('crypto');
 const envPath = process.env.PROXY_ENV_PATH || path.join(__dirname, '..', '.env');
 
 const PORT = process.env.PROXY_PORT || 3000;
+// 默认只绑回环。以前 listen(PORT) 不传 host → 绑 `::`（所有网卡），而
+// /local/saved-queries、/local/batch-times 默认不鉴权、CORS 又是 *，
+// 实测同网段任意主机（甚至任意网页）都能读光/改写/删空这份团队库。
+// 「大家连同一份代理」时显式设 PROXY_HOST=0.0.0.0（并强烈建议同时设 PROXY_ADMIN_TOKEN）。
+const HOST = process.env.PROXY_HOST || '127.0.0.1';
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
 const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
 
@@ -799,9 +804,13 @@ const server = http.createServer((req, res) => {
   }
 
   // .env 热更新：修改 token / OFFLINE 等配置后无需重启
+  // ⚠️ 这条以前既不鉴权、又把 loadEnv() 原样回出去（= 任何人 curl 一下就拿到
+  //    PROXY_TOKEN / PROXY_COOKIE，而代理默认监听所有网卡）。现在：要 token、且只回键名。
   if (cachePath === '/reload') {
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     refreshConfig();
-    sendJson(res, 200, { code: 200, msg: 'reloaded', env: loadEnv() });
+    const keys = Object.keys(loadEnv() || {});
+    sendJson(res, 200, { code: 200, msg: 'reloaded', keys });
     return;
   }
 
@@ -880,6 +889,10 @@ const server = http.createServer((req, res) => {
   //   GET  /local/batch-times → { code:200, data:{ batchTimes:{...} } }
   //   POST /local/batch-times   body { batchTimes:{...} } → 写回文件
   if (cachePath === '/local/batch-times') {
+    // 与 /cache/*、/admin/* 同一口径：设了 PROXY_ADMIN_TOKEN 才要求 ?token=（默认不设=不鉴权）。
+    // 代理默认监听所有网卡 + CORS 是 *，所以「团队共用一个代理」时这些端点全网卡可写；
+    // 至少留一个开关能把写权限收住（不改默认行为，避免弄坏现在的本机开发）。
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     const FILE = path.join(__dirname, 'config', 'batch-times.json');
     if (req.method === 'GET' || req.method === 'HEAD') {
       try {
@@ -926,6 +939,9 @@ const server = http.createServer((req, res) => {
   // 存储：优先 SQLite（shared/saved-queries.db，能回答「多少人保存过」）；
   //       Node 不支持内置 node:sqlite 时自动降级到原来的 JSON 文件实现。
   if (cachePath === '/local/saved-queries') {
+    // 同 /local/batch-times：默认不鉴权（本机开发要用），设了 PROXY_ADMIN_TOKEN 就必须带 ?token=。
+    // 不设这道关时，同网段任何机器（甚至任意网页，因为 CORS 是 *）都能读光、改写、删空这份团队库。
+    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
     const store = getQueriesStore();          // SQLite 不可用返回 null → 走下面 JSON 兜底
     if (store) {
       if (handleQueriesSqlite(req, res, store)) return;
@@ -955,13 +971,19 @@ const server = http.createServer((req, res) => {
       ? (String(it.page) + '\u0000' + String(it.name))
       : ('id:' + String(it && it.id)));
 
-    /** 读文件（坏文件当空，绝不因为一份坏数据让端点 500） */
+    /**
+     * 读文件。**「文件坏了」与「还没有文件」必须区分开**：
+     * 以前两种都返回空表，于是下一次 POST 会用「只含这次提交」的内容把整个团队库重写一遍
+     * —— 别人存的全没（实测复现）。坏文件现在带 corrupt 标，POST 见它就拒写。
+     * 读侧仍返回 200 + 空列表，不因一份坏数据把端点打成 500。
+     */
     const readFile = () => {
+      let raw = '';
       try {
-        const raw = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : '';
-        if (!raw) return { items: [], deleted: [] };
+        raw = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : '';
+        if (!raw) return { items: [], deleted: [], corrupt: false };
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return { items: parsed, deleted: [] };
+        if (Array.isArray(parsed)) return { items: parsed, deleted: [], corrupt: false };
         const items = Array.isArray(parsed && parsed.items) ? parsed.items : [];
         const deleted = Array.isArray(parsed && parsed.deleted) ? parsed.deleted : [];
         // 墓碑只留 30 天：够覆盖「同事几天后打开」的情况，又不会让文件无限增长
@@ -969,10 +991,38 @@ const server = http.createServer((req, res) => {
         return {
           items: items.filter((it) => it && typeof it === 'object' && it.id && it.page),
           deleted: deleted.filter((d) => d && d.key && (Number(d.at) || 0) >= cutoff),
+          corrupt: false,
         };
-      } catch (_) { return { items: [], deleted: [] }; }
+      } catch (e) {
+        return { items: [], deleted: [], corrupt: true, error: e.message, bytes: raw.length };
+      }
     };
     const readItems = () => readFile().items;
+
+    /**
+     * JSON 兜底分支的元信息。**必须与 SQLite 分支同形状**：
+     * 前端 js/ui/saved-query.js 的 deptTopFromServer 靠「mode 必须是 dept」拒绝降级后端，
+     * 而这条防线读的是 `data.mode` —— 这里少发一个 mode，JSON 兜底时 `?dept=` 会被忽略、
+     * 直接把**全部门全量**当成本部门排行渲染到首页卡片上（实测复现）。
+     */
+    /**
+     * people = **几个人**保存过（与 SQLite 分支的 `COUNT(DISTINCT user_key)` 同口径）。
+     * 键必须先是「人」：以前先取 teamId，结果同部门两个人各存一份也只算 1 个人（实测）。
+     * 没有工号/姓名时才退化到部门键，至少不至于报 0。
+     */
+    const jsonPeople = (items) => {
+      const keys = new Set();
+      (items || []).forEach((it) => {
+        const o = (it && it.owner) || {};
+        const k = String(o.userId || o.userName || o.teamId || o.teamName || '');
+        if (k) keys.add(k);
+      });
+      return keys.size;
+    };
+    const jsonMeta = (items) => ({
+      storage: 'json', mode: 'all', people: jsonPeople(items),
+      note: 'JSON 兜底：不支持按部门排行（Node 需 ≥ 22.5 的 node:sqlite）',
+    });
 
     /**
      * 合并两份列表。规则与前端 SavedQuery.importJson 一致：
@@ -1010,7 +1060,14 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' || req.method === 'HEAD') {
       try {
         const f = readFile();
-        sendJson(res, 200, { code: 200, data: { items: f.items, deleted: f.deleted, file: FILE } });
+        sendJson(res, 200, {
+          code: 200,
+          data: {
+            items: f.items, deleted: f.deleted, file: FILE, ...jsonMeta(f.items),
+            // 如实告诉调用方「这个库现在是坏的」，前端角标才不会说「已同步」
+            ...(f.corrupt ? { corrupt: true, note: '共享库文件解析失败，已按空库读取（未覆盖原文件）：' + f.error } : {}),
+          },
+        });
       } catch (e) {
         sendJson(res, 500, { code: 500, msg: '读取常用查询失败: ' + e.message });
       }
@@ -1028,6 +1085,15 @@ const server = http.createServer((req, res) => {
           if (!Array.isArray(incoming)) { sendJson(res, 400, { code: 400, msg: 'body 需要 { items: [...] }' }); return; }
 
           const f = readFile();
+          // 文件坏了就**拒写**：这时按空表合并会把别人的记录整份抹掉（实测过那条路径）。
+          // 宁可返回 500 让角标显示「同步失败：<原因>」，也不能悄悄覆盖团队库。
+          if (f.corrupt) {
+            sendJson(res, 500, {
+              code: 500,
+              msg: `共享库文件已损坏，拒绝覆盖（先修好或删掉 ${FILE}）：${f.error}`,
+            });
+            return;
+          }
           // 删除意图：提交方删掉的条目要**从文件里移除并立墓碑**，
           // 否则合并时它会把删除的记录原样带回来（同事的本地副本一推送就"复活"）。
           const delIds = new Set((Array.isArray(parsed.deletedIds) ? parsed.deletedIds : []).map(String));
@@ -1042,11 +1108,23 @@ const server = http.createServer((req, res) => {
           const deadKeys = new Set(deleted.map((d) => d.key));
           const merged = mergeItems(remaining, incoming, deadKeys);
 
-          fs.mkdirSync(path.dirname(FILE), { recursive: true });
-          fs.writeFileSync(FILE, JSON.stringify({
+          // 原子写：先写 .tmp 再 rename。直接 writeFileSync 中途失败（磁盘满 / 权限）
+          // 会留下半截文件，下一次读就当坏文件 —— 对团队库来说是灾难。
+          const payload = JSON.stringify({
             v: 2, updatedAt: new Date().toISOString(), items: merged, deleted,
-          }, null, 2) + '\n', 'utf8');
-          sendJson(res, 200, { code: 200, msg: '已合并保存', data: { items: merged, deleted, file: FILE } });
+          }, null, 2) + '\n';
+          const tmp = `${FILE}.tmp-${process.pid}-${Date.now()}`;
+          fs.mkdirSync(path.dirname(FILE), { recursive: true });
+          try {
+            fs.writeFileSync(tmp, payload, 'utf8');
+            fs.renameSync(tmp, FILE);
+          } catch (e) {
+            try { fs.unlinkSync(tmp); } catch (_) { /* 临时文件清不掉不重要 */ }
+            // 写盘失败必须如实报，不能返回 200 —— 否则前端角标会说「已同步」
+            sendJson(res, 500, { code: 500, msg: `写入共享库失败（${FILE}）: ${e.message}` });
+            return;
+          }
+          sendJson(res, 200, { code: 200, msg: '已合并保存', data: { items: merged, deleted, file: FILE, written: true, ...jsonMeta(merged) } });
         } catch (e) {
           sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
         }
@@ -1148,8 +1226,11 @@ server.on('error', (err) => {
   console.error('[proxy] server error（已记录，服务继续运行）:', (err && err.message) || err);
 });
 
-server.listen(PORT, () => {
-  console.log(`\n✅ 服务器运行在 http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n✅ 服务器运行在 http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`);
+  console.log(`   🔒 监听地址：${HOST}` + (HOST === '127.0.0.1'
+    ? '（只本机可访问；要让同事连这份代理，设 PROXY_HOST=0.0.0.0 + PROXY_ADMIN_TOKEN）'
+    : '（⚠️ 已对所有网卡开放：必须设 PROXY_ADMIN_TOKEN，否则 /local/* 与 /cache/* 任何人可读写）'));
   console.log(`   📄 静态文件：从 ${__dirname} 提供（HTML/JS/CSS 等）`);
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);
