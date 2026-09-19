@@ -23,6 +23,33 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 00:20] Agent-Dev（主会话，第四批）
+
+**任务**：用户报「切换用户后常用查询不变、部门排行看不到刚存的那条」→ 定位两个根因并按其拍板改语义。
+
+**改动面**：`js/ui/saved-query.js`（新增 `userKeyOf` / `listForUser` / `mineFromServer` / `ownerSuffix`，
+`save()` 回传 `ownerMissing`）、`js/page/home.js`（主列表按人过滤 + 随身份一起刷）、
+四个 HTML（三页补 `current-user.js`）、`js/core/bootstrap.js` PRESETS、三页 toast 补半句提示、
+`tests/saved-query.test.js`(+9 用例)、`tests/home-page.test.js`(替身跟语义)、`tests/smoke-browser.js`。
+
+**门禁原话**：`node tests/run.js` → `572/572 通过`；`node tests/smoke-browser.js` →
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**关键结论（下一个 Agent 别重新判断）**
+- 「谁存的」完全依赖 `current-user.js` 在**每一页**都加载。少引一处不报错，只让 `owner` 为空，
+  那条记录就在「我的」和部门排行里永久隐形。**已有静态用例逐个 HTML 查这件事**，别再靠人记。
+- 首页主列表**按当前用户过滤**（含 `?user=`，`mode` 必须是 `'user'` 才采用）；没身份时**空列表 + 指引**，
+  不许退回"显示全部"。要看别人的走部门区。
+- 清空团队库**不能只 `mv` 掉 `.db`**：客户端 localStorage 里的副本会在下一次推送时灌回服务端
+  （实测发生了）。要么走 `SavedQuery.remove(id)` 让服务端立墓碑，要么连各客户端本地存储一起清。
+- `pushToServer` 本来就用服务端全集覆盖本地，**不需要**再加一层"按墓碑 prune 本机"的逻辑（实测过）。
+
+**当前状态**：开发团队库已清空（`items:0 people:0 deleted:4`）；代理跑在 **3011**（离线回放，
+`PROXY_OFFLINE=1`），**3000 留给用户自己**；**11 个本地提交未 push**。
+
+**下一步**：无锁定。若要让部门键更稳，得先确认同事的身份里 `teamId` 是否恒有值
+（现在 `deptKeyOf` 是 `teamId ‖ teamName ‖ …`，两种来源会落成不同的键）——需要真实报文或用户口径，别猜。
+
 ### [2026-09-19 23:25] Agent-Doc（主会话，第三批）
 
 **任务**：用户指示「不希望记忆文件多处存档，只要一个」→ 查清散在几处 → 删重复副本 → 更正被写假的记录。
