@@ -46,7 +46,7 @@
   let batchTimeData = [];   // 弹窗内的可编辑行 { batch, testDate, releaseDate }
   let batchTimes = {};      // 已落盘的配置 { '2609批次': { testDate, releaseDate } }
 
-  /** 页面注入的依赖：{ toast, setLoading, batchWindow, observedBatches, refreshPriority } */
+  /** 页面注入的依赖：{ toast, setLoading, batchWindow, refreshPriority }（行来源已改走批次字典，不再有 observedBatches） */
   let deps = {};
 
   function init(injected) { deps = injected || {}; }
