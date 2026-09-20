@@ -661,9 +661,12 @@
     } catch (_) { name = ''; }
     if (!name || !String(name).trim()) return;   // 取消 / 空输入：什么都不做
 
-    const r = S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
+    const r = await S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
-    showToast((r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达')
+    // 2026-09-20 架构改版后 save 是双态的：server=true 表示已直接写进共享库；
+    // localOnly=true 表示只落在本机（代理没连上 / 服务端失败），措辞要说清。
+    const where = r.localOnly ? '（仅本机，连上共享库后会自动补上去）' : '';
+    showToast((r.updated ? '已更新首页的常用查询' : '已保存到首页，可从首页一键直达') + where
       + (typeof S.syncSuffix === 'function' ? S.syncSuffix() : '')
       + (typeof S.ownerSuffix === 'function' ? S.ownerSuffix(r) : ''), 3200, 'success');
   }
@@ -681,7 +684,8 @@
     } catch (_) { id = null; }
     if (!id) return null;
 
-    const item = S.get(id);
+    // getAsync：镜像里没有就去服务端按 id 捞（换电脑/清过缓存也能回填）
+    const item = await S.getAsync(id);
     if (!item || item.page !== 'publish') return null;
 
     Object.keys(item.fields || {}).forEach((fid) => {
