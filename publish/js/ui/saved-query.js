@@ -2,7 +2,13 @@
  * 常用查询（首页快捷入口）存储层
  * ------------------------------------------------------------
  * 三个查询页都能把「当前填好的筛选条件」存一份到首页，之后从首页一键直达、
- * 自动回填条件并查询。数据落在 localStorage，**不进任何请求**。
+ * 自动回填条件并查询。
+ *
+ * 存储架构（2026-09-20 改版，用户拍板）：**服务端数据库是唯一真相源**。
+ *   · 增/删/改直接写服务端（/local/saved-queries），成功后拉「我的列表」刷新镜像；
+ *   · localStorage 只是「我的」离线镜像，**严禁写入团队全集**（旧版全集回写是
+ *     「改名弹回 / 导入被盖 / 第二个人存了看不到」那一串 bug 的共同根源）；
+ *   · 服务端不可达时退回本机兜底（离线照用，返回值带 localOnly，角标会说明）。
  *
  * 设计约束（都是踩过的坑）：
  *   1) localStorage 在隐私模式/配额满时会**直接抛异常**，所以读取与写入一律
@@ -322,17 +328,83 @@
     return n ? mine.slice(0, n) : mine;
   }
 
-  /** 从首页点开一次 → 计一次打开（「高频」的依据；纯本地计数，不上报） */
-  function hit(id) {
+  /** 从首页点开一次 → 计一次打开（「高频」的依据）。async：镜像里没有就去服务端找 */
+  async function hit(id) {
     if (!id) return fail('缺少 id');
     const items = list();
     const target = items.find((it) => it.id === id);
-    if (!target) return fail('该查询已不存在');
-    const next = items.map((it) => (it.id === id
-      ? { ...it, hits: it.hits + 1, lastAt: Date.now() }
-      : it));
-    const w = writeRaw(next);
-    return w.ok ? { ok: true, item: next.find((it) => it.id === id) } : w;
+    if (target) {
+      const next = items.map((it) => (it.id === id
+        ? { ...it, hits: it.hits + 1, lastAt: Date.now() }
+        : it));
+      const w = writeRaw(next);
+      const updated = next.find((it) => it.id === id);
+      // 服务端可达就把计数送上去（失败不影响跳转——调用方也不等它）
+      if (w.ok && canSync()) {
+        try {
+          await window.fetch(SERVER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: [updated], deletedIds: readPendingDeletes() }),
+          });
+          if (readPendingDeletes().length) writePendingDeletes([]);
+        } catch (_) { /* 计数失败不该挡住跳转 */ }
+      }
+      return w.ok ? { ok: true, item: updated } : w;
+    }
+    // 镜像里没有（深链进来 / 镜像陈旧）：去服务端找——记录可能是别人存的，先全集后我的
+    if (canSync()) {
+      try {
+        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (r.ok) {
+          const data = (await r.json()).data;
+          const found = data && Array.isArray(data.items)
+            ? data.items.map(sanitize).filter(Boolean).find((it) => it.id === id)
+            : null;
+          if (found) {
+            const updated = { ...found, hits: (found.hits || 0) + 1, lastAt: Date.now() };
+            await window.fetch(SERVER_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items: [updated] }),
+            });
+            // 是我自己的记录才进镜像（别人的只计数，不落本机）
+            const cu = window.CurrentUser && window.CurrentUser.get();
+            if (cu && saverKeysOf(updated).includes(userKeyOf(cu))) {
+              writeRaw([updated].concat(list().filter((it) => it.id !== id)));
+            }
+            return { ok: true, item: updated };
+          }
+        }
+      } catch (_) { /* 计数失败不该挡住跳转 */ }
+    }
+    return fail('该查询已不存在');
+  }
+
+  /**
+   * get() 的 async 版：镜像里没有就去服务端找（先「我的」，再全集）。
+   * 为什么要它：?saved=<id> 深链回填时，换电脑/清过缓存的本机镜像可能是空的——
+   * 记录在共享库里，按 id 捞得到就照样回填（2026-09-20 架构改版配套）。
+   */
+  async function getAsync(id) {
+    if (!id) return null;
+    const local = list().find((it) => it.id === id);
+    if (local) return local;
+    if (!canSync()) return null;
+    try {
+      const cu = (window.CurrentUser && window.CurrentUser.get()) || {};
+      const mine = await mineFromServer(cu);
+      const inMine = mine.ok ? mine.items.find((it) => it.id === id) : null;
+      if (inMine) return inMine;
+      const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+      if (!r.ok) return null;
+      const data = (await r.json()).data;
+      return (data && Array.isArray(data.items)
+        ? data.items.map(sanitize).filter(Boolean).find((it) => it.id === id)
+        : null) || null;
+    } catch (_) {
+      return null;
+    }
   }
 
   function list() {
@@ -352,10 +424,17 @@
   }
 
   /**
-   * 保存一份常用查询。
-   * 同名同页视为「更新」（保留原 id 与排序位置），否则新增；超过上限报错。
+   * 保存一份常用查询（**async，服务端优先**）。
+   *
+   * 2026-09-20 架构改版（用户拍板：**数据库为唯一真相源，不要存 localStorage**）：
+   *   · 服务端可达 → 判重对着**服务端里我的列表**算（不再对着本机混合列表），
+   *     然后只 POST 这一条；localStorage 里只留「我的列表」镜像。
+   *   · 服务端不可达（静态部署 / 代理没起）→ 走本地兜底（写镜像 + autoPush），
+   *     行为与旧版一致，返回值带 localOnly:true。
+   * 判重口径不变：同名同页**只对同一个人**算更新——两个人各自保存同名查询
+   * 是两条记录（默认名由筛选条件生成，同一份条件两人保存必然同名）。
    */
-  function save({ page, name, fields, summary, labels, owner }) {
+  async function save({ page, name, fields, summary, labels, owner }) {
     if (!page || !PAGES[page]) return fail('未知的页面类型');
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
@@ -371,17 +450,19 @@
     // 少引一个脚本不会报错，只会让 owner 静默变成 null，那条记录就永远进不了
     // 任何按人/按部门的视图（2026-09-19 的三个查询页正是这么坏的）。
     // 所以这里把「取不到归属」显式回给调用方，由页面 toast 说给用户听。
-    // 注意它要**先于**同名判重算出来 —— 归属人是「同名算更新还是新增」的一半判据。
     const ownerInfo = cleanOwner(owner || (window.CurrentUser && window.CurrentUser.get()));
     const myKey = userKeyOf(ownerInfo);
 
+    // ── 服务端路径 ──
+    if (canSync() && myKey) {
+      const srv = await saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey });
+      if (srv.ok) return { ok: true, item: srv.item, updated: !!srv.updated, server: true };
+      // 服务端失败不拦人：退回本地兜底，让用户先把东西存下来（错误留在角标里）
+    }
+
+    // ── 本地兜底路径（离线 / 服务端失败 / 没有归属人）──
+    const serverTried = canSync() && !!myKey;   // true = 服务端试过但失败，提示语要说「仅本机」
     const items = list();
-    // 「同名同页」只对**同一个人**算更新。
-    // 团队库里 A 和 B 各自保存一份同名查询是**两条不同的记录**（默认名由筛选条件生成，
-    // 两个人从同一份条件保存必然同名）：以前只看 page+name，B 保存会复用 A 的 id，
-    // 服务端 `ON CONFLICT(id)` 把 B 的条件写进 A 那条，A 反过来也看不到 B 的。
-    // 2026-09-20 实测：B 保存后服务端回传的 owner 仍是 A（savers[0]），本机被服务端全集覆盖
-    // → listForUser(B) 恒为空，表现成「第二个用户怎么存都存不进去」。
     const exists = items.find((it) => it.page === page && it.name === title
       && userKeyOf(it.owner) === myKey);
     const item = {
@@ -413,14 +494,96 @@
       // 有声失败：没归属的记录在按人/按部门两种视图里都是隐形的，不给提示就会变成"我明明存了"
       console.warn('[saved-query] 这条查询没有归属人（当前用户没设置，或本页没加载 current-user.js）');
     }
-    return w.ok ? { ok: true, item, updated: !!exists, ownerMissing: !ownerInfo } : w;
+    return w.ok ? { ok: true, item, updated: !!exists, ownerMissing: !ownerInfo, localOnly: serverTried } : w;
   }
 
-  function rename(id, name) {
+  /**
+   * save() 的服务端一段：拉「服务端里我的列表」判重 → 只 POST 这一条。
+   * 判重数据来自服务端而不是本机镜像 —— 本机镜像可能陈旧甚至混着别人的旧记录，
+   * 而服务端才是唯一真相源。任何一步失败返回 {ok:false,...}，由 save() 落回本地。
+   */
+  async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey }) {
+    const mine = await mineFromServer(ownerInfo);
+    if (!mine.ok) return { ok: false, error: mine.error };
+    const exists = mine.items.find((it) => it.page === page && it.name === title
+      && userKeyOf(it.owner) === myKey);
+    const item = {
+      id: exists ? exists.id : newId(),
+      page,
+      name: title,
+      summary: typeof summary === 'string' ? summary : '',
+      labels: cleanLabels(labels),
+      owner: ownerInfo,
+      saves: exists ? (exists.saves || 1) + 1 : 1,
+      hits: exists ? (exists.hits || 0) : 0,
+      lastAt: exists ? (exists.lastAt || 0) : 0,
+      v: SCHEMA_VERSION,
+      at: Date.now(),
+      fields: cleanedFields,
+    };
+    try {
+      const r = await window.fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: [item], deletedIds: readPendingDeletes() }),
+      });
+      if (!r.ok) return { ok: false, error: '同步失败：HTTP ' + r.status };
+      const json = await r.json();
+      if (!json || !json.data) return { ok: false, error: '同步端点的响应不是预期 JSON' };
+      // 服务端已确认。镜像刷新成「服务端里我的列表」——绝不写回 POST 响应里的团队全集。
+      const meta = { file: json.data.file, storage: json.data.storage, people: json.data.people };
+      const refreshed = await mineFromServer(ownerInfo);
+      const total = refreshed.ok ? refreshed.items.length : undefined;
+      if (refreshed.ok) writeRaw(refreshed.items);
+      if (readPendingDeletes().length) writePendingDeletes([]);
+      recordSync({ ok: true, total, ...meta });
+      return { ok: true, item, updated: !!exists };
+    } catch (e) {
+      return { ok: false, error: '同步失败：' + ((e && e.message) || String(e)) };
+    }
+  }
+
+  /**
+   * 重命名（async，服务端优先）。镜像里找不到时去服务端「我的列表」里找——
+   * 镜像可能还没刷新，但不能因为本机陈旧就说「不存在」。
+   */
+  async function rename(id, name) {
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
     const items = list();
     const target = items.find((it) => it.id === id);
+
+    // ── 服务端路径 ──
+    if (canSync()) {
+      let base = target;
+      if (!base) {
+        const cu = window.CurrentUser && window.CurrentUser.get();
+        const mine = await mineFromServer(cu || {});
+        if (mine.ok) base = mine.items.find((it) => it.id === id);
+      }
+      if (base) {
+        try {
+          const r = await window.fetch(SERVER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: [{ ...base, name: title }], deletedIds: readPendingDeletes() }),
+          });
+          if (r.ok) {
+            const json = await r.json().catch(() => null);
+            if (json && json.data) {
+              // 本机镜像同步改掉（它只含我的记录，直接 map 替换是安全的）
+              const w = writeRaw(list().map((it) => (it.id === id ? { ...it, name: title } : it)));
+              if (readPendingDeletes().length) writePendingDeletes([]);
+              recordSync({ ok: true, total: list().length, file: json.data.file, storage: json.data.storage, people: json.data.people });
+              if (w.ok || !storage()) return { ok: true, item: { ...base, name: title }, server: true };
+            }
+          }
+          // HTTP 失败 → 落本地
+        } catch (_) { /* 落本地 */ }
+      }
+    }
+
+    // ── 本地兜底 ──
     if (!target) return fail('该查询已不存在');
     const next = items.map((it) => (it.id === id ? { ...it, name: title, at: it.at } : it));
     const w = writeRaw(next);
@@ -428,11 +591,12 @@
     return w.ok ? { ok: true, item: { ...target, name: title } } : w;
   }
 
-  function remove(id) {
+  /** 删除（async）：本地摘掉 + 立墓碑 + **await** 推送（推送里带刷新镜像，不再是 fire-and-forget） */
+  async function remove(id) {
     const items = list();
     if (!items.some((it) => it.id === id)) return fail('该查询已不存在');
     const w = writeRaw(items.filter((it) => it.id !== id));
-    if (w.ok) { markDeleted(id); autoPush(); }
+    if (w.ok) { markDeleted(id); await pushToServer(); }
     return w.ok ? { ok: true } : w;
   }
 
@@ -493,6 +657,32 @@
   }
 
   /**
+   * 导出（async，服务端优先）：连得上代理就导**整个团队库**，导不出才退本机镜像。
+   * 为什么要变：镜像现在只含「我的」，直接导本机会让文件看起来"少了一大半"；
+   * 而团队库本来就该是导出的主体（换电脑对齐用的）。
+   */
+  async function exportJsonAsync() {
+    if (canSync()) {
+      try {
+        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (r.ok) {
+          const json = await r.json();
+          const data = json && json.data;
+          if (data && Array.isArray(data.items)) {
+            return JSON.stringify({
+              app: 'spider-saved-queries',
+              v: SCHEMA_VERSION,
+              exportedAt: new Date().toISOString(),
+              items: data.items.map(sanitize).filter(Boolean),
+            }, null, 2);
+          }
+        }
+      } catch (_) { /* 退本机镜像 */ }
+    }
+    return exportJson();
+  }
+
+  /**
    * 导入他人导出的 JSON（按 id 或「同页面同名」合并，幂等）。
    * 计数取 max 而不是相加 —— 反复导入同一个文件不该把「高频」刷上去。
    * @returns {{ok:boolean, added?:number, merged?:number, total?:number, error?:string}}
@@ -530,7 +720,14 @@
     return { items, added, merged };
   }
 
-  function importJson(text) {
+  /**
+   * 导入（async，服务端优先）：
+   *   · 连得上代理 → 先 GET 全集算出「新增/合并」计数（只为了让 toast 说得准），
+   *     再把**合并后的全集** POST 回去（服务端按 id upsert，天然幂等），
+   *     最后刷新镜像。上限检查交给服务端（proxy.js 的 2000 条截断），不再按本机 200 卡。
+   *   · 连不上 → 走旧的本地合并路径。
+   */
+  async function importJson(text) {
     let parsed;
     try {
       parsed = JSON.parse(String(text || ''));
@@ -545,14 +742,47 @@
     const valid = incoming.map(sanitize).filter(Boolean);
     if (!valid.length) return fail('文件里没有可用的常用查询');
 
+    if (canSync()) {
+      try {
+        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (r.ok) {
+          const json = await r.json();
+          const data = json && json.data;
+          if (data && Array.isArray(data.items)) {
+            const existing = data.items.map(sanitize).filter(Boolean);
+            const { items, added, merged } = mergeItems(existing, valid);
+            const p = await window.fetch(SERVER_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ items, deletedIds: readPendingDeletes() }),
+            });
+            if (p.ok) {
+              const pj = await p.json().catch(() => null);
+              const pd = pj && pj.data;
+              if (!pd) return fail('同步端点的响应不是预期 JSON');
+              if (readPendingDeletes().length) writePendingDeletes([]);
+              // 镜像只刷「我的」：导入的多半是别人的记录，不该进本机镜像
+              const cu = window.CurrentUser && window.CurrentUser.get();
+              let total = items.length;
+              if (cu) {
+                const mine = await mineFromServer(cu);
+                if (mine.ok) { writeRaw(mine.items); total = mine.items.length; }
+              }
+              recordSync({ ok: true, total, file: pd.file, storage: pd.storage, people: pd.people });
+              return { ok: true, added, merged, total, server: true };
+            }
+          }
+        }
+        // 服务端失败 → 落本地兜底
+      } catch (_) { /* 落本地兜底 */ }
+    }
+
     const { items, added, merged } = mergeItems(list(), valid);
     if (items.length > MAX_ITEMS) {
       return fail(`合并后共 ${items.length} 条，超过上限 ${MAX_ITEMS} 条，请先清理一些再导入`);
     }
     const w = writeRaw(items);
     // 与 save / rename / remove 一致：导入也是本机的一次**写操作**，要推给共享库。
-    // 之前只有它没有 autoPush —— 后果是"从空库导入后，首页 ?user= 拉回空数据把刚导入的
-    // 条目盖掉"，而且导进来的东西永远只留在这一台机器上（2026-09-20 子代理真点 UI 发现）。
     if (w.ok) autoPush();
     return w.ok ? { ok: true, added, merged, total: items.length } : w;
   }
@@ -709,22 +939,28 @@
     }
   }
 
-  /** 拉取共享数据并合并进本地。返回 {ok, added, merged, total, file?} 或 {ok:false,error} */
+  /**
+   * 刷新本机镜像 = 从服务端拉「当前用户的我的列表」。
+   * 2026-09-20 架构改版：不再把团队全集合并进本机（localStorage 只做「我的」离线镜像）。
+   * 没设当前用户时无事可做——但同步状态角标还是要如实上报（连没连得上）。
+   */
   async function syncFromServer() {
     if (!canSync()) return recordSync(noEndpoint('当前环境没有同步端点（静态部署或离线）'));
+    const cu = window.CurrentUser && window.CurrentUser.get();
     try {
-      const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-      if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
-      const json = await r.json();
-      const data = (json && json.data) || {};
-      const incoming = Array.isArray(data.items) ? data.items : [];
-      const meta = { file: data.file, storage: data.storage, people: data.people };
-      if (!incoming.length) {
-        return recordSync({ ok: true, added: 0, merged: 0, total: list().length, ...meta });
+      if (!cu) {
+        // 没有归属人：拉全集没有意义（也不会被写进镜像），只探一下端点活着没
+        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
+        const json = await r.json();
+        const data = (json && json.data) || {};
+        return recordSync({ ok: true, total: list().length, file: data.file, storage: data.storage, people: data.people });
       }
-      const { items, added, merged } = mergeItems(list(), incoming.map(sanitize).filter(Boolean));
-      const w = writeRaw(items);
-      return recordSync(w.ok ? { ok: true, added, merged, total: items.length, ...meta } : w);
+      const mine = await mineFromServer(cu);
+      if (!mine.ok) return recordSync(fail(mine.error));
+      const meta = { file: mine.storage, storage: mine.storage };
+      writeRaw(mine.items);
+      return recordSync({ ok: true, added: 0, merged: 0, total: mine.items.length, ...meta });
     } catch (e) {
       return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
     }
@@ -770,13 +1006,18 @@
       if (!json || !json.data) return recordSync(noEndpoint('同步端点的响应不是预期 JSON'));
       const data = json.data;
       const meta = { file: data.file, storage: data.storage, people: data.people };
-      const items = Array.isArray(data.items) ? data.items : null;
-      if (!items) return recordSync({ ok: true, total: list().length, ...meta });
-      const valid = items.map(sanitize).filter(Boolean);
-      const w = writeRaw(valid);
-      // 服务端已收到这批删除意图（返回的 items 里也没有它们），本地清空待办
-      if (w.ok) writePendingDeletes([]);
-      return recordSync(w.ok ? { ok: true, total: valid.length, ...meta } : w);
+      // ⚠️ 2026-09-20 架构改版：**不再把 POST 响应里的团队全集写进 localStorage**。
+      // 旧写法 `writeRaw(全集)` 会让本机镜像混着所有人的记录（李四的机器上有张三的记录），
+      // 是「改名弹回 / 导入被盖 / 第二个人存了看不到」这一串 bug 的共同根源。
+      // 现在镜像只留「我的列表」：有当前用户就顺手拉一份刷进去，没有就保持现状。
+      if (readPendingDeletes().length) writePendingDeletes([]);
+      const cu = window.CurrentUser && window.CurrentUser.get();
+      if (cu) {
+        const mine = await mineFromServer(cu);
+        if (mine.ok) writeRaw(mine.items);
+        return recordSync({ ok: true, total: mine.ok ? mine.items.length : list().length, ...meta });
+      }
+      return recordSync({ ok: true, total: list().length, ...meta });
     } catch (e) {
       return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
     }
@@ -867,7 +1108,9 @@
     saverKeysOf,
     fingerprintOf,
     exportJson,
+    exportJsonAsync,
     importJson,
+    getAsync,
     syncFromServer,
     pushToServer,
     lastSyncState,

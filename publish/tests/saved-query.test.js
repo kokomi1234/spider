@@ -48,51 +48,51 @@ const KEY = 'spider.savedQueries.v1';
 // 1) 保存与校验
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：正常保存 → 返回 ok 且带 id / 时间戳', () => {
+test('saved-query：正常保存 → 返回 ok 且带 id / 时间戳', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'publish', name: '2611批次-全球汇划', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611pc' });
+  const r = (await S.save({ page: 'publish', name: '2611批次-全球汇划', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611pc' }));
   assert.strictEqual(r.ok, true, '应保存成功：' + JSON.stringify(r));
   assert.ok(r.item.id, '必须生成 id（首页跳转要用 ?saved=<id>）');
   assert.ok(r.item.at > 0, '要记保存时间，列表按它倒序');
   assert.strictEqual(r.item.fields.f_prodBatch, '2611pc');
 });
 
-test('saved-query：名称为空 / 纯空格 → 拒绝保存，不写存储', () => {
+test('saved-query：名称为空 / 纯空格 → 拒绝保存，不写存储', async () => {
   const st = fakeStorage();
   const S = load(st);
-  ['', '   ', undefined, null].forEach((name) => {
-    const r = S.save({ page: 'publish', name, fields: { a: '1' } });
+  ['', '   ', undefined, null].forEach(async (name) => {
+    const r = (await S.save({ page: 'publish', name, fields: { a: '1' } }));
     assert.strictEqual(r.ok, false, `名称 ${JSON.stringify(name)} 应被拒绝`);
   });
   assert.strictEqual(st.getItem(KEY), null, '被拒绝的保存不该落盘');
 });
 
-test('saved-query：未知页面类型 → 拒绝保存', () => {
+test('saved-query：未知页面类型 → 拒绝保存', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'notExist', name: 'x', fields: {} });
+  const r = (await S.save({ page: 'notExist', name: 'x', fields: {} }));
   assert.strictEqual(r.ok, false);
   assert.ok(/页面类型/.test(r.error), '错误信息要说清原因：' + r.error);
 });
 
-test('saved-query：fields 只收 string / number / string[]，对象与 null 一律丢弃', () => {
+test('saved-query：fields 只收 string / number / string[]，对象与 null 一律丢弃', async () => {
   const S = load(fakeStorage());
-  const r = S.save({
+  const r = (await S.save({
     page: 'task',
     name: '清洗测试',
     fields: {
       a: '文本', b: 123, c: ['x', 'y'], d: ['x', {}, null],
       e: { nested: 1 }, f: null, g: undefined, h: '', i: NaN, j: Infinity,
     },
-  });
+  }));
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.item.fields, { a: '文本', b: 123, c: ['x', 'y'], d: ['x'] },
     '对象/null/空串/NaN/Infinity 都不该进入 fields（它会被回填进表单）');
 });
 
-test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 id', () => {
+test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 id', async () => {
   const S = load(fakeStorage());
-  const a = S.save({ page: 'publish', name: '同名', fields: { x: '1' } });
-  const b = S.save({ page: 'publish', name: '同名', fields: { x: '2' } });
+  const a = (await S.save({ page: 'publish', name: '同名', fields: { x: '1' } }));
+  const b = (await S.save({ page: 'publish', name: '同名', fields: { x: '2' } }));
   assert.strictEqual(b.ok, true);
   assert.strictEqual(b.item.id, a.item.id, '更新应复用原 id，否则首页会存下一堆同名卡片');
   assert.strictEqual(b.updated, true);
@@ -100,12 +100,12 @@ test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 
   assert.strictEqual(S.list()[0].fields.x, '2', '应覆盖为最新条件');
 });
 
-test('saved-query：同名同页但换了个人 → 新建一条，不复用别人的 id（2026-09-20 回归）', () => {
+test('saved-query：同名同页但换了个人 → 新建一条，不复用别人的 id（2026-09-20 回归）', async () => {
   // 用户报的现场：A 存过一条，B 用同样的名字（默认名由筛选条件生成，很容易撞）再存。
   // 以前复用 A 的 id → 服务端按 id 覆盖 → A 的条件被改写，B 还看不到自己那条。
   const S = load(fakeStorage());
-  const a = S.save({ page: 'publish', name: '同名', fields: { x: '1' }, owner: OWNER_A });
-  const b = S.save({ page: 'publish', name: '同名', fields: { x: '2' }, owner: OWNER_B });
+  const a = (await S.save({ page: 'publish', name: '同名', fields: { x: '1' }, owner: OWNER_A }));
+  const b = (await S.save({ page: 'publish', name: '同名', fields: { x: '2' }, owner: OWNER_B }));
   assert.strictEqual(b.ok, true);
   assert.notStrictEqual(b.item.id, a.item.id, '同名不同人必须是两条记录');
   assert.strictEqual(b.updated, false, '不能算作对别人那条的更新');
@@ -114,19 +114,19 @@ test('saved-query：同名同页但换了个人 → 新建一条，不复用别�
   assert.strictEqual(S.listForUser(OWNER_B)[0].fields.x, '2');
 });
 
-test('saved-query：不同页同名互不干扰', () => {
+test('saved-query：不同页同名互不干扰', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '同名', fields: {} });
-  S.save({ page: 'task', name: '同名', fields: {} });
+  (await S.save({ page: 'publish', name: '同名', fields: {} }));
+  (await S.save({ page: 'task', name: '同名', fields: {} }));
   assert.strictEqual(S.list().length, 2);
 });
 
-test('saved-query：超过上限（50 条）→ 报错而不是无限写入', () => {
+test('saved-query：超过上限（50 条）→ 报错而不是无限写入', async () => {
   const S = load(fakeStorage());
   for (let i = 0; i < S.MAX_ITEMS; i += 1) {
-    assert.strictEqual(S.save({ page: 'task', name: 'q' + i, fields: {} }).ok, true);
+    assert.strictEqual((await S.save({ page: 'task', name: 'q' + i, fields: {} })).ok, true);
   }
-  const over = S.save({ page: 'task', name: '多出来的', fields: {} });
+  const over = (await S.save({ page: 'task', name: '多出来的', fields: {} }));
   assert.strictEqual(over.ok, false, '第 51 条应被拒绝');
   assert.ok(/最多/.test(over.error), '错误信息要提示上限：' + over.error);
   assert.strictEqual(S.list().length, S.MAX_ITEMS, '存量不应被破坏');
@@ -136,14 +136,14 @@ test('saved-query：超过上限（50 条）→ 报错而不是无限写入', ()
 // 2) 读取：脏数据必须被挡在页面之外
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：存储里是坏 JSON / 非数组 → list() 返回空，不抛', () => {
+test('saved-query：存储里是坏 JSON / 非数组 → list() 返回空，不抛', async () => {
   ['{', 'null', '"字符串"', '{"a":1}', '123'].forEach((raw) => {
     const S = load(fakeStorage({ [KEY]: raw }));
     assert.deepStrictEqual(S.list(), [], `存量 ${raw} 应被当成空列表`);
   });
 });
 
-test('saved-query：数组里的脏条目逐条过滤（缺 id / 非法 page / 非对象）', () => {
+test('saved-query：数组里的脏条目逐条过滤（缺 id / 非法 page / 非对象）', async () => {
   const S = load(fakeStorage({
     [KEY]: JSON.stringify([
       { id: 'q1', page: 'publish', name: '合法', fields: {}, at: 2 },
@@ -159,21 +159,21 @@ test('saved-query：数组里的脏条目逐条过滤（缺 id / 非法 page / �
   assert.deepStrictEqual(list.map((x) => x.id), ['q1', 'q3'], '按 at 倒序');
 });
 
-test('saved-query：条目里的 fields 脏值在读取时也要清洗', () => {
+test('saved-query：条目里的 fields 脏值在读取时也要清洗', async () => {
   const S = load(fakeStorage({
     [KEY]: JSON.stringify([{ id: 'q1', page: 'publish', name: 'x', fields: { good: '1', bad: { o: 1 }, empty: '' } }]),
   }));
   assert.deepStrictEqual(S.list()[0].fields, { good: '1' });
 });
 
-test('saved-query：name 缺失时补「未命名查询」，不渲染成 undefined', () => {
+test('saved-query：name 缺失时补「未命名查询」，不渲染成 undefined', async () => {
   const S = load(fakeStorage({ [KEY]: JSON.stringify([{ id: 'q1', page: 'task', fields: {} }]) }));
   assert.strictEqual(S.list()[0].name, '未命名查询');
 });
 
-test('saved-query：get(id) 命中 / 未命中', () => {
+test('saved-query：get(id) 命中 / 未命中', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'publish', name: '甲', fields: { a: '1' } });
+  const r = (await S.save({ page: 'publish', name: '甲', fields: { a: '1' } }));
   assert.strictEqual(S.get(r.item.id).name, '甲');
   assert.strictEqual(S.get('不存在'), null);
   assert.strictEqual(S.get(''), null);
@@ -184,31 +184,31 @@ test('saved-query：get(id) 命中 / 未命中', () => {
 // 3) 改删与存储不可用
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：重命名成功 / 空名被拒 / 不存在的 id 报错', () => {
+test('saved-query：重命名成功 / 空名被拒 / 不存在的 id 报错', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'task', name: '原名', fields: {} });
-  assert.strictEqual(S.rename(r.item.id, '新名').ok, true);
+  const r = (await S.save({ page: 'task', name: '原名', fields: {} }));
+  assert.strictEqual((await S.rename(r.item.id, '新名')).ok, true);
   assert.strictEqual(S.get(r.item.id).name, '新名');
-  assert.strictEqual(S.rename(r.item.id, '  ').ok, false, '空名应被拒');
-  assert.strictEqual(S.rename('不存在', 'x').ok, false);
+  assert.strictEqual((await S.rename(r.item.id, '  ')).ok, false, '空名应被拒');
+  assert.strictEqual((await S.rename('不存在', 'x')).ok, false);
 });
 
-test('saved-query：删除存在 / 不存在的条目', () => {
+test('saved-query：删除存在 / 不存在的条目', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'task', name: '甲', fields: {} });
-  assert.strictEqual(S.remove(r.item.id).ok, true);
+  const r = (await S.save({ page: 'task', name: '甲', fields: {} }));
+  assert.strictEqual((await S.remove(r.item.id)).ok, true);
   assert.strictEqual(S.list().length, 0);
-  assert.strictEqual(S.remove(r.item.id).ok, false, '重复删除应报错而不是静默成功');
+  assert.strictEqual((await S.remove(r.item.id)).ok, false, '重复删除应报错而不是静默成功');
 });
 
-test('saved-query：clear 清空', () => {
+test('saved-query：clear 清空', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'task', name: '甲', fields: {} });
-  assert.strictEqual(S.clear().ok, true);
+  (await S.save({ page: 'task', name: '甲', fields: {} }));
+  assert.strictEqual((await S.clear()).ok, true);
   assert.deepStrictEqual(S.list(), []);
 });
 
-test('saved-query：localStorage 完全不可用时 list() 不崩、save() 给出可读错误', () => {
+test('saved-query：localStorage 完全不可用时 list() 不崩、save() 给出可读错误', async () => {
   // node 22 自带全局 localStorage，浏览器里「隐私模式」则是访问即抛。
   // 这里用「读取即抛」模拟后者，并**禁止**回落到 node 的全局实现——
   // 否则测试会假通过，而真实浏览器里这条路径是断的。
@@ -221,7 +221,7 @@ test('saved-query：localStorage 完全不可用时 list() 不崩、save() 给�
     });
     const S = load(null, win);
     assert.deepStrictEqual(S.list(), [], '读不到存储应返回空列表，不能抛');
-    const r = S.save({ page: 'publish', name: '甲', fields: { a: '1' } });
+    const r = (await S.save({ page: 'publish', name: '甲', fields: { a: '1' } }));
     assert.strictEqual(r.ok, false);
     assert.ok(/存储|保存失败/.test(r.error), '错误要能看懂：' + r.error);
   } finally {
@@ -230,15 +230,15 @@ test('saved-query：localStorage 完全不可用时 list() 不崩、save() 给�
   }
 });
 
-test('saved-query：getItem 抛异常（隐私模式）→ list() 仍返回空', () => {
+test('saved-query：getItem 抛异常（隐私模式）→ list() 仍返回空', async () => {
   const S = load(fakeStorage({}, { throwOnGet: true }));
   assert.deepStrictEqual(S.list(), []);
 });
 
-test('saved-query：写入配额满 → save 返回失败，且已存数据不受影响', () => {
+test('saved-query：写入配额满 → save 返回失败，且已存数据不受影响', async () => {
   const st = fakeStorage({}, { throwOnSet: true });
   const S = load(st);
-  const r = S.save({ page: 'publish', name: '甲', fields: {} });
+  const r = (await S.save({ page: 'publish', name: '甲', fields: {} }));
   assert.strictEqual(r.ok, false);
   assert.ok(/空间|存储/.test(r.error), '错误要提示空间不足：' + r.error);
 });
@@ -247,29 +247,29 @@ test('saved-query：写入配额满 → save 返回失败，且已存数据不�
 // 4) labels（人类可读文本）与旧记录升级
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：保存时带上 labels，记录标记为 v2', () => {
+test('saved-query：保存时带上 labels，记录标记为 v2', async () => {
   const S = load(fakeStorage());
-  const r = S.save({
+  const r = (await S.save({
     page: 'publish', name: '甲',
     fields: { f_prodBatch: '2611pc' },
     summary: '变更批次：2611批次',
     labels: { f_prodBatch: '2611批次' },
-  });
+  }));
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.item.labels, { f_prodBatch: '2611批次' });
   assert.strictEqual(r.item.v, S.SCHEMA_VERSION, '新记录应带版本号，便于判断是否需要升级');
 });
 
-test('saved-query：labels 只收非空字符串，脏值丢弃', () => {
+test('saved-query：labels 只收非空字符串，脏值丢弃', async () => {
   const S = load(fakeStorage());
-  const r = S.save({
+  const r = (await S.save({
     page: 'publish', name: '甲', fields: { a: '1' },
     labels: { good: '2611批次', bad: { o: 1 }, empty: '   ', num: 5, arr: ['x'] },
-  });
+  }));
   assert.deepStrictEqual(r.item.labels, { good: '2611批次' });
 });
 
-test('saved-query：旧记录（无 v / 无 labels）读出来是 v1，可被识别为待升级', () => {
+test('saved-query：旧记录（无 v / 无 labels）读出来是 v1，可被识别为待升级', async () => {
   const S = load(fakeStorage({
     [KEY]: JSON.stringify([{ id: 'q1', page: 'publish', name: '旧卡片', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611pc' }]),
   }));
@@ -278,9 +278,9 @@ test('saved-query：旧记录（无 v / 无 labels）读出来是 v1，可被识
   assert.deepStrictEqual(it.labels, {});
 });
 
-test('saved-query：update 只改展示字段（labels / summary / v），不动 id / name / fields / at', () => {
+test('saved-query：update 只改展示字段（labels / summary / v），不动 id / name / fields / at', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' });
+  const r = (await S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' }));
   const before = r.item;
   const u = S.update(before.id, { labels: { a: '可读名' }, summary: '新摘要', v: 2 });
   assert.strictEqual(u.ok, true);
@@ -295,9 +295,9 @@ test('saved-query：update 只改展示字段（labels / summary / v），不动
   assert.strictEqual(after.at, before.at);
 });
 
-test('saved-query：update 忽略白名单外的字段（不许塞 fields / name 进来）', () => {
+test('saved-query：update 忽略白名单外的字段（不许塞 fields / name 进来）', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' });
+  const r = (await S.save({ page: 'task', name: '原名', fields: { a: '1' }, summary: '旧摘要' }));
   S.update(r.item.id, { name: '被篡改', fields: { x: '2' }, labels: { a: 'L' } });
   const after = S.get(r.item.id);
   assert.strictEqual(after.name, '原名');
@@ -305,7 +305,7 @@ test('saved-query：update 忽略白名单外的字段（不许塞 fields / name
   assert.deepStrictEqual(after.labels, { a: 'L' }, '白名单内的仍要生效');
 });
 
-test('saved-query：update 不存在的 id → 报错', () => {
+test('saved-query：update 不存在的 id → 报错', async () => {
   const S = load(fakeStorage());
   assert.strictEqual(S.update('不存在', { summary: 'x' }).ok, false);
   assert.strictEqual(S.update('', { summary: 'x' }).ok, false);
@@ -328,75 +328,75 @@ const OWNER_B = {
   teamId: 'M2534', teamName: '中国银行软件中心（深圳）开发一部',
 };
 
-test('saved-query：owner 只收字符串字段，脏结构不落库', () => {
+test('saved-query：owner 只收字符串字段，脏结构不落库', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'publish', name: '甲', fields: {}, owner: { ...OWNER_A, extra: { x: 1 }, userId: 4711510 } });
+  const r = (await S.save({ page: 'publish', name: '甲', fields: {}, owner: { ...OWNER_A, extra: { x: 1 }, userId: 4711510 } }));
   assert.deepStrictEqual(
     Object.keys(r.item.owner).sort(),
     ['orgId', 'orgName', 'teamId', 'teamName', 'userId', 'userName'],
   );
   assert.strictEqual(r.item.owner.userId, '4711510', '数字工号要转成字符串');
-  assert.strictEqual(S.save({ page: 'publish', name: '乙', fields: {}, owner: {} }).item.owner, null);
+  assert.strictEqual((await S.save({ page: 'publish', name: '乙', fields: {}, owner: {} })).item.owner, null);
 });
 
-test('saved-query：没显式传 owner 时回落到「当前用户」', () => {
+test('saved-query：没显式传 owner 时回落到「当前用户」', async () => {
   const win = { localStorage: fakeStorage() };
   win.CurrentUser = { get: () => OWNER_A };
   loadScript('js/ui/saved-query.js', {}, win);
-  const r = win.SavedQuery.save({ page: 'task', name: '甲', fields: {} });
+  const r = await win.SavedQuery.save({ page: 'task', name: '甲', fields: {} });
   assert.strictEqual(r.item.owner.orgName, '中国银行软件中心（深圳）', '页面忘了传也不能丢归属');
 });
 
-test('saved-query：新记录 hits=0 / saves=1；同名覆盖时 saves 累加、hits 保留', () => {
+test('saved-query：新记录 hits=0 / saves=1；同名覆盖时 saves 累加、hits 保留', async () => {
   const S = load(fakeStorage());
-  const a = S.save({ page: 'publish', name: '甲', fields: {} });
+  const a = (await S.save({ page: 'publish', name: '甲', fields: {} }));
   assert.strictEqual(a.item.saves, 1);
   assert.strictEqual(a.item.hits, 0);
-  S.hit(a.item.id);
-  S.hit(a.item.id);
-  const b = S.save({ page: 'publish', name: '甲', fields: {} });
+  (await S.hit(a.item.id));
+  (await S.hit(a.item.id));
+  const b = (await S.save({ page: 'publish', name: '甲', fields: {} }));
   assert.strictEqual(b.item.saves, 2, '重复保存要累加，而不是重置');
   assert.strictEqual(b.item.hits, 2, '打开次数不能被保存重置');
 });
 
-test('saved-query：listForUser 认服务端回传的 saverKeys（owner 不是我，但我保存过）', () => {
+test('saved-query：listForUser 认服务端回传的 saverKeys（owner 不是我，但我保存过）', async () => {
   // 服务端一条记录只带一个 owner（最早保存的那位），所以「我保存过」必须靠 saverKeys 认。
   // 这是 2026-09-20「第二个用户看不到自己存的」的根因之一。
   const S = load(fakeStorage());
-  S.importJson(JSON.stringify({
+  (await S.importJson(JSON.stringify({
     app: 'spider-saved-queries', v: 2,
     items: [{
       id: 'q1', page: 'publish', name: '共同条件', fields: { a: '1' },
       owner: OWNER_A, saverKeys: ['4711510', '1001'],
     }],
-  }));
+  })));
   assert.strictEqual(S.listForUser(OWNER_A).length, 1, 'owner 本人看得到');
   assert.strictEqual(S.listForUser(OWNER_B).length, 1, 'owner 不是我，但 saverKeys 里有我 → 也要看得到');
   assert.strictEqual(S.listForUser({ userId: '查无此人' }).length, 0, '没保存过的人不许看到');
   assert.deepStrictEqual(S.saverKeysOf(S.list()[0]).sort(), ['1001', '4711510'], 'owner 与 saverKeys 要合起来算');
 });
 
-test('saved-query：hit 累加打开次数并记最近打开时间', () => {
+test('saved-query：hit 累加打开次数并记最近打开时间', async () => {
   const S = load(fakeStorage());
-  const r = S.save({ page: 'publish', name: '甲', fields: {} });
+  const r = (await S.save({ page: 'publish', name: '甲', fields: {} }));
   assert.strictEqual(S.get(r.item.id).lastAt, 0);
-  S.hit(r.item.id);
+  (await S.hit(r.item.id));
   const after = S.get(r.item.id);
   assert.strictEqual(after.hits, 1);
   assert.ok(after.lastAt > 0, '要记最近打开时间，作为排序的次判据');
-  assert.strictEqual(S.hit('不存在').ok, false);
+  assert.strictEqual((await S.hit('不存在')).ok, false);
 });
 
-test('saved-query：listByDept 只返回同部门的记录，同命中条件合成一行', () => {
+test('saved-query：listByDept 只返回同部门的记录，同命中条件合成一行', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '本部门常用', fields: {}, labels: {}, owner: OWNER_A });
-  S.save({ page: 'task', name: '本部门少用', fields: {}, owner: OWNER_A });
-  S.save({ page: 'publish', name: '别的部门', fields: {}, owner: OWNER_B });
-  S.save({ page: 'publish', name: '没有归属', fields: {} });
+  (await S.save({ page: 'publish', name: '本部门常用', fields: {}, labels: {}, owner: OWNER_A }));
+  (await S.save({ page: 'task', name: '本部门少用', fields: {}, owner: OWNER_A }));
+  (await S.save({ page: 'publish', name: '别的部门', fields: {}, owner: OWNER_B }));
+  (await S.save({ page: 'publish', name: '没有归属', fields: {} }));
 
   const 常用 = S.list().find((x) => x.name === '本部门常用');
-  S.hit(常用.id);
-  S.hit(常用.id);
+  (await S.hit(常用.id));
+  (await S.hit(常用.id));
 
   const list = S.listByDept(OWNER_A, 10);
   // 顺序在这里不稳定：两条都只有 1 人保存，次判据是毫秒级时间戳，
@@ -423,10 +423,10 @@ const COND_A = { callerSystem: 'E00406', serviceName: '客户信息查询' };   
 // 同部门（同一个 teamId）的另一个人：部门排行先按部门过滤，跨部门的人进不来这个用例
 const TEAMMATE = { ...OWNER_A, userId: '4711511', userName: '李四' };
 
-test('saved-query：同一份条件被两个人保存 → 合成一行，人数=2', () => {
+test('saved-query：同一份条件被两个人保存 → 合成一行，人数=2', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '张三取的名', fields: { ...COND_A }, owner: OWNER_A });
-  S.save({ page: 'publish', name: '李四取的名', fields: { ...COND_A }, owner: TEAMMATE });
+  (await S.save({ page: 'publish', name: '张三取的名', fields: { ...COND_A }, owner: OWNER_A }));
+  (await S.save({ page: 'publish', name: '李四取的名', fields: { ...COND_A }, owner: TEAMMATE }));
   const list = S.listByDept(OWNER_A, 10);
   assert.strictEqual(list.length, 1, '同一份条件不能因为两个人各存一份就刷两行');
   assert.strictEqual(list[0].savers, 2, '两个不同的人保存 → 2 人');
@@ -434,35 +434,35 @@ test('saved-query：同一份条件被两个人保存 → 合成一行，人数=
   assert.strictEqual(list[0].recentUser, '李四', '最近一次保存的人要能显示出来');
 });
 
-test('saved-query：同一个人反复保存同一份条件 → 只算 1 人（不许刷人数）', () => {
+test('saved-query：同一个人反复保存同一份条件 → 只算 1 人（不许刷人数）', async () => {
   const S = load(fakeStorage());
-  const first = S.save({ page: 'publish', name: '重复保存', fields: { ...COND_A }, owner: OWNER_A });
+  const first = (await S.save({ page: 'publish', name: '重复保存', fields: { ...COND_A }, owner: OWNER_A }));
   // 换名字再存同一份条件：现在是「同名同页才更新」，名字不同会落成两条，
   // 但人头去重以后仍然只能算 1 人。
-  S.save({ page: 'publish', name: '重复保存（第二次）', fields: { ...COND_A }, owner: OWNER_A });
-  S.hit(first.item.id);
+  (await S.save({ page: 'publish', name: '重复保存（第二次）', fields: { ...COND_A }, owner: OWNER_A }));
+  (await S.hit(first.item.id));
   const list = S.listByDept(OWNER_A, 10);
   assert.strictEqual(list[0].savers, 1, '一个人存三遍也不是三个人');
 });
 
-test('saved-query：条件不同就不算同一份，各自独立计数', () => {
+test('saved-query：条件不同就不算同一份，各自独立计数', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A });
-  S.save({ page: 'publish', name: '条件乙', fields: { callerSystem: 'E07701' }, owner: OWNER_A });
+  (await S.save({ page: 'publish', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A }));
+  (await S.save({ page: 'publish', name: '条件乙', fields: { callerSystem: 'E07701' }, owner: OWNER_A }));
   assert.strictEqual(S.listByDept(OWNER_A, 10).length, 2, 'fields 不同 = 不同的查询，不能合并');
   // 同一份条件换个 page 也不该合并（不同的查询页，打开目标不一样）
-  S.save({ page: 'task', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A });
+  (await S.save({ page: 'task', name: '条件甲', fields: { callerSystem: 'E00406' }, owner: OWNER_A }));
   assert.strictEqual(S.listByDept(OWNER_A, 10).length, 3, '不同页面的同名字段仍是两个入口');
 });
 
-test('saved-query：没填筛选条件的记录各自独立，不聚成一行', () => {
+test('saved-query：没填筛选条件的记录各自独立，不聚成一行', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A });
-  S.save({ page: 'publish', name: '乙', fields: {}, owner: OWNER_A });
+  (await S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A }));
+  (await S.save({ page: 'publish', name: '乙', fields: {}, owner: OWNER_A }));
   assert.strictEqual(S.listByDept(OWNER_A, 10).length, 2, '「什么都没填」不是同一份条件，不能归并');
 });
 
-test('saved-query：排行先比人数（人数多的排前面，哪怕它打开次数更少）', () => {
+test('saved-query：排行先比人数（人数多的排前面，哪怕它打开次数更少）', async () => {
   const S = load(fakeStorage());
   // 三人群:只用一次的条件
   const three = [
@@ -470,9 +470,9 @@ test('saved-query：排行先比人数（人数多的排前面，哪怕它打开
     { userId: '12', userName: '乙', teamId: 'K4229' },
     { userId: '13', userName: '丙', teamId: 'K4229' },
   ];
-  three.forEach((o, i) => S.save({ page: 'publish', name: '三人组' + i, fields: { q: 'popular' }, owner: { ...OWNER_A, ...o } }));
-  const solo = S.save({ page: 'publish', name: '我的高频', fields: { q: 'mine' }, owner: OWNER_A });
-  for (let i = 0; i < 50; i += 1) S.hit(solo.item.id);   // 打开次数远超，但只有 1 人
+  three.forEach(async (o, i) => (await S.save({ page: 'publish', name: '三人组' + i, fields: { q: 'popular' }, owner: { ...OWNER_A, ...o } })));
+  const solo = (await S.save({ page: 'publish', name: '我的高频', fields: { q: 'mine' }, owner: OWNER_A }));
+  for (let i = 0; i < 50; i += 1) (await S.hit(solo.item.id));   // 打开次数远超，但只有 1 人
 
   const list = S.listByDept(OWNER_A, 10);
   assert.strictEqual(list[0].savers, 3, '三个人保存的排第一');
@@ -480,7 +480,7 @@ test('saved-query：排行先比人数（人数多的排前面，哪怕它打开
   assert.strictEqual(list[1].savers, 1);
 });
 
-test('saved-query：fingerprintOf 对字段顺序、空值不敏感', () => {
+test('saved-query：fingerprintOf 对字段顺序、空值不敏感', async () => {
   const S = load(fakeStorage());
   const a = S.fingerprintOf({ page: 'publish', fields: { x: '1', y: ['b', 'a'] } });
   const b = S.fingerprintOf({ page: 'publish', fields: { y: ['a', 'b'], x: '1' } });
@@ -494,10 +494,10 @@ test('saved-query：fingerprintOf 对字段顺序、空值不敏感', () => {
   );
 });
 
-test('saved-query：listByDept 的 limit 就是首页的 5 / 10 / 20，非法值退回 10', () => {
+test('saved-query：listByDept 的 limit 就是首页的 5 / 10 / 20，非法值退回 10', async () => {
   const S = load(fakeStorage());
   for (let i = 0; i < 12; i += 1) {
-    S.save({ page: 'publish', name: 'q' + i, fields: {}, owner: OWNER_A });
+    (await S.save({ page: 'publish', name: 'q' + i, fields: {}, owner: OWNER_A }));
   }
   assert.strictEqual(S.listByDept(OWNER_A, 5).length, 5);
   assert.strictEqual(S.listByDept(OWNER_A, 10).length, 10);
@@ -506,18 +506,18 @@ test('saved-query：listByDept 的 limit 就是首页的 5 / 10 / 20，非法值
   assert.strictEqual(S.listByDept(OWNER_A, NaN).length, 10);
 });
 
-test('saved-query：listByDept 对「没设置用户」返回空，不误报全量', () => {
+test('saved-query：listByDept 对「没设置用户」返回空，不误报全量', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A });
+  (await S.save({ page: 'publish', name: '甲', fields: {}, owner: OWNER_A }));
   assert.deepStrictEqual(S.listByDept(null, 10), []);
   assert.deepStrictEqual(S.listByDept({}, 10), []);
   assert.deepStrictEqual(S.listByDept({ orgId: '', orgName: '' }, 10), []);
 });
 
-test('saved-query：同一个一级单位、不同团队 → 算不同部门（team 优先）', () => {
+test('saved-query：同一个一级单位、不同团队 → 算不同部门（team 优先）', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '三部的查询', fields: {}, owner: OWNER_A });
-  S.save({ page: 'publish', name: '一部的查询', fields: {}, owner: OWNER_B });
+  (await S.save({ page: 'publish', name: '三部的查询', fields: {}, owner: OWNER_A }));
+  (await S.save({ page: 'publish', name: '一部的查询', fields: {}, owner: OWNER_B }));
 
   const a = S.listByDept(OWNER_A, 10);
   assert.deepStrictEqual(a.map((x) => x.name), ['三部的查询'],
@@ -526,19 +526,19 @@ test('saved-query：同一个一级单位、不同团队 → 算不同部门（t
   assert.deepStrictEqual(b.map((x) => x.name), ['一部的查询']);
 });
 
-test('saved-query：没有 team 信息的人按其一级单位归类（org 兜底）', () => {
+test('saved-query：没有 team 信息的人按其一级单位归类（org 兜底）', async () => {
   const S = load(fakeStorage());
-  S.save({
+  (await S.save({
     page: 'publish', name: '无团队的查询', fields: {},
     owner: { userId: '9', userName: '王五', orgId: '1645A', orgName: '中国银行软件中心（深圳）' },
-  });
+  }));
   const list = S.listByDept({ userName: '赵六', orgId: '1645A', orgName: '中国银行软件中心（深圳）' }, 10);
   assert.strictEqual(list.length, 1, 'team 缺失时按 org 归组');
 });
 
-test('saved-query：没有 orgId 时用部门名兜底匹配', () => {
+test('saved-query：没有 orgId 时用部门名兜底匹配', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '甲', fields: {}, owner: { userName: '张三', orgName: '某部门' } });
+  (await S.save({ page: 'publish', name: '甲', fields: {}, owner: { userName: '张三', orgName: '某部门' } }));
   const list = S.listByDept({ userName: '别人', orgId: '', orgName: '某部门' }, 10);
   assert.strictEqual(list.length, 1, '部门名相同也算同部门（orgId 缺失时的兜底）');
 });
@@ -547,7 +547,7 @@ test('saved-query：没有 orgId 时用部门名兜底匹配', () => {
 // 6) 跳转地址（首页卡片直达用的就是这个）
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：hrefFor 三个页面各自对应干净路由，且 id 被转义', () => {
+test('saved-query：hrefFor 三个页面各自对应干净路由，且 id 被转义', async () => {
   const S = load(fakeStorage());
   assert.strictEqual(S.hrefFor('publish', 'q1'), '/publish?saved=q1');
   assert.strictEqual(S.hrefFor('task', 'q1'), '/task?saved=q1');
@@ -555,10 +555,10 @@ test('saved-query：hrefFor 三个页面各自对应干净路由，且 id 被转
   assert.strictEqual(S.hrefFor('publish', 'a b&c'), '/publish?saved=a%20b%26c', 'id 必须编码，否则 URL 被截断');
 });
 
-test('saved-query：新增的保存排在最前（首页按最近使用展示）', () => {
+test('saved-query：新增的保存排在最前（首页按最近使用展示）', async () => {
   const S = load(fakeStorage());
-  const a = S.save({ page: 'publish', name: '先存的', fields: {} });
-  const b = S.save({ page: 'publish', name: '后存的', fields: {} });
+  const a = (await S.save({ page: 'publish', name: '先存的', fields: {} }));
+  const b = (await S.save({ page: 'publish', name: '后存的', fields: {} }));
   // 同一毫秒内 Date.now() 可能相同，退而断言「后存的在前」或至少两条都在
   const ids = S.list().map((x) => x.id);
   assert.ok(ids.includes(a.item.id) && ids.includes(b.item.id));
@@ -569,16 +569,16 @@ test('saved-query：新增的保存排在最前（首页按最近使用展示）
 // 6) 导出 / 导入（跨浏览器、跨电脑的唯一通路）
 // ══════════════════════════════════════════════════════════
 
-test('saved-query：导出 → 导入 往返，记录与归属都在', () => {
+test('saved-query：导出 → 导入 往返，记录与归属都在', async () => {
   const a = load(fakeStorage());
-  a.save({ page: 'publish', name: '甲', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611批次', owner: OWNER_A, labels: { f_prodBatch: '2611批次' } });
+  (await a.save({ page: 'publish', name: '甲', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611批次', owner: OWNER_A, labels: { f_prodBatch: '2611批次' } }));
   const text = a.exportJson();
   const parsed = JSON.parse(text);
   assert.strictEqual(parsed.app, 'spider-saved-queries', '要带标识，导入方好判断文件来源');
   assert.strictEqual(parsed.items.length, 1);
 
   const b = load(fakeStorage());
-  const r = b.importJson(text);
+  const r = (await b.importJson(text));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.added, 1);
   assert.strictEqual(r.merged, 0);
@@ -588,11 +588,11 @@ test('saved-query：导出 → 导入 往返，记录与归属都在', () => {
   assert.deepStrictEqual(got.labels, { f_prodBatch: '2611批次' });
 });
 
-test('saved-query：同 id → 视为同一条合并，不重复堆积', () => {
+test('saved-query：同 id → 视为同一条合并，不重复堆积', async () => {
   const S = load(fakeStorage());
-  const mine = S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
-  S.hit(mine.item.id);
-  S.hit(mine.item.id);   // 本机打开 2 次
+  const mine = (await S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A }));
+  (await S.hit(mine.item.id));
+  (await S.hit(mine.item.id));   // 本机打开 2 次
 
   const other = {
     app: 'spider-saved-queries', v: 2,
@@ -601,7 +601,7 @@ test('saved-query：同 id → 视为同一条合并，不重复堆积', () => {
       fields: { a: '1' }, owner: OWNER_A, hits: 5, saves: 3, lastAt: Date.now(),
     }],
   };
-  const r = S.importJson(JSON.stringify(other));
+  const r = (await S.importJson(JSON.stringify(other)));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.added, 0, '同 id 就是同一条，不能再加一条');
   assert.strictEqual(r.merged, 1);
@@ -613,33 +613,33 @@ test('saved-query：同 id → 视为同一条合并，不重复堆积', () => {
 // 2026-09-20：判重从「同页面 + 同名」改成「同 id，或同页面 + 同名 + 同一个人」。
 // 拆成下面两条：同名**同人**该合，同名**不同人**绝不能合（原来就是后者被吃掉，
 // 用户报成「第二个用户怎么搞都没法保存」）。
-test('saved-query：同页面同名 + 同一个人（跨机器各存了一份）→ 仍然合并', () => {
+test('saved-query：同页面同名 + 同一个人（跨机器各存了一份）→ 仍然合并', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
-  const r = S.importJson(JSON.stringify({
+  (await S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A }));
+  const r = (await S.importJson(JSON.stringify({
     app: 'spider-saved-queries', v: 2,
     items: [{
       id: '另一台机器上的id', page: 'publish', name: '共同查询',
       fields: { a: '1' }, owner: OWNER_A, hits: 5,
     }],
-  }));
+  })));
   assert.strictEqual(r.added, 0, '同一个人存同名 → 还是同一条');
   assert.strictEqual(r.merged, 1);
   assert.strictEqual(S.list().length, 1);
 });
 
-test('saved-query：同页面同名但不是同一个人 → 各自独立，绝不合并（2026-09-20 回归）', () => {
+test('saved-query：同页面同名但不是同一个人 → 各自独立，绝不合并（2026-09-20 回归）', async () => {
   // 两个人从同一份筛选条件保存，默认名由条件生成 → 必然同名。
   // 以前只看 page+name，第二个人那条会被并进第一个人的记录里，等于"存不进去"。
   const S = load(fakeStorage());
-  S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
-  const r = S.importJson(JSON.stringify({
+  (await S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A }));
+  const r = (await S.importJson(JSON.stringify({
     app: 'spider-saved-queries', v: 2,
     items: [{
       id: '别人的id', page: 'publish', name: '共同查询',
       fields: { a: '1' }, owner: OWNER_B, hits: 5,
     }],
-  }));
+  })));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.added, 1, '同名不同人 = 两条记录，不许把别人的合并掉');
   assert.strictEqual(S.list().length, 2);
@@ -647,58 +647,58 @@ test('saved-query：同页面同名但不是同一个人 → 各自独立，绝�
   assert.strictEqual(S.listForUser(OWNER_B).length, 1, 'B 也能看到自己那条');
 });
 
-test('saved-query：重复导入同一文件幂等 —— 不会把「高频」刷上去', () => {
+test('saved-query：重复导入同一文件幂等 —— 不会把「高频」刷上去', async () => {
   const S = load(fakeStorage());
   const payload = JSON.stringify({
     app: 'spider-saved-queries', v: 2,
     items: [{ id: 'q1', page: 'task', name: '甲', fields: {}, hits: 3, saves: 2, owner: OWNER_A }],
   });
-  S.importJson(payload);
-  S.importJson(payload);
-  S.importJson(payload);
+  (await S.importJson(payload));
+  (await S.importJson(payload));
+  (await S.importJson(payload));
   assert.strictEqual(S.list().length, 1);
   assert.strictEqual(S.list()[0].hits, 3, '反复导入不该累加，否则排行会被刷');
 });
 
-test('saved-query：本机没归属的同名记录，不会被别人的同名记录顶掉', () => {
+test('saved-query：本机没归属的同名记录，不会被别人的同名记录顶掉', async () => {
   // 归属不明的那条（页面没引 current-user.js 那类）跟「别人的同名记录」不是同一条：
   // 判重时 owner 对不上就不合并 —— 宁可多留一条，也不能把别人的记录标成自己的。
   const S = load(fakeStorage());
-  S.save({ page: 'task', name: '甲', fields: {} });   // 没设当前用户 → owner 为 null
+  (await S.save({ page: 'task', name: '甲', fields: {} }));   // 没设当前用户 → owner 为 null
   assert.strictEqual(S.list()[0].owner, null);
-  S.importJson(JSON.stringify({
+  (await S.importJson(JSON.stringify({
     app: 'spider-saved-queries', v: 2,
     items: [{ id: 'q9', page: 'task', name: '甲', fields: {}, owner: OWNER_A }],
-  }));
+  })));
   assert.strictEqual(S.list().length, 2, '归属不明那条不能被吞掉');
   const imported = S.list().find((x) => x.id === 'q9');
   assert.strictEqual(imported.owner.userName, '张三', '导入的那条带着自己的归属');
 });
 
-test('saved-query：导入脏文件一律报错，不破坏现有数据', () => {
+test('saved-query：导入脏文件一律报错，不破坏现有数据', async () => {
   const S = load(fakeStorage());
-  S.save({ page: 'task', name: '原有', fields: {} });
+  (await S.save({ page: 'task', name: '原有', fields: {} }));
   const bad = [
     ['坏 JSON', '{不是 json'],
     ['不是本工具的结构', '{"hello":"world"}'],
     ['items 全是不合法项', '{"items":[{"id":""},{"page":"不存在"}]}'],
     ['空文本', ''],
   ];
-  bad.forEach(([label, text]) => {
-    const r = S.importJson(text);
+  bad.forEach(async ([label, text]) => {
+    const r = (await S.importJson(text));
     assert.strictEqual(r.ok, false, `${label} 应报错`);
     assert.ok(r.error, `${label} 要给出原因`);
   });
   assert.strictEqual(S.list().length, 1, '失败的导入不能动到已有记录');
 });
 
-test('saved-query：合并后超过上限 → 拒绝并保留原数据', () => {
+test('saved-query：合并后超过上限 → 拒绝并保留原数据', async () => {
   const S = load(fakeStorage());
   const items = [];
   for (let i = 0; i < S.MAX_ITEMS + 5; i += 1) {
     items.push({ id: 'x' + i, page: 'task', name: 'q' + i, fields: {} });
   }
-  const r = S.importJson(JSON.stringify({ app: 'spider-saved-queries', items }));
+  const r = (await S.importJson(JSON.stringify({ app: 'spider-saved-queries', items })));
   assert.strictEqual(r.ok, false);
   assert.ok(/上限/.test(r.error), '要说清为什么拒绝：' + r.error);
   assert.strictEqual(S.list().length, 0, '拒绝时不能只写一半');
@@ -728,7 +728,7 @@ test('sync：没有端点能力时安静跳过，不抛也不假装成功', asyn
   assert.strictEqual(b.ok, false);
 });
 
-test('sync：push 会把本机记录提交上去，并用服务端返回的全集覆盖本地', async () => {
+test('sync：push 提交本机记录后，**绝不让服务端全集污染本机镜像**（2026-09-20 回归）', async () => {
   const st = fakeStorage();
   let posted = null;
   const S = loadSync(st, async (url, opts) => {
@@ -740,56 +740,63 @@ test('sync：push 会把本机记录提交上去，并用服务端返回的全�
         owner: { userId: '1001', userName: '李四', teamId: 'M2534', teamName: '开发一部' } },
     ] } }) };
   });
-  S.save({ page: 'publish', name: '我的查询', fields: {} });
+  (await S.save({ page: 'publish', name: '我的查询', fields: {} }));
 
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, true);
   assert.ok(posted.items.some((it) => it.name === '我的查询'), '本机记录要提交上去');
-  assert.strictEqual(S.list().length, 2, '服务端返回的全集要覆盖本地（含同事那条）');
-  assert.ok(S.list().some((it) => it.name === '同事的查询'));
+  // 2026-09-20 架构改版：镜像只留「我的」。旧版把服务端全集 writeRaw 回本机，
+  // 让李四的机器上混进张三的记录 —— 那是「改名弹回/导入被盖/第二个人存了看不到」的共同根源。
+  assert.strictEqual(S.list().length, 1, '本机镜像不得混入服务端全集（同事那条不能进来）');
+  assert.ok(!S.list().some((it) => it.name === '同事的查询'), '同事的记录只能留在服务端');
 });
 
 test('sync：删除意图会带给服务端（否则合并时会把删掉的记录复活）', async () => {
   const st = fakeStorage();
-  let posted = null;
+  const posts = [];
   const S = loadSync(st, async (url, opts) => {
-    posted = JSON.parse(opts.body);
+    posts.push(JSON.parse(opts.body));
     return { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [] } }) };
   });
-  const keep = S.save({ page: 'publish', name: '保留', fields: {} });
-  const del = S.save({ page: 'publish', name: '要删的', fields: {} });
-  S.remove(del.item.id);
+  const keep = (await S.save({ page: 'publish', name: '保留', fields: {} }));
+  const del = (await S.save({ page: 'publish', name: '要删的', fields: {} }));
+  // remove() 内部就会 await pushToServer（2026-09-20 改：不再是 fire-and-forget）
+  (await S.remove(del.item.id));
 
-  await S.pushToServer();
-  assert.deepStrictEqual(posted.deletedIds, [del.item.id], '删掉的 id 必须带上');
-  assert.ok(posted.items.some((it) => it.name === '保留'));
+  const removePush = posts.find((p) => (p.deletedIds || []).includes(del.item.id));
+  assert.ok(removePush, '删除那次推送必须带上被删的 id');
+  assert.ok(removePush.items.some((it) => it.name === '保留'), '同一批里没删的要一起提交');
 
   // 服务端已确认 → 待办清空，下次不再重复提交
   await S.pushToServer();
-  assert.deepStrictEqual(posted.deletedIds, [], '确认过的删除意图不该重复提交');
+  assert.deepStrictEqual(posts[posts.length - 1].deletedIds, [], '确认过的删除意图不该重复提交');
   assert.ok(keep.ok);
 });
 
-test('sync：syncFromServer 把服务端的记录合并进本地（幂等，计数取 max）', async () => {
+test('sync：syncFromServer 刷新「我的」镜像（服务端为准，不再把全集合并进本机）', async () => {
   const st = fakeStorage();
-  const S = loadSync(st, okJson({ items: [
-    { id: 'p1', page: 'publish', name: '同事的', fields: {}, hits: 9, saves: 2,
-      owner: { userId: '1001', userName: '李四', teamId: 'M2534', teamName: '开发一部' } },
-  ] }));
+  const win = { localStorage: st, location: { href: 'http://localhost:3000/' }, CurrentUser: { get: () => ME } };
+  let sawUrl = '';
+  win.fetch = async (url) => {
+    sawUrl = String(url);
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { mode: 'user', user: '1001', items: [
+      { id: 'm1', page: 'publish', name: '我的（服务端）', fields: {}, hits: 9, saves: 2, owner: ME },
+    ], storage: 'sqlite', file: '/srv/a.db' } }) };
+  };
+  loadScript('js/ui/saved-query.js', {}, win);
+  const S = win.SavedQuery;
+  // 本机镜像里有条服务端没有的陈旧记录 → 刷新后应以服务端为准
+  st.setItem(KEY, JSON.stringify([{ id: 'stale', page: 'task', name: '本机陈旧记录', fields: {}, owner: ME, at: 5 }]));
   const r1 = await S.syncFromServer();
-  assert.deepStrictEqual({ ok: r1.ok, added: r1.added }, { ok: true, added: 1 });
-
-  const r2 = await S.syncFromServer();   // 再拉一次不该变成两条
-  assert.strictEqual(r2.added, 0);
-  assert.strictEqual(r2.merged, 1);
-  assert.strictEqual(S.list().length, 1);
-  assert.strictEqual(S.list()[0].hits, 9, '计数取 max');
+  assert.strictEqual(r1.ok, true);
+  assert.ok(/user=/.test(sawUrl), '要按人拉取（?user=），不是拉全集');
+  assert.deepStrictEqual(S.list().map((x) => x.id), ['m1'], '镜像 = 服务端里我的列表（陈记录被刷掉）');
 });
 
 test('sync：端点报错 / 返回坏数据时只影响同步，不动本地数据', async () => {
   const st = fakeStorage();
   const S = loadSync(st, async () => { throw new Error('Failed to fetch'); });
-  S.save({ page: 'publish', name: '本机数据', fields: {} });
+  (await S.save({ page: 'publish', name: '本机数据', fields: {} }));
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, false);
   assert.ok(/同步失败/.test(r.error), '要说清是同步失败：' + r.error);
@@ -817,7 +824,7 @@ test('sync：HTTP 500 与坏 JSON 都要被当成失败而不是崩', async () =
 // 判断（哪种情况算连上、哪种算故障）全在这里。之前同步是静默的，
 // 用户看不出自己看的是团队库还是本机那一份，所以这套判定必须有用例钉住。
 
-test('同步状态：没同步过之前是 pending，不给任何结论', () => {
+test('同步状态：没同步过之前是 pending，不给任何结论', async () => {
   const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/saved-queries.db' }));
   assert.strictEqual(S.lastSyncState().state, 'pending');
 });
@@ -893,7 +900,7 @@ test('同步状态：sendBeacon 那条路拿不到响应，不能把「已同步
 test('同步状态：save() 之后的顺手推送会自动更新状态，调用方不必自己传回调', async () => {
   const peer = { id: 'peer1', page: 'publish', name: '同事的', fields: {}, hits: 1, saves: 1,
     owner: { userId: '1001', userName: '李四', teamName: '开发一部' } };
-  // 真实代理返回的是「合并后的全集」，桩也照这个来（只回同事那条会把本地的挤掉）
+  // 真实代理返回的是「合并后的全集」，桩也照这个来
   const S = loadSync(fakeStorage(), async (url, opts) => ({
     ok: true, status: 200,
     json: async () => ({
@@ -902,12 +909,14 @@ test('同步状态：save() 之后的顺手推送会自动更新状态，调用�
     }),
   }));
   assert.strictEqual(S.lastSyncState().state, 'pending');
-  S.save({ page: 'publish', name: '我的', fields: {} });   // autoPush 是 fire-and-forget
+  (await S.save({ page: 'publish', name: '我的', fields: {} }));   // autoPush 是 fire-and-forget
   await flush();
   await flush();
   const st = S.lastSyncState();
   assert.strictEqual(st.state, 'shared', '写完本地顺手推的那次也要落到状态里');
-  assert.strictEqual(st.total, 2, '条数是合并后的全集（自己的 + 同事的）');
+  // 2026-09-20 架构改版：全集只活在服务端，镜像/条数都是「我的」那份
+  assert.strictEqual(st.total, 1, '条数是镜像里的「我的」条数，不是团队全集');
+  assert.strictEqual(S.list().length, 1, '同事那条不能进本机镜像');
 });
 
 test('同步状态：订阅能收到变化，取消订阅后不再收到；返回值是副本', async () => {
@@ -928,6 +937,8 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
 
 test('同步状态：订阅方自己抛异常，不能把存储层的同步带崩', async () => {
   const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
+  // 故意保持**同步**回调：这条测的是「同步 throw 也要被 recordSync 接住」，
+  // 不能被批量 async 化误伤（async throw 会变成 rejection，try/catch 接不住）
   S.onSyncStateChange(() => { throw new Error('订阅方炸了'); });
   const r = await S.syncFromServer();
   assert.strictEqual(r.ok, true, '同步本身该成功');
@@ -1015,7 +1026,7 @@ test('同步后缀：各页「已保存到首页」的提示与角标同一口�
 const ME = { userId: '4711510', userName: '甲', teamId: 'T1', teamName: '开发一部' };
 const OTHER = { userId: '6464402', userName: '乙', teamId: 'T2', teamName: '开发二部' };
 
-test('归属：userKeyOf 与服务端 lib/queries-db.js 同口径（有工号用工号，否则姓名）', () => {
+test('归属：userKeyOf 与服务端 lib/queries-db.js 同口径（有工号用工号，否则姓名）', async () => {
   const S = load(fakeStorage());
   assert.strictEqual(S.userKeyOf(ME), '4711510');
   assert.strictEqual(S.userKeyOf({ userName: '甲' }), '甲', '没工号时姓名兜底');
@@ -1024,9 +1035,9 @@ test('归属：userKeyOf 与服务端 lib/queries-db.js 同口径（有工号用
   assert.strictEqual(S.userKeyOf('不是对象'), '', '非对象不能抛');
 });
 
-test('归属：save() 取不到当前用户时 owner 为空，但要把这件事显式回给调用方', () => {
+test('归属：save() 取不到当前用户时 owner 为空，但要把这件事显式回给调用方', async () => {
   const S = load(fakeStorage());   // 没有 CurrentUser
-  const r = S.save({ page: 'publish', name: '没人归属的一条', fields: { f_prodBatch: '2611' } });
+  const r = (await S.save({ page: 'publish', name: '没人归属的一条', fields: { f_prodBatch: '2611' } }));
   assert.strictEqual(r.ok, true, '没身份不该阻止保存');
   assert.strictEqual(r.item.owner, null);
   assert.strictEqual(r.ownerMissing, true, '必须把「没记到归属」回传，否则三页 toast 无从提示');
@@ -1034,9 +1045,9 @@ test('归属：save() 取不到当前用户时 owner 为空，但要把这件事
   assert.strictEqual(S.ownerSuffix({ ok: true, ownerMissing: false }), '', '正常保存别加话');
 });
 
-test('归属：save() 有当前用户时自动落 owner，且 ownerMissing 为假', () => {
+test('归属：save() 有当前用户时自动落 owner，且 ownerMissing 为假', async () => {
   const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
-  const r = S.save({ page: 'publish', name: '我存的', fields: { f_prodBatch: '2611' } });
+  const r = (await S.save({ page: 'publish', name: '我存的', fields: { f_prodBatch: '2611' } }));
   assert.strictEqual(r.ownerMissing, false, JSON.stringify(r));
   assert.strictEqual(S.ownerSuffix(r), '');
   const saved = S.get(r.item.id);
@@ -1044,16 +1055,16 @@ test('归属：save() 有当前用户时自动落 owner，且 ownerMissing 为�
   assert.strictEqual(saved.owner.teamName, '开发一部', '部门要一起存，否则部门排行算不出');
 });
 
-test('归属：显式传的 owner 优先于「当前用户」（导入/代录场景不该被覆盖）', () => {
+test('归属：显式传的 owner 优先于「当前用户」（导入/代录场景不该被覆盖）', async () => {
   const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
-  const r = S.save({ page: 'task', name: '替乙存的', fields: {}, owner: OTHER });
+  const r = (await S.save({ page: 'task', name: '替乙存的', fields: {}, owner: OTHER }));
   assert.strictEqual(S.get(r.item.id).owner.userId, '6464402');
 });
 
-test('「我的」列表：没有当前用户时返回空，绝不退化成"显示全部"', () => {
+test('「我的」列表：没有当前用户时返回空，绝不退化成"显示全部"', async () => {
   const S = load(fakeStorage(), { CurrentUser: { get: () => ME } });
-  S.save({ page: 'publish', name: '我的', fields: { a: '1' } });
-  S.save({ page: 'publish', name: '显式给乙的', fields: { a: '1' }, owner: OTHER });
+  (await S.save({ page: 'publish', name: '我的', fields: { a: '1' } }));
+  (await S.save({ page: 'publish', name: '显式给乙的', fields: { a: '1' }, owner: OTHER }));
   assert.deepStrictEqual(S.listForUser(null), [], '拿不到身份就只能空着');
   assert.deepStrictEqual(S.listForUser({}), [], '空对象也拿不到键');
   const mine = S.listForUser(ME);
@@ -1061,10 +1072,10 @@ test('「我的」列表：没有当前用户时返回空，绝不退化成"显�
   assert.strictEqual(mine[0].name, '我的');
 });
 
-test('「我的」列表：owner 为空的历史记录不属于任何人，limit 与倒序都要生效', () => {
+test('「我的」列表：owner 为空的历史记录不属于任何人，limit 与倒序都要生效', async () => {
   const st = fakeStorage();
   const anon = load(st);   // 故意不注入 CurrentUser：从这种页面存出去的就是孤儿
-  const orphan = anon.save({ page: 'publish', name: '孤儿（没归属）', fields: {} });
+  const orphan = await anon.save({ page: 'publish', name: '孤儿（没归属）', fields: {} });
   assert.strictEqual(orphan.ownerMissing, true);
   const S = load(st, { CurrentUser: { get: () => ME } });
   // 直接改盘：塞两条我自己的、时间不同（save 同名会覆盖，所以用不同名字）
@@ -1102,7 +1113,7 @@ test('「我的」服务端版：请求要带上工号，且工号做 URL 编码
   assert.ok(/user=%E7%94%B2%20%E4%B9%99%26%E4%B8%99/.test(seen[0]), '必须编码：' + seen[0]);
 });
 
-test('页面接线防线：凡引用 saved-query.js 的页面，必须同时引用 current-user.js 且在它之前', () => {
+test('页面接线防线：凡引用 saved-query.js 的页面，必须同时引用 current-user.js 且在它之前', async () => {
   // 为什么钉这条（而不是只写进文档）：漏引 current-user.js 不会产生任何报错，
   // 只会让从那一页保存的查询 owner 为空 —— 用户表现为「我存了但首页没有」，
   // 排查时又会先怀疑同步、再怀疑 SQLite，成本极高（2026-09-19 就是这么坏的）。
@@ -1116,4 +1127,100 @@ test('页面接线防线：凡引用 saved-query.js 的页面，必须同时引�
     assert.ok(iUser >= 0, `${f} 引了 saved-query.js 却没引 current-user.js：从本页保存的查询会没有归属人`);
     assert.ok(iUser < iSaved, `${f} 的 current-user.js 必须排在 saved-query.js 之前`);
   });
+});
+
+// ══════════════════════════════════════════════════════════
+// 8) 服务端优先架构（2026-09-20 改版）：数据库为唯一真相源
+// ══════════════════════════════════════════════════════════
+
+/** 造一个「假代理」：GET ?user= 按人回、POST 按 id upsert，行为对齐 proxy.js + queries-db.js */
+function fakeProxy() {
+  const db = new Map();          // id → item
+  const tomb = new Set();
+  const handle = async (url, opts = {}) => {
+    const u = String(url);
+    const method = (opts.method || 'GET').toUpperCase();
+    if (method === 'GET') {
+      const user = new URL(u, 'http://localhost').searchParams.get('user');
+      const items = [...db.entries()]
+        .filter(([id, it]) => !tomb.has(id) && (!user || String((it.owner && (it.owner.userId || it.owner.userName)) || '') === user))
+        .map(([, it]) => it);
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { mode: user ? 'user' : 'all', user, items } }) };
+    }
+    const body = JSON.parse(opts.body || '{}');
+    (body.items || []).forEach((it) => db.set(it.id, it));
+    (body.deletedIds || []).forEach((id) => { tomb.add(id); db.delete(id); });
+    const items = [...db.entries()].filter(([id]) => !tomb.has(id)).map(([, it]) => it);
+    return { ok: true, status: 200, json: async () => ({ code: 200, data: { mode: 'all', items, storage: 'sqlite', file: '/srv/fake.db', people: 2 } }) };
+  };
+  handle.db = db;
+  return handle;
+}
+
+/** 带 CurrentUser 的同步环境（服务端路径要按人） */
+function loadUserSync(storage, fetchStub, me) {
+  const win = { localStorage: storage, location: { href: 'http://localhost:3000/' }, fetch: fetchStub, CurrentUser: { get: () => me } };
+  loadScript('js/ui/saved-query.js', {}, win);
+  return win.SavedQuery;
+}
+
+test('服务端优先：同一台机器先后两个人各存同名查询 → 服务端两条、镜像各只有自己的', async () => {
+  const proxy = fakeProxy();
+  const st = fakeStorage();
+  const ZS = { userId: '1001', userName: '张三', teamName: '开发一部' };
+  const LS = { userId: '1002', userName: '李四', teamName: '开发一部' };
+  const S = loadUserSync(st, proxy, ZS);
+
+  const r1 = await S.save({ page: 'publish', name: '服务X', fields: { f_serviceName: '服务X' } });
+  assert.strictEqual(r1.ok, true, '张三保存成功');
+  assert.strictEqual(r1.server, true, '连得上代理时必须走服务端路径');
+
+  // 同一台机器换人（真实场景：公用电脑）：同一份 localStorage，不同身份。
+  const S2 = loadUserSync(st, proxy, LS);   // 同一份 localStorage（同机），不同身份
+  const r2 = await S2.save({ page: 'publish', name: '服务X', fields: { f_serviceName: '服务X' } });
+  assert.strictEqual(r2.ok, true, '李四保存也成功');
+  assert.notStrictEqual(r1.item.id, r2.item.id, '两人各一条，绝不复用对方的 id');
+  assert.strictEqual(proxy.db.size, 2, '服务端库里是两条');
+
+  // 镜像里只有「自己」的：张三的记录不得出现在李四的镜像里
+  const S2list = S2.list();
+  assert.strictEqual(S2list.length, 1, '李四的镜像只有他自己那条');
+  assert.strictEqual(S2list[0].owner.userId, '1002');
+
+  // 换回张三看：?user=1001 还是只有张三那条
+  const again = await S.mineFromServer(ZS);
+  assert.strictEqual(again.items.length, 1);
+  assert.strictEqual(again.items[0].owner.userId, '1001');
+});
+
+test('服务端优先：服务端失败时 save 回落本机（localOnly:true），数据不丢', async () => {
+  const S = loadSync(fakeStorage(), async () => { throw new Error('Failed to fetch'); });
+  const me = { userId: '1003', userName: '王五', teamName: '开发二部' };
+  // loadSync 没有 CurrentUser —— 手工把身份借给 save（显式传 owner 与页面行为一致）
+  const r = await S.save({ page: 'publish', name: '离线也要能存', fields: {}, owner: me });
+  assert.strictEqual(r.ok, true, '服务端炸了也要存下来');
+  assert.strictEqual(r.localOnly, true, '且要如实告诉调用方这是「仅本机」');
+  assert.strictEqual(S.list().length, 1);
+});
+
+test('服务端优先：exportJsonAsync 连得上代理 → 导出团队库全集', async () => {
+  const proxy = fakeProxy();
+  const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
+  await S.save({ page: 'publish', name: '张三的', fields: {}, owner: { userId: '1001', userName: '张三', teamName: '开发一部' } });
+  // 别人直接写进库里（模拟另一台机器推上来的）
+  proxy.db.set('peerX', { id: 'peerX', page: 'task', name: '李四的', fields: {}, owner: { userId: '1002', userName: '李四', teamName: '开发一部' } });
+  const text = await S.exportJsonAsync();
+  const parsed = JSON.parse(text);
+  assert.deepStrictEqual(parsed.items.map((x) => x.id).sort(), ['peerX', String(parsed.items.find((x) => x.id !== 'peerX').id)],
+    '导出要含两条（张三的 + 李四的）——导出的是团队库，不是本机镜像');
+});
+
+test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回（深链回填用）', async () => {
+  const proxy = fakeProxy();
+  const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
+  proxy.db.set('deep1', { id: 'deep1', page: 'publish', name: '深链那条', fields: { a: '1' }, owner: { userId: '1002', userName: '李四', teamName: '开发一部' } });
+  assert.strictEqual(S.get('deep1'), null, '镜像里确实没有（换电脑场景）');
+  const item = await S.getAsync('deep1');
+  assert.strictEqual(item.id, 'deep1', '从服务端捞回来');
+  assert.strictEqual(S.list().length, 0, '别人的记录只回填用，不进镜像');
 });

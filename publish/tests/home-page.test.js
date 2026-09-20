@@ -149,6 +149,9 @@ function makeSavedQuery(seed, syncState) {
     // 「服务端这条路失败就别覆盖本机结果」）。要用服务端数据的用例自己覆盖它。
     mineFromServer: async () => ({ ok: false, error: '测试替身默认不供服务端数据' }),
     get(id) { return store.find((it) => it.id === id) || null; },
+    // 2026-09-20 架构改版配套：首页改名走 getAsync（镜像没有时去服务端捞）。
+    // 桩里镜像即全量，getAsync = get 的 async 版即可。
+    async getAsync(id) { return store.find((it) => it.id === id) || null; },
     save(item) { store = [item, ...store]; return { ok: true, item }; },
     hit(id) {
       const t = store.find((it) => it.id === id);

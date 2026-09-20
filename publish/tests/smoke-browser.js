@@ -135,7 +135,7 @@ const PAGES = [
           const CU = window.CurrentUser;
           if (!CU) return Object.assign(out, { err: 'CurrentUser 未加载' });
           CU.set({ userId: '9001', userName: '冒烟甲', teamId: 'T9', teamName: '开发九部' });
-          const r = S.save({
+          const r = await S.save({
             page: 'publish',
             name: '冒烟常用查询',
             fields: { f_prodBatch: '2611pc', f_serviceName: '全球汇划' },
@@ -520,8 +520,8 @@ const PAGES = [
           //     这里只确认组件挂在那个 <select> 上，具体交互由上面那段「候选下拉」覆盖
           out.userSelectMounted = !!window.HomePage.userSelect();
 
-          // ③ 保存一条（走真实保存链路，owner 自动取当前用户）
-          const s = S.save({
+          // ③ 保存一条（走真实保存链路，owner 自动取当前用户；save 已 async 化）
+          const s = await S.save({
             page: 'publish', name: '部门冒烟查询',
             fields: { f_prodBatch: '2706pc' }, labels: { f_prodBatch: '2706批次' },
             summary: '变更批次：2706批次',
@@ -563,11 +563,13 @@ const PAGES = [
             && !!document.getElementById('btnImportQueries');
           if (!S.importJson || !S.exportJson) return { err: '缺少 exportJson / importJson' };
 
-          S.save({ page: 'publish', name: '本机查询', fields: {} });
+          (await S.save({ page: 'publish', name: '本机查询', fields: {} }));
           // 存的时候自动带上归属人（current-user.js 在场），且不再报 ownerMissing
           out.mineOwnerSaved = !!(S.list()[0] && S.list()[0].owner);
-          out.ownerMissingFlag = S.save({ page: 'publish', name: '第二条', fields: {} }).ownerMissing === false;
-          const text = S.exportJson();
+          out.ownerMissingFlag = (await S.save({ page: 'publish', name: '第二条', fields: {} })).ownerMissing === false;
+          // 2026-09-20 改版：exportJsonAsync 连得上代理导团队库、连不上退本机镜像 ——
+          // 冒烟环境没有 /local/saved-queries 端点，两条路都该能出合法的 JSON
+          const text = await S.exportJsonAsync();
           out.exportHasApp = /"app":\s*"spider-saved-queries"/.test(text);
           out.exportCount = (JSON.parse(text).items || []).length;
 
@@ -580,9 +582,9 @@ const PAGES = [
               hits: 4, saves: 2,
             }],
           });
-          const r1 = S.importJson(incoming);
+          const r1 = await S.importJson(incoming);
           out.firstImport = { ok: r1.ok, added: r1.added, total: r1.total };
-          const r2 = S.importJson(incoming);   // 重复导入应幂等
+          const r2 = await S.importJson(incoming);   // 重复导入应幂等
           out.secondImport = { added: r2.added, merged: r2.merged, total: r2.total };
           const rendered = () => document.querySelectorAll('#savedList .saved-item').length;
           const renderedNames = () => [...document.querySelectorAll('#savedList .saved-name')].map((e) => e.textContent);
@@ -751,11 +753,11 @@ const PAGES = [
         // 旧记录自动升级：2026-09-18 前保存的卡片，摘要里写的是编号（2611pc / E00301），
         // 改代码修不了已落盘的文本。现在的做法是「从首页打开时重算回写」——
         // 这里真的造一条 v1 旧记录，带 ?saved= 打开，再验它已经被升级成 v2。
-        const oldId = await page.evaluate(() => {
+        const oldId = await page.evaluate(async () => {
           const S = window.SavedQuery;
           if (!S) return null;
-          S.clear();
-          const r = S.save({
+          await S.clear();
+          const r = await S.save({
             page: 'publish', name: '旧格式卡片',
             fields: { f_prodBatch: '2611pc', f_serviceName: '全球汇划' },
             summary: '变更批次：2611pc · 服务名称：全球汇划',

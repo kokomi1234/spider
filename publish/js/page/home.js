@@ -99,7 +99,8 @@
     main.title = `打开常用查询：${item.name}`;
     // 从首页点开一次就算一次「打开」，这是「高频」的判据（纯本地计数）
     main.addEventListener('click', () => {
-      try { window.SavedQuery.hit(item.id); } catch (_) { /* 计数失败不该挡住跳转 */ }
+      // hit 已 async 化（服务端优先）：失败也绝不挡跳转 —— 同步异常与 Promise 拒绝都要吞掉
+      try { Promise.resolve(window.SavedQuery.hit(item.id)).catch(() => {}); } catch (_) { /* 计数失败不该挡住跳转 */ }
     });
 
     const nameRow = document.createElement('div');
@@ -165,7 +166,7 @@
   }
 
   async function doRename(id) {
-    const cur = window.SavedQuery.get(id);
+    const cur = await window.SavedQuery.getAsync(id);
     if (!cur) { showToast('该查询已不存在', 2500, 'warn'); render(); return; }
     let name;
     try {
@@ -174,7 +175,7 @@
       name = '';
     }
     if (!name || !String(name).trim()) return; // 点取消 / 空输入：什么都不做
-    const r = window.SavedQuery.rename(id, String(name).trim());
+    const r = await window.SavedQuery.rename(id, String(name).trim());
     if (!r.ok) { showToast(r.error || '重命名失败', 3000, 'error'); return; }
     markLocalWrite();   // 本地刚改过：别让紧接着的 ?user= 旧响应把新名字刷回去
     showToast('已重命名', 1800, 'success');
@@ -189,7 +190,7 @@
       yes = false;
     }
     if (!yes) return;
-    const r = window.SavedQuery.remove(id);
+    const r = await window.SavedQuery.remove(id);
     if (!r.ok) { showToast(r.error || '删除失败', 3000, 'error'); return; }
     markLocalWrite();   // 同上：别让旧响应把已经删掉的卡片又画回来
     showToast('已删除', 1800, 'success');
@@ -743,13 +744,13 @@
   // 换电脑/换浏览器就是两份互不相干的数据（不是权限问题）。没有后端接口的前提下，
   // 只能靠文件交换：这边导出 JSON，那边导入合并。
 
-  function exportQueries() {
+  async function exportQueries() {
     const S = window.SavedQuery;
     if (!S) { showToast('常用查询模块未加载', 2600, 'error'); return; }
-    const items = S.list();
-    if (!items.length) { showToast('还没有常用查询可以导出', 2600, 'warn'); return; }
-
-    const blob = new Blob([S.exportJson()], { type: 'application/json;charset=utf-8' });
+    // 2026-09-20 架构改版：镜像只含「我的」，导出主体应该是**服务端团队库**
+    // （exportJsonAsync 连不上代理才退本机镜像）。所以这里不再用本机条数拦人。
+    const text = await S.exportJsonAsync();
+    const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const stamp = (window.Fmt && typeof window.Fmt.stamp === 'function') ? window.Fmt.stamp() : '';
@@ -773,12 +774,13 @@
       const file = input.files && input.files[0];
       if (!file) { input.remove(); return; }
       const reader = new FileReader();
-      reader.onload = () => {
-        const r = window.SavedQuery.importJson(String(reader.result || ''));
+      reader.onload = async () => {
+        // importJson 已 async 化：连得上代理时直接把合并结果写进**服务端**，
+        // 本机镜像只刷「我的」那份 —— 刚导入的别人的记录不会再被空同步盖掉，
+        // 因为真相源在服务端，首页渲染也是从服务端拉的。
+        const r = await window.SavedQuery.importJson(String(reader.result || ''));
         input.remove();
         if (!r.ok) { showToast(r.error || '导入失败', 3800, 'error'); return; }
-        // 导入是本机的一次**写操作**：记下来，免得紧接着那次 ?user= 的响应（可能还是空库）
-        // 把刚导入的条目从 DOM 上盖掉（2026-09-20 子代理真点 UI 发现的）。
         markLocalWrite();
         render();
         showToast(`已导入：新增 ${r.added} 条、合并 ${r.merged} 条，本机现有 ${r.total} 条`, 4000, 'success');
