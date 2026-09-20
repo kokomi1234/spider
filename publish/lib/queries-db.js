@@ -214,38 +214,51 @@ function open(file) {
      */
     upsert(items, deletedIds) {
       const now = Date.now();
-      (Array.isArray(items) ? items : []).forEach((it) => {
-        if (!it || typeof it !== 'object' || !it.id || !it.page) return;
-        const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
-        const at = num(it.at, now) || now;
-        insQuery.run(
-          String(it.id), String(it.page), String(it.name || '未命名查询'),
-          String(it.summary || ''),
-          JSON.stringify(it.fields && typeof it.fields === 'object' ? it.fields : {}),
-          JSON.stringify(it.labels && typeof it.labels === 'object' ? it.labels : {}),
-          fingerprintOf(it),
-          num(it.hits, 0), Math.max(1, num(it.saves, 1)),
-          at, num(it.at, at), num(it.lastAt, 0),
-        );
-        const uk = userKeyOf(owner);
-        if (uk) {
-          insSaver.run(
-            String(it.id), uk,
-            String(owner.userId || ''), String(owner.userName || uk),
-            String(owner.teamId || ''), String(owner.teamName || ''),
-            String(owner.orgId || ''), String(owner.orgName || ''),
-            deptKeyOf(owner), at,
+      // 一整批（新增/更新 + 立墓碑 + 删本体）要么全成、要么全不成。
+      // 为什么要事务：这不是"几条 INSERT"那么简单 —— 一条删除要同时动三张表
+      // （墓碑、savers、queries），中途失败会留下"墓碑立了但本体还在"这类半截状态。
+      // 单进程同步 API 撞上的概率不高，但服务端现在是**一份代理给全团队用**，
+      // 一个请求出错不该让它留下不一致的库。
+      // BEGIN IMMEDIATE（而不是裸 BEGIN）：立刻拿写锁，避免"读事务升级成写"时的死锁。
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        (Array.isArray(items) ? items : []).forEach((it) => {
+          if (!it || typeof it !== 'object' || !it.id || !it.page) return;
+          const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
+          const at = num(it.at, now) || now;
+          insQuery.run(
+            String(it.id), String(it.page), String(it.name || '未命名查询'),
+            String(it.summary || ''),
+            JSON.stringify(it.fields && typeof it.fields === 'object' ? it.fields : {}),
+            JSON.stringify(it.labels && typeof it.labels === 'object' ? it.labels : {}),
+            fingerprintOf(it),
+            num(it.hits, 0), Math.max(1, num(it.saves, 1)),
+            at, num(it.at, at), num(it.lastAt, 0),
           );
-        }
-      });
-      (Array.isArray(deletedIds) ? deletedIds : []).forEach((id) => {
-        const key = String(id || '');
-        if (!key) return;
-        insTomb.run(key, now);
-        delSavers.run(key);
-        delQuery.run(key);
-      });
-      delTomb.run(now - TOMB_KEEP_MS);
+          const uk = userKeyOf(owner);
+          if (uk) {
+            insSaver.run(
+              String(it.id), uk,
+              String(owner.userId || ''), String(owner.userName || uk),
+              String(owner.teamId || ''), String(owner.teamName || ''),
+              String(owner.orgId || ''), String(owner.orgName || ''),
+              deptKeyOf(owner), at,
+            );
+          }
+        });
+        (Array.isArray(deletedIds) ? deletedIds : []).forEach((id) => {
+          const key = String(id || '');
+          if (!key) return;
+          insTomb.run(key, now);
+          delSavers.run(key);
+          delQuery.run(key);
+        });
+        delTomb.run(now - TOMB_KEEP_MS);
+        db.exec('COMMIT');
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch (_) { /* 已经回滚掉了 */ }
+        throw e;   // 如实抛给调用方 → 代理回 400/500，前端角标显示失败，而不是"成功但数据不全"
+      }
       return { items: this.all(), deleted: this.tombstones() };
     },
 

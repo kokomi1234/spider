@@ -13,6 +13,9 @@ shared/saved-queries.db
 shared/saved-queries.db-wal
 shared/saved-queries.db-shm
 shared/saved-queries.json
+# 定时备份产物（tools/backup-queries-db.js 写的 VACUUM INTO 快照）：同样是运行时数据，
+# 而且要留在服务器上给恢复用 —— 别入库、别被 .gitignore 之外的东西搬走
+shared/backups/
 
 # Real captured internal responses / sensitive network traces
 publish/cache/
