@@ -12,6 +12,17 @@
 4. `ONBOARDING.md` / `publish/README.md` —— 上手与运行方式。
 5. 当日流水 `.workbuddy/memory/YYYY-MM-DD.md` —— 今天的现场。
 
+## 0.5 分支约定（2026-09-20 起，两条线）
+
+- **`main` = 稳定线**：只放验收过的代码，**HEAD 永远是可以直接跑的状态**。同事 `git clone` 下来默认就在 `main`，
+  所以任何"做了一半"的东西都不许出现在这里。
+- **`dev` = 开发线**：**所有 Agent 的日常改动一律在 `dev` 上提交。**
+- 发布动作（只有主会话/用户做）：dev 上跑全门禁 → `git checkout main && git merge --ff-only dev`
+  → `git tag stable-YYYYMMDD -m "门禁原话 + 这一版包含什么"` → 两条线各自 push。
+- ⚠️ **不许在 `main` 上直接改代码**；⚠️ **不许把 `dev` rebase/force-push**（同事的 clone 会废掉）。
+- 动手前先 `git branch --show-current` 确认自己在 `dev`；在 `main` 上就先切回去再改，
+  并把当前分支写进 `CHANGELOG.md` 的交接记录里。
+
 ## 1. 基础原则
 
 1. **同一时间只允许一个 Agent 改同一份文件**。要改之前先在 `CHANGELOG.md` 上锁；改完释放。
@@ -94,7 +105,8 @@ node tests/smoke-browser.js  # 无头浏览器冒烟，必须打印 "ALL PASS"�
 
 ## 8. 提交与记录
 
-- 提交前先看 `CHANGELOG.md` 有没有别人的锁定；有就别提交。
+- 提交前先看 `CHANGELOG.md` 有没有别人的锁定；有就别提交。**并且先 `git branch --show-current` 确认在 `dev`**
+  （在 `main` 上提交 = 把没验完的东西直接塞给同事）。
 - 按主题 `git add`（**别 `git add -A`**，避免把 `.env`、缓存报文、临时探针带进去），中文提交信息：`feat:/fix:/chore:/docs:` + 摘要，正文列要点，不署 AI 名。
 - 新文件容易漏：`git add -u` **不含未跟踪新文件**（如新增测试文件），要么显式 `git add <路径>`。
 - 仓库根**不维护第二份变更史**：改了什么以 git 提交与 `.workbuddy/memory/YYYY-MM-DD.md` 为准；`CHANGELOG.md` 只做**锁定与交接看板**，写清楚「为什么/遗留/下一步」即可，不要抄 diff。
