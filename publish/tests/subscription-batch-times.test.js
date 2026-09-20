@@ -71,7 +71,7 @@ test('applyToPriority：把配置喂给 Priority（from=config）', async () => 
     () => BT.load());
 
   BT.applyToPriority();
-  const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
   assert.strictEqual(r.deadline, '2026-01-20');
   assert.strictEqual(r.from, 'config', '截止日应来自批次时间配置');
 });

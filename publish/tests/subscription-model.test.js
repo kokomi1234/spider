@@ -360,7 +360,7 @@ test('todayBase：优先 Fmt.businessToday，缺失时退化为当天', () => {
 test('decorateRow / decorateRows：有 Priority 走它，没有则退化占位', () => {
   // 无 Priority：占位字段齐全且不影响展示
   const M = fresh().SubscriptionModel;
-  const row = M.decorateRow({ prodBatch: '2609批次', status: '开发基线' });
+  const row = M.decorateRow({ prodBatchList: '2609批次', status: '开发基线' });
   assert.deepStrictEqual(row._prio, {
     level: 'unknown', days: null, text: '—', next: '', deadline: '', sortKey: 9e6, overdue: false,
   });
@@ -372,11 +372,11 @@ test('decorateRow / decorateRows：有 Priority 走它，没有则退化占位',
 
   // 有 Priority：写回真实的优先级
   const MP = freshWithPriority().SubscriptionModel;
-  const done = MP.decorateRow({ prodBatch: '2609批次', status: '正式版基线' });
+  const done = MP.decorateRow({ prodBatchList: '2609批次', status: '正式版基线' });
   assert.strictEqual(done._prio.level, 'done');
   assert.strictEqual(done._prioText, '已完成');
   // 开发基线 2609批次 → 截止日 2026-08-15（批次月 -1 的 15 日），与"今天"无关
-  const dev = MP.decorateRow({ prodBatch: '2609批次', status: '开发基线' });
+  const dev = MP.decorateRow({ prodBatchList: '2609批次', status: '开发基线' });
   assert.strictEqual(dev._prio.deadline, '2026-08-15');
   assert.strictEqual(typeof dev._prio.days, 'number');
   assert.strictEqual(dev._prioText.indexOf('天') > -1, true);
@@ -385,9 +385,9 @@ test('decorateRow / decorateRows：有 Priority 走它，没有则退化占位',
 test('decorateRows / redecorateRows：整批共用同一个"今天"', () => {
   const MP = freshWithPriority().SubscriptionModel;
   const rows = [
-    { prodBatch: '2609批次', status: '开发基线' },
-    { prodBatch: '2610批次', status: '功能测试基线' },
-    { prodBatch: '2609批次', status: '正式版基线' },
+    { prodBatchList: '2609批次', status: '开发基线' },
+    { prodBatchList: '2610批次', status: '功能测试基线' },
+    { prodBatchList: '2609批次', status: '正式版基线' },
   ];
   const out = MP.decorateRows(rows);
   assert.strictEqual(out.length, 3);
@@ -396,14 +396,14 @@ test('decorateRows / redecorateRows：整批共用同一个"今天"', () => {
   out.forEach((r, i) => assert.strictEqual(r, rows[i]));
   rows.forEach((r) => assert.ok(r._prio && typeof r._prio.level === 'string'));
   // 共用基准：同一批次的同一状态，算出的剩余天数必须完全一致
-  assert.strictEqual(rows[0]._prio.days, MP.decorateRow({ prodBatch: '2609批次', status: '开发基线' })._prio.days);
+  assert.strictEqual(rows[0]._prio.days, MP.decorateRow({ prodBatchList: '2609批次', status: '开发基线' })._prio.days);
 
   // 空数组 / null 不炸
   assert.deepStrictEqual(MP.decorateRows([]), []);
   assert.deepStrictEqual(MP.decorateRows(null), []);
 
   // redecorateRows：原地重算，返回 undefined
-  const rows2 = [{ prodBatch: '2609批次', status: '开发基线' }];
+  const rows2 = [{ prodBatchList: '2609批次', status: '开发基线' }];
   assert.strictEqual(MP.redecorateRows(rows2), undefined);
   assert.strictEqual(rows2[0]._prio.deadline, '2026-08-15');
 });
@@ -458,7 +458,7 @@ test('prioParts：色块文案 + 剩余 ≤3 天（is-near）判定', () => {
   const MP = freshWithPriority().SubscriptionModel;
   // 有下一里程碑：hint 里写清批次、截止日与目标状态
   const near = MP.prioParts({
-    prodBatch: '2609批次',
+    prodBatchList: '2609批次',
     _prio: { level: 'critical', days: 2, text: '剩 2 天', next: '正式版基线', deadline: '2026-09-15' },
   });
   assert.deepStrictEqual(near, {
@@ -470,7 +470,7 @@ test('prioParts：色块文案 + 剩余 ≤3 天（is-near）判定', () => {
 
   // 边界：0 和 3 天仍然加 is-near，-1（逾期）和 4 天不加
   const daysOf = (days) => ({
-    prodBatch: 'B', _prio: { level: 'x', days, text: 't', next: '', deadline: '' },
+    prodBatchList: 'B', _prio: { level: 'x', days, text: 't', next: '', deadline: '' },
   });
   assert.strictEqual(MP.prioParts(daysOf(0)).near, true);
   assert.strictEqual(MP.prioParts(daysOf(3)).near, true);
@@ -479,13 +479,13 @@ test('prioParts：色块文案 + 剩余 ≤3 天（is-near）判定', () => {
   assert.strictEqual(MP.prioParts(daysOf(null)).near, false);
 
   // 已完成：不再提示转基线；批次缺失时用（无批次）占位
-  assert.strictEqual(MP.prioParts({ prodBatch: 'B', _prio: { level: 'done', days: null, text: '已完成', next: '', deadline: '' } }).hint,
+  assert.strictEqual(MP.prioParts({ prodBatchList: 'B', _prio: { level: 'done', days: null, text: '已完成', next: '', deadline: '' } }).hint,
     '已到正式版基线 / 已下线');
   assert.strictEqual(MP.prioParts({ _prio: { level: 'x', days: 1, text: 't', next: '正式版基线', deadline: '2026-09-15' } }).hint,
     '（无批次）：应于 2026-09-15 前转为正式版基线');
   // 截止日来自批次时间配置 → hint 里标注来源
   const cfg = MP.prioParts({
-    prodBatch: 'B',
+    prodBatchList: 'B',
     _prio: { level: 'x', days: 1, text: 't', next: '正式版基线', deadline: '2026-09-15', from: 'config' },
   });
   assert.strictEqual(cfg.hint, 'B：应于 2026-09-15 前转为正式版基线（按批次时间配置）');
@@ -724,4 +724,37 @@ test('fetchWindowAll：全部失败 → ok:false + 错误文案；已中止 → 
   assert.deepStrictEqual(none.partial, []);
   assert.strictEqual(none.local, false);
   assert.strictEqual(none.error.indexOf('查询失败') > -1, true);
+});
+
+// ══════════════════════════════════════════════════════════
+// 批次字段口径（2026-09-20 修正：prodBatch=提供方、prodBatchList=调用方）
+// 证据：556 行 × 发布接口缓存交叉验证 prodBatch 99.1% 命中提供方服务批次；
+// 用户业务确认 2607（最新调用）是调用方批次；请求 prodBatch='2607批次' 返回行
+// 的 prodBatchList 全等于 2607。这条测试锁死绑定，防止再被换回去。
+// ══════════════════════════════════════════════════════════
+test('批次口径：提供方列绑 prodBatch、调用方列绑 prodBatchList（2026-09-20 回归）', () => {
+  const M = fresh().SubscriptionModel;
+  const byLabel = Object.fromEntries(M.COLUMNS.map((c) => [c[1], c[0]]));
+  assert.strictEqual(byLabel['提供方最新变更批次'], 'prodBatch');
+  assert.strictEqual(byLabel['调用方投产/变更批次'], 'prodBatchList');
+});
+
+test('filterByProviderBatch：按行内 prodBatch 精确匹配；空值放行全部', () => {
+  const M = fresh().SubscriptionModel;
+  const rows = [
+    { prodBatch: '2608批次', prodBatchList: '2607批次' },
+    { prodBatch: '2609批次', prodBatchList: '2609批次' },
+    { prodBatch: '', prodBatchList: '2609批次' },
+  ];
+  assert.deepStrictEqual(M.filterByProviderBatch(rows, '2608批次'), [rows[0]]);
+  assert.strictEqual(M.filterByProviderBatch(rows, '').length, 3, '空筛选 = 不过滤');
+  assert.deepStrictEqual(M.filterByProviderBatch(rows, '2700批次'), [], '没有匹配就给空，不装作有结果');
+});
+
+test('批次口径：Priority 的投产里程碑用调用方批次（prodBatchList），两字段不同时不许拿错', () => {
+  const MP = freshWithPriority().SubscriptionModel;
+  // 提供方 2305 / 调用方 2609：里程碑必须按调用方的 2609 算（截止 2026-08-15），
+  // 拿错成 prodBatch(2305) 会算出 2025 年的过去时间 → 误报逾期
+  const r = MP.decorateRow({ prodBatch: '2305批次', prodBatchList: '2609批次', status: '开发基线' });
+  assert.strictEqual(r._prio.deadline, '2026-08-15');
 });

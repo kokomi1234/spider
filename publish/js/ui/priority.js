@@ -2,7 +2,7 @@
  * 投产优先级计算（window.Priority）
  *
  * ── 业务规则（2026-09-10 与用户确认；2026-09-14 把 -3 改成 -1）──
- * 以「调用方投产/变更批次」（订阅关系页的 prodBatch 字段）为准，
+ * 以「调用方投产/变更批次」（订阅关系页的 prodBatchList 字段）为准，
  * 在订阅关系基线状态（status）上排里程碑：
  *   · 开发基线     → 应于【批次月 - 1 个月】的 15 日之前转为 功能测试基线
  *   · 功能测试基线 → 应于【批次月】的 15 日之前转为 正式版基线（= 生产基线）
@@ -154,7 +154,7 @@
 
   /**
    * 计算一行的优先级。
-   * @param {object} row 订阅关系行（用 prodBatch + status）
+   * @param {object} row 订阅关系行（用 prodBatchList + status）
    * @param {Date} [now] 计算基准，默认今天
    * @returns {{level:string, days:number|null, text:string, next:string,
    *            deadline:string, sortKey:number, overdue:boolean}}
@@ -162,7 +162,12 @@
   function evaluate(row, now) {
     const base = now || today0();
     const status = String((row && row.status) ?? '').trim();
-    const batchLabel = String((row && row.prodBatch) ?? '').trim();
+    // 2026-09-20 字段口径修正：调用方投产/变更批次 = prodBatchList（不是 prodBatch）。
+    // 证据：① 用户业务确认（2607 是他们最新调用的批次，提供方时间必须早于调用方）；
+    // ② 556 行订阅数据 × 发布接口缓存交叉验证：prodBatch 有 551 行（99.1%）命中
+    //    提供方服务自己的变更批次 —— prodBatch 是提供方批次，prodBatchList 才是调用方。
+    // 刻意**不做** prodBatch 兜底：兜底会拿提供方批次静默算错期限，宁可显示「无法判断」。
+    const batchLabel = String((row && row.prodBatchList) ?? '').trim();
 
     // 已到终点
     if (DONE_STATUS.includes(status)) {

@@ -39,7 +39,7 @@ test('截止日：12 个月的批次全部落在"批次月-1 的 15 日"，跨�
     '2610批次': '2026-09-15', '2611批次': '2026-10-15', '2612批次': '2026-11-15',
   };
   Object.entries(expected).forEach(([label, want]) => {
-    const r = Priority.evaluate({ prodBatch: label, status: '开发基线' }, now);
+    const r = Priority.evaluate({ prodBatchList: label, status: '开发基线' }, now);
     assert.strictEqual(r.deadline, want, `${label} 的截止日应为 ${want}`);
     assert.strictEqual(r.from, 'rule');
   });
@@ -47,10 +47,10 @@ test('截止日：12 个月的批次全部落在"批次月-1 的 15 日"，跨�
 
 test('截止日：跨年两侧（2512 / 2701）不串年', () => {
   const now = new Date(2026, 8, 14);
-  assert.strictEqual(Priority.evaluate({ prodBatch: '2512批次', status: '开发基线' }, now).deadline, '2025-11-15');
-  assert.strictEqual(Priority.evaluate({ prodBatch: '2701批次', status: '开发基线' }, now).deadline, '2026-12-15');
+  assert.strictEqual(Priority.evaluate({ prodBatchList: '2512批次', status: '开发基线' }, now).deadline, '2025-11-15');
+  assert.strictEqual(Priority.evaluate({ prodBatchList: '2701批次', status: '开发基线' }, now).deadline, '2026-12-15');
   // 功能测试基线：批次月当月 15 日，不做 -1
-  assert.strictEqual(Priority.evaluate({ prodBatch: '2701批次', status: '功能测试基线' }, now).deadline, '2027-01-15');
+  assert.strictEqual(Priority.evaluate({ prodBatchList: '2701批次', status: '功能测试基线' }, now).deadline, '2027-01-15');
 });
 
 test('截止日：day 超过目标月天数时钳到当月最后一天（2 月平年 28 / 闰年 29）', () => {
@@ -74,17 +74,17 @@ test('剩余天数：月末、跨月、闰年 2 月都按日历日算，不做 3
     ['2026-09-14', '2026-09-13', -1],   // 逾期 1 天
   ];
   cases.forEach(([from, to, want]) => {
-    const r = Priority.decorate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
+    const r = Priority.decorate({ prodBatchList: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
     assert.ok(r, 'decorate 应返回行');
     const days = Priority.evaluate(
-      { prodBatch: '2609批次', status: '开发基线' },
+      { prodBatchList: '2609批次', status: '开发基线' },
       new Date(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10))),
     );
     assert.ok(days.days != null);
     // 直接验证日期差：用 setBatchTimes 注入一个明确的截止日，排除批次解析的干扰
     Priority.setBatchTimes({ '2609批次': { testDate: to } });
     const got = Priority.evaluate(
-      { prodBatch: '2609批次', status: '开发基线' },
+      { prodBatchList: '2609批次', status: '开发基线' },
       new Date(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10))),
     );
     assert.strictEqual(got.days, want, `${from} → ${to} 应为 ${want} 天，实际 ${got.days}`);
