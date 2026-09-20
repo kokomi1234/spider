@@ -579,8 +579,17 @@
     });
 
     input.addEventListener('input', () => {
+      // ⚠️ 顺序很要紧：**先把这次敲进去的文本读下来，再决定要不要展开**。
+      // openDropdown() 里会 `query = ''` 并 paintOpen()（= 把 input.value 也置空）——
+      // 老写法是「先 openDropdown() 再 query = input.value」，于是第一个字符当场被抹掉，
+      // 读到的永远是空字符串；freeText 跟着也是空，后面 updateOptions() → paintClosed()
+      // 又把输入框回填成空 —— 表现就是「第一个字被吞，且根本没法输入工号」
+      // （2026-09-20 用户实测报的；评委工号那栏同样是"输入即搜"，同病）。
+      const typed = input.value;
       if (!isOpen) openDropdown();
-      query = input.value;
+      query = typed;
+      // paintOpen() 已经按旧 query 渲染过一次，把用户这次输入补回去
+      if (input.value !== typed) input.value = typed;
       // 这是用户明确输入的文本；如果随后不选下拉项，也要在收起后保留。
       if (!selectedValue) freeText = query;
       limit = MAX_RENDER;               // 换了关键字，重新从第一批开始

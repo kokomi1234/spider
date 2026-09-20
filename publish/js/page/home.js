@@ -456,12 +456,27 @@
   }
 
   /** 清掉候选与在途请求（身份变化 / 切换用户时走它） */
-  function resetUserSearch() {
+  /** 只清候选，**不动输入框** —— 「这次输入还不到能搜的长度」时走它 */
+  function clearUserCands() {
     userSearchSeq += 1;
     if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
     userCandMap = {};
     if (userInst) {
-      try { userInst.setValue(''); userInst.updateOptions([]); userInst.close(); } catch (_) { /* 实例已销毁 */ }
+      try { userInst.updateOptions([]); userInst.close(); } catch (_) { /* 实例已销毁 */ }
+    }
+  }
+
+  /**
+   * 连输入一起清 —— **只在身份变化**（设好 / 切人 / 清空）时用。
+   *
+   * ⚠️ 别拿它当"输入不合格"的处理：`setValue('')` 会把输入框内容抹掉，
+   * 而工号的前 1~2 位本来就不满足长度要求 —— 那样每敲一个数字都被清掉，
+   * 表现成「**根本没法输入工号**」（2026-09-20 用户实测报的，我把它当清候选用了）。
+   */
+  function resetUserSearch() {
+    clearUserCands();
+    if (userInst) {
+      try { userInst.setValue(''); } catch (_) { /* 实例已销毁 */ }
     }
   }
 
@@ -503,7 +518,7 @@
     if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
     const kw = userSearchKeyword();
     if (!shouldSearchUser(kw)) {
-      resetUserSearch();
+      clearUserCands();   // 只清候选 —— 绝不动输入框（否则工号敲第一个数字就被抹掉）
       return;
     }
     userSearchTimer = setTimeout(() => {
