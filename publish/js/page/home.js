@@ -224,22 +224,56 @@
       console.error('[home] 读取常用查询失败：', e);
       showToast('读取常用查询失败（本地存储不可用？）', 3500, 'error');
     }
-    paintSaved(items);
+    paintSaved(items, u);
 
     // 本机先落地（离线也能看），再用服务端按工号捞的那份覆盖：
     // 换浏览器 / 换电脑时本机是空的，但记录在共享库里。
     loadMineFromServer(u);
   }
 
-  function paintSaved(items) {
+  /**
+   * 空列表时到底该说什么。
+   *
+   * 别只说"你还没保存过" —— 那句话在下面三种情况下都成立，但用户要做的下一步完全不同：
+   *   ① 本机确实一条都没有              → 去查询页存一条
+   *   ② 有记录但**没带归属人**（owner 空）→ 这些记录谁的「我的」都看不到，得先设好当前用户再重存
+   *   ③ 有归属人的记录但都不是"我"的       → 那就是还没存过，或存的时候身份不是现在这个
+   * 2026-09-20 加：用户报「给郑梓辉存了却还是空」，光看旧文案分不清是哪种。
+   */
+  function emptyHintFor(u) {
+    const S = window.SavedQuery;
+    const who = (u && (u.userName || u.userId)) || '当前用户';
+    let total = 0;
+    let orphan = 0;
+    try {
+      const all = S.list();
+      total = all.length;
+      // 无归属 = owner 取不到 key（存的时候页面没设当前用户，或那页没加载 current-user.js）
+      orphan = all.filter((it) => !S.userKeyOf(it.owner)).length;
+    } catch (_) { /* 读不出来就按 0 说 */ }
+
+    if (!total) {
+      return '你还没有保存过常用查询：到任一查询页填好筛选条件后，点「⭐ 保存到首页」，这里就会出现一键直达的入口。';
+    }
+    if (orphan === total) {
+      return `这台浏览器里存着 ${total} 条常用查询，但它们都没有归属人（保存的时候还没设置当前用户），`
+        + '所以谁的「我的常用查询」里都不会出现。请先在上面设好当前用户，再去查询页重新保存一次。';
+    }
+    if (orphan > 0) {
+      return `这台浏览器里存着 ${total} 条查询，其中 ${orphan} 条没有归属人（不会出现在这里）。`
+        + `属于「${who}」的还没有 —— 到任一查询页点「⭐ 保存到首页」即可。`;
+    }
+    return `这台浏览器里存着 ${total} 条查询，但没有一条属于「${who}」：`
+      + '到任一查询页填好条件后点「⭐ 保存到首页」就会出现。';
+  }
+
+  function paintSaved(items, u) {
     clear(savedListEl);
     items.forEach((it) => savedListEl.appendChild(buildItem(it)));
     const empty = items.length === 0;
     if (savedEmptyEl) {
       savedEmptyEl.hidden = !empty;
-      if (empty) {
-        savedEmptyEl.textContent = '你还没有保存过常用查询：到任一查询页填好筛选条件后，点「⭐ 保存到首页」，这里就会出现一键直达的入口。';
-      }
+      if (empty) savedEmptyEl.textContent = emptyHintFor(u);
     }
     if (savedCountEl) savedCountEl.textContent = empty ? '' : `共 ${items.length} 条`;
   }
@@ -262,7 +296,7 @@
     const now = CU ? CU.get() : null;
     if (!now || String(now.userId || now.userName || '') !== String(u.userId || u.userName || '')) return;
     if (!r || !r.ok || !Array.isArray(r.items)) return;        // 失败就留着本机渲染的结果
-    paintSaved(r.items);
+    paintSaved(r.items, u);
   }
 
   // ══════════════════════════════════════════════════════

@@ -688,6 +688,36 @@ const TWO_ZHANG = [
   { userId: '1002', userName: '张三四', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' },
 ];
 
+test('首页：「我的」为空时要说清是哪一种空（无归属 / 别人的 / 真没有）', () => {
+  // 2026-09-20 加：用户报「给郑梓辉存了却还是空」，光看旧文案分不清是哪种情况，
+  // 而三种情况用户要做的下一步完全不同。
+  const ME2 = { userId: '4711510', userName: '郑梓辉', teamId: 'K4229', teamName: '开发三部' };
+
+  // ① 本机一条都没有 → 就是"还没存过"
+  const a = buildEnv({ currentUser: ME2, items: [] });
+  a.win.HomePage.render();
+  assert.ok(/你还没有保存过常用查询/.test(a.els.savedEmpty.textContent), a.els.savedEmpty.textContent);
+
+  // ② 有记录但**全都没归属人**（owner: null）→ 必须点明"没归属人"这个真原因，
+  //    否则用户会一直重复保存却永远看不到
+  const b = buildEnv({
+    currentUser: ME2,
+    items: [{ id: 'o1', page: 'publish', name: '没归属的', at: 1, owner: null }],
+  });
+  b.win.HomePage.render();
+  assert.ok(/没有归属人/.test(b.els.savedEmpty.textContent), b.els.savedEmpty.textContent);
+  assert.ok(/设好当前用户/.test(b.els.savedEmpty.textContent), '要说清下一步该干什么');
+
+  // ③ 有归属人、但不是"我"的 → 说清"没有一条属于郑梓辉"
+  const c = buildEnv({
+    currentUser: ME2,
+    items: [{ id: 'x1', page: 'publish', name: '别人的', at: 1, owner: OTHER }],
+  });
+  c.win.HomePage.render();
+  assert.ok(/郑梓辉/.test(c.els.savedEmpty.textContent), c.els.savedEmpty.textContent);
+  assert.ok(!/没有归属人/.test(c.els.savedEmpty.textContent), '这条有归属人，不该说成没归属');
+});
+
 test('首页：光输入就出候选（走 searchable-select 组件，不点「查 询」）', async () => {
   const { win, els, selects } = buildEnv({
     currentUser: null,
