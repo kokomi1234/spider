@@ -336,11 +336,11 @@
     <div class="page-header" data-page-node-id="FPYoXuuCWbBl5BcZuPWDmq">
       <h1 data-page-node-id="Vs6PSQHztyrq1Pz3b1FCGl">服务发布数据查询</h1>
       <div class="toolbar" data-page-node-id="1i97TQGjWUfhcJ3s98xG11">
-        <a class="outlined btn-sm" href="/" id="navHome" title="返回首页（三个查询页入口 + 常用查询）">← 首页</a>
+        <a class="outlined btn-sm" href="/" id="navHome">← 首页</a>
         <button class="outlined btn-sm" id="btnSubscribePanel" data-page-node-id="SOtRYG9cXoPuN2nWwAS4BD">已订阅 (0)</button>
         <a class="outlined btn-sm" href="/task" data-page-node-id="navTaskPage">任务单查询</a>
         <a class="outlined btn-sm" href="/subscription">服务订阅关系查询</a>
-        <button class="outlined btn-sm" id="btnTokenManager" title="代理 Token 管理">🔑 Token</button>
+        <button class="outlined btn-sm" id="btnTokenManager">🔑 Token</button>
       </div>
     </div>
 
@@ -349,8 +349,7 @@
       <div class="card-head" data-page-node-id="hxPymJ9K8Vcq74VHnerenY">
         <h2 data-page-node-id="h3Gb5a6EKPqSBH2TGw5MxW">筛选条件</h2>
         <button type="button" class="chevron" id="filterToggle"
-                aria-expanded="true" aria-controls="filterBody"
-                title="展开 / 收起筛选条件" data-page-node-id="EkCLsFLbDjnEOSyrFbVOBk">▼</button>
+                aria-expanded="true" aria-controls="filterBody" data-page-node-id="EkCLsFLbDjnEOSyrFbVOBk">▼</button>
       </div>
       <div class="card-body" id="filterBody" data-page-node-id="uhuc21QWUublfCg3WACHZ1">
         <div class="form-grid" data-page-node-id="74KwzqXAEROJxkABCamTdr">
@@ -368,8 +367,7 @@
           </div>
           <div class="form-group" data-page-node-id="BqgS8Nm8P0HoCqXfiIQb6V">
             <label for="f_checkoutInStatus" data-page-node-id="Z2gM6Eile36yvwzhzidat8">CHECKOUT/IN状态</label>
-            <select id="f_checkoutInStatus" disabled
-                    title="当前版本暂不支持该筛选" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
+            <select id="f_checkoutInStatus" disabled data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
               <option value="" data-page-node-id="eDnxbLswcJilBSqNufn4uh">全部</option>
             </select>
           </div>
@@ -434,7 +432,7 @@
         <div class="filter-actions">
           <button class="filled btn-sm" id="btnQuery" data-page-node-id="vaEGNr3BFuyiYPBT1BJAbB">查 询</button>
           <button class="outlined btn-sm" id="btnReset" data-page-node-id="A5yxcZ2T76YIiWoSLHq21z">重 置</button>
-          <button class="outlined btn-sm" id="btnSaveQuery" title="把当前筛选条件保存到首页，之后可从常用查询一键直达">⭐ 保存到首页</button>
+          <button class="outlined btn-sm" id="btnSaveQuery">⭐ 保存到首页</button>
         </div>
       </div>
     </div>
@@ -450,7 +448,7 @@
             <button id="btnFilterUnsubscribed" data-page-node-id="iqWaA3UYkniD3yxQDmJ0XB">未订阅</button>
             <button id="btnFilterSubscribed" data-page-node-id="wQHUfg8BdqDZbFCMVe2XWT">已订阅</button>
           </div>
-          <button class="filled btn-xs" id="btnExportCsv" title="导出当前筛选结果（全部，不限当前页）">导出 CSV</button>
+          <button class="filled btn-xs" id="btnExportCsv">导出 CSV</button>
 
 
 
@@ -544,12 +542,12 @@
            现补齐页码按钮 + 首页/末页 + 跳页，与订阅页 / 任务单页一致（清单 A5）。
            样式（.page-numbers / .page-jump 等）全在 theme.css，三页共用。 -->
       <nav class="pagination" id="pagination" aria-label="分页" style="display:none;" data-page-node-id="BkUdATmB5ZgBdFTpU5AvhR">
-        <button class="outlined btn-xs" id="btnFirst" title="首页" data-page-node-id="a2FstIdx2026PageHome">« 首页</button>
+        <button class="outlined btn-xs" id="btnFirst" data-page-node-id="a2FstIdx2026PageHome">« 首页</button>
         <button class="outlined btn-xs" id="btnPrev" data-page-node-id="4VrosZipJvq5czA43p1NyU">‹ 上一页</button>
         <!-- 页码按钮：由 PublishView.updatePagination 整体重建，点击走 index.js 的事件委托 -->
         <ul class="page-numbers" id="pageNumbers" data-page-node-id="a2PageNumbersUl"></ul>
         <button class="outlined btn-xs" id="btnNext" data-page-node-id="H61nPrwxbusGOkN6jHvc8y">下一页 ›</button>
-        <button class="outlined btn-xs" id="btnLast" title="末页" data-page-node-id="a2LastIdx2026PageEnd">末页 »</button>
+        <button class="outlined btn-xs" id="btnLast" data-page-node-id="a2LastIdx2026PageEnd">末页 »</button>
         <!-- role=status + aria-live：与同页 #resultCount 同口径，翻页后读屏能念出新的页码 -->
         <span class="page-info" id="pageInfo" role="status" aria-live="polite" data-page-node-id="jolENs2CcYF7y7n4HQ2PLW">第 1 / 1 页</span>
         <span class="page-jump">跳至 <input type="number" id="pageJump" min="1" value="1" aria-label="跳转到页码" data-page-node-id="a2PageJumpInput"> 页</span>
@@ -604,7 +602,7 @@
             </div>
 
             <div class="sub-row">
-              <label for="sub_callerServiceNo" class="req" title="由「调用方系统」自动拼接，选定「关联文档」后会再按文档带出候选">调用方应用系统服务编号</label>
+              <label for="sub_callerServiceNo" class="req">调用方应用系统服务编号</label>
               <select id="sub_callerServiceNo" class="sub-ctl" placeholder="请输入或选择服务编号"></select>
             </div>
 
@@ -625,10 +623,8 @@
           <div class="sub-sec-head">
             <h3 class="sub-sec-title">评委信息</h3>
             <div class="sub-sec-actions">
-              <button type="button" class="outlined btn-xs" id="btnFetchJudges"
-                      title="按当前组件编号 + 调用方系统拉取评委信息（getJudgeInfo）">⤓ 拉取评委</button>
-              <button type="button" class="outlined btn-xs" id="btnSubmitJudges"
-                      title="把下方评委表格提交为订阅评委信息（subscriptionReview）">↑ 提交评委信息</button>
+              <button type="button" class="outlined btn-xs" id="btnFetchJudges">⤓ 拉取评委</button>
+              <button type="button" class="outlined btn-xs" id="btnSubmitJudges">↑ 提交评委信息</button>
               <button type="button" class="outlined btn-xs" id="btnAddJudge">＋ 新增</button>
               <button type="button" class="outlined btn-xs danger" id="btnRemoveJudge">－ 删除</button>
             </div>

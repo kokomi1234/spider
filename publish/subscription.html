@@ -343,8 +343,7 @@
       <div class="card-head">
         <h2>筛选条件</h2>
         <button type="button" class="chevron" id="filterToggle"
-                aria-expanded="true" aria-controls="filterBody"
-                title="展开 / 收起筛选条件">▼</button>
+                aria-expanded="true" aria-controls="filterBody">▼</button>
       </div>
       <div class="card-body" id="filterBody">
         <!-- 常用条件：调用方系统 + 两个批次。其余全部收进「更多筛选项」。 -->
@@ -367,8 +366,7 @@
         <div class="more-head">
           <button type="button" class="chevron" id="btnToggleAdvanced"
                   aria-expanded="false" aria-controls="advancedFields"
-                  style="transform: rotate(-90deg);"
-                  title="展开 / 收起更多筛选项">▼</button>
+                  style="transform: rotate(-90deg);">▼</button>
           <span class="more-head-title">更多筛选项</span>
         </div>
         <div class="form-grid" id="advancedFields" style="display:none;">
@@ -430,7 +428,7 @@
           <span class="filter-required-note">* 调用方系统 / 提供方系统 <b>二选一</b>（至少选一个才能查询）</span>
           <button class="filled btn-sm" id="btnQuery">查 询</button>
           <button class="outlined btn-sm" id="btnReset">重 置</button>
-          <button class="outlined btn-sm" id="btnSaveQuery" title="把当前筛选条件保存到首页，之后一键直达">⭐ 保存到首页</button>
+          <button class="outlined btn-sm" id="btnSaveQuery">⭐ 保存到首页</button>
         </div>
       </div>
     </div>
@@ -450,10 +448,9 @@
         <h2>查询结果</h2>
         <div class="toolbar">
           <span id="resultCount" class="result-count" aria-live="polite"></span>
-          <span id="overdueCount" class="result-count prio-alert" title="仅统计当前页"></span>
-          <button class="outlined btn-xs" id="btnBatchTimeEdit"
-                  title="批量修改近 12 个月各批次的功能测试时间和上线时间">批量修改批次时间</button>
-          <button class="outlined btn-xs" id="btnRefresh" title="重新执行当前查询">刷 新</button>
+          <span id="overdueCount" class="result-count prio-alert"></span>
+          <button class="outlined btn-xs" id="btnBatchTimeEdit">批量修改批次时间</button>
+          <button class="outlined btn-xs" id="btnRefresh">刷 新</button>
         </div>
       </div>
 
@@ -500,8 +497,7 @@
           </colgroup>
           <thead>
             <tr>
-              <th class="col-prio is-sorted" id="thPrio" aria-sort="ascending"
-                  title="优先级 = 距里程碑截止日的紧急程度。四档：逾期（已过截止日，整行标红）/ 紧急（剩余 ≤7 天）/ 临近（剩余 ≤30 天）/ 正常。规则：功能测试基线 = 批次月 −1 的 15 日，正式版基线 = 批次月 15 日；剩余 ≤3 天时优先级本格加粗标红。点击可在 宽松在前 → 默认顺序 → 紧急在前 之间切换排序">
+              <th class="col-prio is-sorted" id="thPrio" aria-sort="ascending">
                 <button type="button" class="th-sort-btn" id="btnSortPrio">优先级<span class="sort-ind" id="prioSortInd">↑</span></button>
               </th>
               <th class="col-st">订阅关系基线状态</th>
@@ -542,7 +538,7 @@
       <nav class="pagination" id="pagination" aria-label="分页" style="display:none;">
         <!-- role=status + aria-live：与同页 #resultCount 同口径，条数变化后读屏能念出来 -->
         <span class="page-total" id="pageTotal" role="status" aria-live="polite">共 0 条</span>
-        <select id="pageSizeSelect" class="page-size-select" title="每页条数">
+        <select id="pageSizeSelect" class="page-size-select">
           <option value="10">10 条/页</option>
           <option value="50">50 条/页</option>
           <option value="100">100 条/页</option>

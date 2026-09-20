@@ -85,7 +85,6 @@
     function paintLabel() {
       const picked = list.filter((o) => selected.has(o.value)).map((o) => o.label);
       display.value = picked.length ? picked.join('、') : '';
-      display.title = display.value;
     }
 
     function renderList() {

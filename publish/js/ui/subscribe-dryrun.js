@@ -568,7 +568,6 @@
     const el = document.createElement('div');
     el.id = 'dryrunBadge';
     el.setAttribute('role', 'status');
-    el.title = '点击关闭预演模式（关闭后写请求不再被拦截）';
     el.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:3000;padding:8px 14px;'
       + 'border-radius:999px;font:12px/1.4 var(--font-sans,system-ui,sans-serif);'
       + 'background:#FAEEDA;color:#633806;border:1px solid #BA7517;cursor:pointer;user-select:none';

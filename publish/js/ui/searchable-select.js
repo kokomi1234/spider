@@ -105,9 +105,10 @@
     input.spellcheck = false;
     if (disabled) input.disabled = true;
     // 可访问名称：页面上的 label 指的是被隐藏的那个宿主，传不到这个新建的框上，
-    // 所以显式把字段名写上来（取不到名字就不写，免得留一个空 aria-label）
+    // 所以显式把字段名写上来。2026-09-21 起 title 全删（用户要求），这里成了唯一的
+    // 可访问名来源 —— **必须始终有值**（宿主名兜不到就用占位文案），且 paint 阶段不再改动。
     const hostName = accessibleNameOf(targetEl, opts);
-    if (hostName) input.setAttribute('aria-label', hostName);
+    input.setAttribute('aria-label', hostName || '搜索选择');
 
     const arrow = document.createElement('span');
     arrow.className = 'searchable-select-arrow';
@@ -197,9 +198,6 @@
       // 组字期间程序化改 value 会把输入法直接踢出去，拼音变裸英文字母（2026-09-20 晚实测）。
       if (!isComposing) input.value = display;
       input.placeholder = basePlaceholder;
-      // 超长值在窄下拉里只剩省略号（清单 C10）：把完整值写进 title，
-      // 鼠标悬停即可看到全文，不必先展开面板再找。
-      input.title = display;
       input.classList.toggle('has-value', !!display);
       updateClearBtnVisibility();
     }
@@ -208,7 +206,6 @@
     function paintOpen() {
       if (!isComposing) input.value = query;   // 同上：组合态不动 value
       input.placeholder = selectedLabel() || basePlaceholder;
-      input.title = selectedLabel() || query;
       input.classList.remove('has-value');
     }
 

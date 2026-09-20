@@ -2,15 +2,19 @@
 
 > 给所有进入本项目的 AI Agent（Qoder / Cursor / Copilot / WorkBuddy 等）：**启动即读本文件**。
 > 这里只规定**协同、分工、防冲突、交付门禁**；项目自身的代码规范与踩坑记录不在这里重复一遍，
-> 见下面「先读什么」。发现本文件与那些约定冲突时，以 `.workbuddy/memory/MEMORY.md` 为准，并把冲突写进 `CHANGELOG.md` 待评审。
+> 见下面「先读什么」。发现本文件与那些约定冲突时，以根目录 `memory.md` 为准，并把冲突写进 `CHANGELOG.md` 待评审。
 
 ## 0. 先读什么（顺序固定，别跳）
 
 1. `CHANGELOG.md` —— 现在谁锁着哪些文件、上一个 Agent 做到哪、遗留什么。**动手前必读。**
-2. `.workbuddy/memory/MEMORY.md` —— 跨会话长期约定与铁律（字段口径、控件契约、脚本顺序、时区、订阅语义…）。
-3. `TODO.md` —— 待办与「刻意没做/做不了」的原因；每条都写了目标·卡点·需要什么，**别重复判断一遍**。
-4. `ONBOARDING.md` / `publish/README.md` —— 上手与运行方式。
-5. 当日流水 `.workbuddy/memory/YYYY-MM-DD.md` —— 今天的现场。
+2. **`memory.md`（仓库根，2026-09-21 起）** —— **跨 Agent 共享记忆的唯一入口**（用户直接拍板的约定与铁律：
+   界面不写提示文字、数据口径、控件契约、分支/发布/工具坑…）。它**随仓库走**（入库、随交付包发），
+   任何 Agent / 任何机器 clone 下来都能看到。**与任何旧约定冲突时以它为准。**
+3. `.workbuddy/memory/MEMORY.md` —— WorkBuddy 本机的跨会话补充（细节与「为什么」）；
+   与 `memory.md` 冲突时以 `memory.md` 为准，并把冲突写进 `CHANGELOG.md`。
+4. `TODO.md` —— 待办与「刻意没做/做不了」的原因；每条都写了目标·卡点·需要什么，**别重复判断一遍**。
+5. `ONBOARDING.md` / `publish/README.md` —— 上手与运行方式。
+6. 当日流水 `.workbuddy/memory/YYYY-MM-DD.md` —— 今天的现场。
 
 ## 0.5 分支约定（2026-09-20 起，两条线）
 
