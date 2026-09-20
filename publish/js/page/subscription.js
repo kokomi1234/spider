@@ -874,7 +874,11 @@
     if (!SQ) return;
     const id = new URLSearchParams(location.search).get('saved');
     if (!id) return;
-    const item = SQ.get(id);
+    // 2026-09-21：getAsync —— 镜像（只含「我的」）没命中就去服务端按 id 捞。
+    // 部门常用查询的卡片多半是**同事**存的，不在本机镜像里：这里如果用同步
+    // SQ.get(id) 会静默拿不到 → 不回填 → 页面照常跑默认查询，看起来就是
+    // 「点了部门卡却没填条件就查询了」（有概率 = 点到自己的查询则成功）。
+    const item = await SQ.getAsync(id);
     if (!item || !item.fields) return;
     const f = item.fields;
 
