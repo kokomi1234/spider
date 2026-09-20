@@ -8,17 +8,15 @@
 ## 📌 当前锁定
 
 ```
-【锁定】analysis/output/*.md|json、publish/js/ui/subscribe-*.js、publish/js/{api,page,data}/*、
-        publish/tests/*.test.js、publish/index.html、docs/archive/修复状态核查-2026-09-18.md
-        —— 处理者：主会话（等用户定合成夹具命名）；任务：**扩大后的实测范围**——入库文件里含
-        **真实同事姓名 6 个 / 工号 5 个 / 真实部门全称 2 个 / 真实任务单号 4 个**（字面值一律不在这里复述，
-        完整清单用 /tmp/inv2.js 可重跑）。分布：测试夹具与断言、`analysis/output/` 的生成文档
-        （openapi.json + 3 份接口 md，由 analysis/har2doc.py 从 HAR 生成，**改文件必须同时改生成脚本**，
-        否则下次重新生成就漏回去）、`subscribe-dryrun.js` 的场景样例、若干代码注释与 index.html 占位文案。
-        已确认**不是**真实数据的：张三/李四/王五/赵六（既有合成占位）、1234567、M-202606-00001、
-        以及 3600000（毫秒常量）、2373777（theme.css 数值）这类误报。
-        ⚠️ 已核对：凭证字面值（token/Cookie/ssopSessionId/Authorization）**没有**进入任何入库文件。
+【状态：无锁定】任何 Agent 可认领文件。
 ```
+
+> **2026-09-20 决定：不做脱敏**（上一条锁定的结论）。本仓库是**内网自用**，
+> 入库文件里的同事姓名/工号/部门码/任务单号**不算泄露**，不要主动去"帮忙脱敏"
+> （我照错误假设改了 24 个文件、289 处，已整体撤回）。
+> **仍然有效的红线只有一条：凭证类字面值 —— token / Cookie / ssopSessionId / Authorization
+> 一律不得进入任何入库文件**（已扫过：233 个跟踪文件 0 命中，保持这样）。
+> 另注意 `.env`、`publish/cache/`、`analysis/har/` 依然不入库，那是凭证与原始报文的问题，与姓名无关。
 
 <!-- 锁定行格式（一次任务一条，改完删除）：
 【锁定】publish/js/page/publish.js, publish/js/core/api-client.js
