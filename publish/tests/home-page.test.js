@@ -810,38 +810,32 @@ test('角标：还没同步过时不显示（首屏不该闪一个假的「仅�
   assert.strictEqual(els.savedSync.textContent, '');
 });
 
-test('角标：已同步 → 「已同步 · 库内 N 条」+ is-shared（这个数是全库的，必须写明，别被读成「我的」）', () => {
+test('角标：已同步 → 只显示「已同步」+ is-shared，不显示计数、不弹长提示（2026-09-21 用户拍板）', () => {
   const { els } = buildEnv({
     items: [],
     syncState: { state: 'shared', total: 12, file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 4, at: Date.now() },
   });
   assert.strictEqual(els.savedSync.hidden, false);
-  assert.strictEqual(els.savedSync.textContent, '已同步 · 库内 12 条');
+  assert.strictEqual(els.savedSync.textContent, '已同步');
   assert.strictEqual(els.savedSync.className, 'sync-state is-shared');
-  assert.ok(/saved-queries\.db/.test(els.savedSync.title), 'title 要含库文件：' + els.savedSync.title);
-  assert.ok(/SQLite/.test(els.savedSync.title), 'title 要说清存储类型');
-  assert.ok(/4 个/.test(els.savedSync.title), 'title 要带上保存者人数');
+  assert.strictEqual(els.savedSync.title, '', '提示文字全删：悬停不该再弹一大坨');
 });
 
-test('角标：仅本机 → 「仅本机」+ is-local，title 讲清「同事的看不到」和怎么才能看到', () => {
+test('角标：仅本机 → 「仅本机」+ is-local，无 title 提示', () => {
   const { els } = buildEnv({ items: [], syncState: { state: 'local', total: 3, at: Date.now() } });
   assert.strictEqual(els.savedSync.textContent, '仅本机');
   assert.strictEqual(els.savedSync.className, 'sync-state is-local');
-  assert.ok(/同事的看不到/.test(els.savedSync.title), els.savedSync.title);
-  assert.ok(/只跑一份代理/.test(els.savedSync.title), '要给出可操作的下一步：' + els.savedSync.title);
-  // 别把人往「多个进程各写同一个库文件」上引 —— 实测那样会 database is locked 且真丢记录
-  assert.ok(!/指到双方都能访问的文件/.test(els.savedSync.title), els.savedSync.title);
+  assert.strictEqual(els.savedSync.title, '');
 });
 
-test('角标：同步失败 → 「同步失败」+ is-fail，title 带上失败原因（不是笼统一句「失败」）', () => {
+test('角标：同步失败 → 「同步失败」+ is-fail，无 title 提示', () => {
   const { els } = buildEnv({
     items: [],
     syncState: { state: 'fail', total: 0, error: '同步失败：HTTP 500', at: Date.now() },
   });
   assert.strictEqual(els.savedSync.textContent, '同步失败');
   assert.strictEqual(els.savedSync.className, 'sync-state is-fail');
-  assert.ok(/HTTP 500/.test(els.savedSync.title), els.savedSync.title);
-  assert.ok(/这台浏览器里存过的记录/.test(els.savedSync.title), '还要说明现在看到的是哪一份');
+  assert.strictEqual(els.savedSync.title, '');
 });
 
 test('角标：同步状态一变就自己刷新，不需要重画整页', () => {
@@ -849,7 +843,7 @@ test('角标：同步状态一变就自己刷新，不需要重画整页', () =>
   assert.strictEqual(els.savedSync.hidden, true);
   sq._emitSync({ state: 'shared', total: 5, file: '/srv/x.db', at: Date.now() });
   assert.strictEqual(els.savedSync.hidden, false, '回调到了就该显示');
-  assert.strictEqual(els.savedSync.textContent, '已同步 · 库内 5 条');
+  assert.strictEqual(els.savedSync.textContent, '已同步');
 });
 
 test('角标：回到 pending 要清掉上一次的残留（文案/类名/title 都不能留）', () => {
@@ -858,11 +852,11 @@ test('角标：回到 pending 要清掉上一次的残留（文案/类名/title 
   // 新建的假元素 textContent 本来就是空串，必须先把脏数据写进去才能验「清没清」。
   sq._emitSync({ state: 'shared', total: 9, file: 'x.db', storage: 'sqlite', at: Date.now() });
   assert.strictEqual(els.savedSync.hidden, false);
-  assert.ok(els.savedSync.textContent && els.savedSync.title, '前置：先有残留');
+  assert.ok(els.savedSync.textContent, '前置：先有残留');
   sq._emitSync({ state: 'pending', total: 0, file: '', storage: '', at: 0 });
   assert.strictEqual(els.savedSync.hidden, true);
   assert.strictEqual(els.savedSync.textContent, '', '文案要清掉');
-  assert.ok(!els.savedSync.title, 'title 也要清掉，否则悬停还会读到旧的库文件');
+  assert.ok(!els.savedSync.title, 'title 也要清掉，否则悬停还会读到旧的');
 });
 
 test('角标：存储层没给 lastSyncState（旧版替身）时安静跳过，不抛', () => {

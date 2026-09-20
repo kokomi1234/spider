@@ -330,15 +330,6 @@
   // 判断（哪个状态、算不算故障）留在 js/ui/saved-query.js 的 recordSync 里，
   // 这样三个查询页和本机视图看到的是同一套口径。
 
-  /** 多久之前：只用于「最近同步于…」这类提示，避免把时区/格式问题引进标题里 */
-  function agoLabel(ms) {
-    if (!Number.isFinite(ms) || ms < 0) return '很久之前';
-    if (ms < 5000) return '刚刚';
-    if (ms < 60000) return `${Math.floor(ms / 1000)} 秒前`;
-    if (ms < 3600000) return `${Math.floor(ms / 60000)} 分钟前`;
-    return `${Math.floor(ms / 3600000)} 小时前`;
-  }
-
   function renderSync() {
     if (!savedSyncEl) return;
     const S = window.SavedQuery;
@@ -347,38 +338,18 @@
     if (!st || st.state === 'pending') {
       savedSyncEl.hidden = true;
       savedSyncEl.textContent = '';
-      savedSyncEl.title = '';   // 用赋值而不是 removeAttribute：假 DOM 里两者不是同一份存储
+      savedSyncEl.title = '';
       return;
     }
 
-    const ago = agoLabel(Date.now() - (Number(st.at) || 0));
-    let text = '';
-    let title = '';
-    if (st.state === 'shared') {
-      // total 是**整个团队库**的条数，而下面的列表按当前用户过滤 —— 两者口径不同，
-      // 所以这里必须写明「库内」，否则换个人就会被读成「条数还是上一个用户的」（2026-09-20 用户报的）。
-      text = `已同步 · 库内 ${Number(st.total) || 0} 条`;
-      title = [`正与共享库同步（${ago}）`, `库文件：${st.file || '（代理未告知）'}`];
-      if (st.storage) title.push(`存储：${st.storage === 'sqlite' ? 'SQLite' : st.storage}`);
-      if (Number(st.people) > 0) title.push(`保存过查询的人：${st.people} 个`);
-      title.push('这个数是全库条数；下面的列表只显示你保存的那些');
-    } else if (st.state === 'fail') {
-      text = '同步失败';
-      title = [`这次没能与共享库同步（${ago}）`, `原因：${st.error || '未知错误'}`, '现在看到的是这台浏览器里存过的记录'];
-    } else {
-      text = '仅本机';
-      title = ['没连上共享库', st.error ? `原因：${st.error}` : '静态部署或代理没提供这个端点',
-        '现在看到的是这台浏览器里存过的记录，同事的看不到',
-        // 口径（2026-09-19 定）：**一份代理大家连**，而不是多人各写同一个库文件 ——
-        // 后者实测会 database is locked 并真丢记录。代理默认只绑 127.0.0.1，
-        // 要跨机器连同一份得显式设 PROXY_HOST + PROXY_ADMIN_TOKEN（见 shared/README.md）。
-        '想互相看到：只跑一份代理、大家连它（跨机器时设 PROXY_HOST=0.0.0.0 + PROXY_ADMIN_TOKEN）；'
-        + '单机对不上就用上面的「导 出 / 导 入」交换'];
-    }
+    // 2026-09-21 用户拍板：角标只留状态词。
+    // · 提示文字（title 长串）全删 —— 悬停就弹一大坨，干扰大于帮助；
+    // · 「库内 N 条」计数也删 —— 它只在写操作后更新，常常是旧的（用户报「刷新不及时」），
+    //   而且架构改版后同步响应里的 total 已经变成「我的条数」，再标「库内」就是错口径。
     savedSyncEl.hidden = false;
     savedSyncEl.className = `sync-state is-${st.state}`;
-    savedSyncEl.textContent = text;
-    savedSyncEl.title = title.join('\n');
+    savedSyncEl.textContent = st.state === 'shared' ? '已同步' : (st.state === 'fail' ? '同步失败' : '仅本机');
+    savedSyncEl.title = '';
   }
 
   // ══════════════════════════════════════════════════════
@@ -814,6 +785,11 @@
   // 不在各个写入口分别接线：那样只要有人新增一条写路径就会漏掉，角标又变成旧的。
   if (window.SavedQuery && typeof window.SavedQuery.onSyncStateChange === 'function') {
     window.SavedQuery.onSyncStateChange(renderSync);
+  }
+  // 首屏主动同步一次：角标和「我的」列表要及时反映共享库现状，
+  // 不能等第一次写操作才有状态（2026-09-21 用户报「刷新不及时」）。
+  if (window.SavedQuery && typeof window.SavedQuery.syncFromServer === 'function') {
+    window.SavedQuery.syncFromServer();
   }
 
   if ($('#btnExportQueries')) $('#btnExportQueries').addEventListener('click', exportQueries);
