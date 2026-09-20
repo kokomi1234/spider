@@ -30,6 +30,34 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 12:35] Agent-Dev（主会话，第七批）
+
+**当前分支**：`dev`。
+
+**任务**：按用户要求，把首页「当前用户」从上一轮自写的下拉**改成复用** `js/ui/searchable-select.js`
+（与评委栏同一套组件）—— 用户原话：「用 `as="searchable-select"` 的自定义元素……原生 select 的那种下拉」。
+
+**改动面**：`index.html`（宿主换 `<select>`、补 `<script>`、清掉旧的输入框/候选样式）、
+`js/page/home.js`（删自写下拉，改走组件的 `updateOptions` / `setBusy` / `open` + 宿主 `change`）、
+`js/core/bootstrap.js`（PRESETS 登记）、`tests/home-page.test.js`（假 DOM 补能力 + 组件替身 + 用例重写）、
+`tests/smoke-browser.js`（改用真实键盘驱动 + 部门那段跟着改）。
+
+**门禁原话**：`node tests/run.js` → `595/595 通过`；`node tests/smoke-browser.js` →
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**踩到的三个坑（下一个 Agent 别重踩）**
+1. **输入即搜的监听要绑组件内部那个输入框**（`.searchable-select .searchable-select-input`），
+   别照抄评委行「绑宿主容器 + capture」的写法 —— 那套在**真浏览器里实测没送达**：
+   面板会被打开、但候选永远是空的。评委那边能用，是因为它的行会被动态重建。
+2. **搜索词别读输入框的 `value`**：组件会在「选中回填 label / 清空」时动它，实测读到过空串，
+   于是搜索永远不触发。要用组件的 `getFreeText()`。
+3. **冒烟驱动组件必须用真实键盘**（`page.type`）：`evaluate` 里 `dispatchEvent('input')`
+   到不了组件内部那条路径。而且**清场（`HomePage.render()`）必须放在打字之前** ——
+   `renderUser → resetUserSearch` 会把输入和候选一起重置，放后面就等于把刚敲的字清掉
+   （本轮在这上面绕了好几轮排查）。
+
+**下一步**：无锁定。
+
 ### [2026-09-20 02:55] 主会话：协作方式改成单写者
 
 **规则**（已写进 `AGENTS.md` §1）：同一时间整个仓库只允许一路 Agent 写，另一路只读；不许 `git checkout`/`switch`、不许跑全量门禁。分支不隔离工作树，所以"再开一条分支"没用；真要并行用 `git worktree`，但那会让本看板变成两份、锁失效 —— 用户选了单写者。
