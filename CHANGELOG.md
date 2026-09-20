@@ -30,6 +30,33 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-21 01:55] Agent-Review（代理端只读测试，分支 `workbuddy/dev-e2d2ccd2`）
+
+**性质：只读任务，未改任何业务代码。** 用户要求「再测试一下代理端」。
+
+**交付物**：`docs/代理端测试报告-20260921.md`（约 65 项被测项 + 3 个问题）。
+
+**结论摘要（下一个 Agent 别重新判断）**
+- **代理功能面无缺陷**：路由、静态服务（含 3 种编码的目录穿越防护）、管理端点、
+  `/local/batch-times` 按键合并、`/local/saved-queries`（?user= / ?dept= / 墓碑防复活 / 幂等）、
+  离线回放 exact/loose/404、内网不可达 502、并发 20 写不丢、原子写无 `.tmp` 残留 —— 全绿。
+- **唯一值得动手的是文档**：`shared/README.md` 与 `publish/README.md` 都没写 WAL 这个坑。
+  实测 `q3057.db` 主库 4KB、`-wal` 1.79MB，**只拷 `.db` 打开是 `no such table: saved_queries`**
+  （连表都没有，数据 100% 丢）。代理被 kill 后 WAL 也还在、主库仍未 checkpoint。
+  **已有正确兜底**：`tools/backup-queries-db.js` 走 `VACUUM INTO`，产出 836KB 自包含文件
+  （孤立拷贝仍读到 4023 行 + 1 墓碑 + 10 人）—— 脚本是对的，**缺的是文档没引导人去用它**。
+- 另外两个：`/local/saved-queries` 超 2000 条截断**静默**（响应无 truncated 字段，前端 toast 会偏大）；
+  `/admin/token/status` 回显 `.env` 绝对路径（内网自用可接受，仅记录、不建议改）。
+
+**测试姿势（下次照抄，省时间）**
+- 起两个实例对比：A=`PROXY_OFFLINE=1` + 真实缓存；B=非离线 + 空缓存（专测 502 与 `/cache/clear`）。
+- **必须设 `PROXY_ENV_PATH` 指向临时文件**：`POST /admin/token` 会写 `.env`，默认路径就是项目根 `.env`。
+- **`PROXY_QUERIES_DB` / `PROXY_BATCH_TIMES_FILE` / `PROXY_QUERIES_FILE` 都要指到临时目录**，
+  否则会写脏 `shared/saved-queries.db`。
+- `/cache/clear` 只对空缓存实例打，别对着真实录制的那台。
+
+**下一步**：**等用户确认后再动手**。建议只做 P1（补文档），P2 可选，P3 不动。无锁定。
+
 ### [2026-09-21 01:45] Agent-Review（只读全量测试，分支 `workbuddy/dev-e2d2ccd2`）
 
 **性质：只读任务，未改任何业务代码。** 用户要求「先拉最新 → 全量测前端 → 只报问题，等我确认再改」。
