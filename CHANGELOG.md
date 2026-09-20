@@ -30,6 +30,34 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 13:45] Agent-Dev（主会话，第八批）
+
+**当前分支**：`dev`。
+
+**任务**：用户拍板「安全面的不用管、之前加的安全方面的考虑也可以去掉」→ ① 修 `/local/batch-times`
+的三个问题；② 去掉 `PROXY_ADMIN_TOKEN` 鉴权。
+
+**改动面**：`publish/proxy.js`（batch-times 重写 + 删 7 处 token 检查 + 顶部注释 / 启动日志）、
+`publish/js/page/subscription-batch-times.js`、`publish/js/ui/priority.js`（注释）、
+`publish/README.md`、`AGENTS.md`（保护清单）、`publish/tests/token-manager.test.js`（测试名）、`.gitignore`。
+
+**门禁原话**：`595/595 通过`；`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**关键结论（下一个 Agent 别重新判断）**
+- **`/local/batch-times` 以前是"整份覆盖"**：页面发的是它手上那份完整 `batchTimes`，而多个人
+  可能同时在改**不同批次** —— 后保存的那份会把先保存的整份盖掉，甲的改动凭空消失。
+  现在改成**按键合并**（读旧文件铺底 + 本次的键覆盖同名键）。
+  实测：甲改 2609、乙改 2611 → 读回来**两条都在**（旧实现只剩 2611）。
+- **落盘文件从 `publish/config/` 搬到 `shared/batch-times.json`**（+ `PROXY_BATCH_TIMES_FILE`
+  环境变量、首次使用时自动迁移旧文件）。`config/` 在**代码目录**里，重新部署会被新包里的
+  空文件盖掉。老文件保留当备份（与 `saved-queries.json` 的迁移同一手法）。
+- 写入改 **`.tmp` + rename 原子写**，与 saved-queries 的 JSON 分支口径对齐。
+- ⛔ **`PROXY_ADMIN_TOKEN` 已整体删除，别再恢复**：7 处检查全去掉、启动日志同步。
+  前提是「一台部署 + 内网自用」，用户明确要求去掉。想收窄只能设 `PROXY_HOST=127.0.0.1`。
+- **保留**目录穿越防护（`serveStatic` 里那条）—— 那是**基本正确性**，不属于"收紧安全默认"。
+
+**下一步**：无锁定。
+
 ### [2026-09-20 13:07] 主会话（发布 stable-20260920-2）
 
 **动作**：dev 上跑全门禁（`595/595 通过` + `ALL PASS`）→ `git checkout main && git merge --ff-only dev`
@@ -100,9 +128,12 @@
 `publish/tests/proxy-env-order.test.js`（那条策略断言跟着翻转 + 删掉一句我自己写的恒真假断言）、
 `.env.example`、`publish/README.md`。
 
-**这是知情的选择，别回退**：不设 `PROXY_ADMIN_TOKEN` 时 `/local/*`、`/cache/*` 不鉴权且 CORS 是 `*`
-—— 同网段任意主机、以及任意人浏览器里打开的任意网页都能读改删这份团队库。
-**下一个 Agent 不要"顺手加回安全默认"**；要收紧由用户自己设 `PROXY_HOST=127.0.0.1` 或 `PROXY_ADMIN_TOKEN`。
+**这是知情的选择，别回退**：`/local/*`、`/cache/*` 不鉴权且 CORS 是 `*` —— 内网自用、一台部署，
+这是用户拍板的。
+**2026-09-20 13:45 进一步：`PROXY_ADMIN_TOKEN` 那层 token 校验已整体删除**（`/cache/*`、`/admin/*`、
+`/local/*` 的 7 处检查全去掉，启动日志同步）—— 也就是说**现在没有任何"收紧开关"了**，
+要收窄只能设 `PROXY_HOST=127.0.0.1`（只绑本机）。
+**下一个 Agent 不要"顺手加回安全默认"**，也别去恢复 token 机制。
 防线已把"默认必须是 `0.0.0.0`"钉进单测（变异检验过：改回回环即变红）。
 
 **门禁原话**：`595/595 通过`；`==== 结果: ALL PASS (静态加载/接线无报错) ====`。实测过启动横幅与端口绑定。
