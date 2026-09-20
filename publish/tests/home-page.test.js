@@ -51,10 +51,24 @@ function fakeEl(tag) {
     removeEventListener() {},
     click() { (this.listeners.click || []).slice().forEach((fn) => fn({ target: this })); },
     focus() {},   // 真实 DOM 有；缺了会让「切换用户」这类回调抛 TypeError
-    querySelector(sel) { return findIn(this, (e) => e.id === String(sel).replace(/^[#.]/, '')); },
+    // 支持 #id / .class /「A B」复合（组件那侧用 `.searchable-select .searchable-select-input`）。
+    // 假 DOM 不分层，一律拿最后一段当条件 —— 够用，也免得为了一个选择器把整棵树的语义做出来。
+    querySelector(sel) {
+      const last = String(sel).trim().split(/\s+/).pop() || '';
+      if (last.startsWith('#')) return findIn(this, (e) => e.id === last.slice(1));
+      if (last.startsWith('.')) {
+        const cls = last.slice(1);
+        return findIn(this, (e) => String(e.className || '').split(/\s+/).includes(cls));
+      }
+      return findIn(this, (e) => e.id === last);
+    },
   };
   Object.defineProperty(el, 'firstChild', {
     get() { return this.children.length ? this.children[0] : null; },
+  });
+  // 真实 DOM 的 parentElement：组件与 home.js 都用它找「宿主容器」
+  Object.defineProperty(el, 'parentElement', {
+    get() { return this.parent || null; },
   });
   Object.defineProperty(el, 'innerHTML', {
     get() { return this._innerHTML; },
@@ -199,12 +213,14 @@ function buildEnv(opts = {}) {
   const userLabel = mk('userLabel');
   const userDept = mk('userDept');
   const userForm = mk('userForm'); userForm.hidden = false;
-  const userClear = mk('btnUserClear', 'button');
-  const userKeyword = mk('userKeyword', 'input');
-  const userCands = mk('userCands');
   const userHint = mk('userHint');
   const btnUserSearch = mk('btnUserSearch', 'button');
   const btnUserChange = mk('btnUserChange', 'button');
+  // 「当前用户」现在是 searchable-select 的宿主 <select>：**必须挂在父节点下** ——
+  // 组件和 home.js 都靠 parentElement 找「宿主容器」，再往里插真正的输入框。
+  const userField = mk('userField'); userField.className = 'home-field';
+  const userKeyword = mk('userKeyword', 'select');
+  userField.appendChild(userKeyword);
   const deptTitle = mk('deptTitle');
   const deptList = mk('deptList');
   const deptEmpty = mk('deptEmpty');
@@ -212,10 +228,10 @@ function buildEnv(opts = {}) {
 
   const els = {
     savedList, savedEmpty, savedCount, savedSync,
-    userSet, userAvatar, userLabel, userDept, userForm, userKeyword, userCands, userHint, btnUserSearch, btnUserChange,
-    // 注意：fakeDocument 是按 id 取元素的，key 必须和元素 id 完全一致，
-    // 写成 userClear 就取不到 #btnUserClear（表现是回调静默不执行、断言拿到 undefined）
-    btnUserClear: userClear,
+    userSet, userAvatar, userLabel, userDept, userForm, userKeyword, userHint, btnUserSearch, btnUserChange,
+    // 注意：fakeDocument 是按 id 取元素的，key 必须和元素 id 完全一致 ——
+    // 拼错（如写成 userField 却在 HTML 里叫别的）不会报错，只会静默拿到 undefined
+    userField,
     deptTitle, deptList, deptEmpty, deptTopN,
   };
   const doc = fakeDocument(els);
@@ -241,6 +257,46 @@ function buildEnv(opts = {}) {
   };
   if (opts.loadSavedQuery !== false) win.SavedQuery = sq;
 
+  // 假的 searchable-select 组件（真组件在假 DOM 上跑不起来）：按真实行为造最小结构 ——
+  // 在宿主父节点里插一个 .searchable-select 容器 + .searchable-select-input 输入框
+  // （home.js 正是靠这个选择器找"真输入框"），并记录 updateOptions / setBusy 的调用。
+  const selects = [];
+  win.createSearchableSelect = (host, options, o) => {
+    const parent = host && host.parentElement;
+    let box = null;
+    if (parent) {
+      const wrap = fakeEl('div');
+      wrap.className = 'searchable-select';
+      box = fakeEl('input');
+      box.className = 'searchable-select-input';
+      wrap.appendChild(box);
+      parent.appendChild(wrap);
+    }
+    const inst = {
+      host,
+      opts: o || {},
+      box,
+      options: Array.isArray(options) ? options.slice() : [],
+      busy: '',
+      _open: false,
+      value: '',
+      label: '',
+      free: '',
+      updateOptions(list) { inst.options = Array.isArray(list) ? list.slice() : []; },
+      setBusy(t) { inst.busy = String(t || ''); },
+      isOpen() { return inst._open; },
+      open() { inst._open = true; },
+      close() { inst._open = false; },
+      getValue() { return inst.value; },
+      getLabel() { return inst.label; },
+      getFreeText() { return inst.free; },
+      setValue(v) { inst.value = String(v || ''); inst.label = ''; },
+      destroy() {},
+    };
+    selects.push(inst);
+    return inst;
+  };
+
   // 可控的当前用户：null = 未设置
   const cuState = { user: cu };
   win.CurrentUser = {
@@ -264,7 +320,7 @@ function buildEnv(opts = {}) {
   // 定时器要显式注入：沙箱里没有它们，而「输入即搜」的防抖真会调用（setTimeout/clearTimeout）
   loadScript('js/page/home.js', { document: doc, setTimeout, clearTimeout }, win);
 
-  return { win, doc, els, sq, toasts, ls, cuState };
+  return { win, doc, els, sq, toasts, ls, cuState, selects };
 }
 
 /** 在 savedList 子树里按 data-id 找卡片 */
@@ -519,15 +575,16 @@ test('当前用户：已设置时显示身份条（头像/姓名工号/部门）
   assert.ok(/开发三部/.test(els.deptTitle.textContent), '标题要写明是哪个部门（teamName 优先于 orgName）');
 });
 
-test('当前用户：未设置时清空身份条、显示表单，且不显示清空按钮', () => {
-  const { win, els } = buildEnv({ currentUser: null, items: [] });
+test('当前用户：未设置时清空身份条、显示表单，并建好可搜索下拉', () => {
+  const { win, els, selects } = buildEnv({ currentUser: null, items: [] });
   win.HomePage.render();
   assert.strictEqual(els.userSet.hidden, true, '未设置时身份条必须隐藏（hidden 不能被 display 盖掉）');
   assert.strictEqual(els.userForm.hidden, false);
   assert.strictEqual(els.userLabel.textContent, '');
   assert.strictEqual(els.userDept.textContent, '');
   assert.strictEqual(els.userAvatar.textContent, '');
-  assert.strictEqual(els.btnUserClear.hidden, true, '输入框空着时不该出现清空按钮');
+  // 「清空输入」的 ✕ 现在归组件管（不再有自己的按钮）：这里只确认组件建了起来
+  assert.ok(selects[0], '可搜索下拉组件要建在这个 <select> 上');
 });
 
 test('部门排行：只列本部门的记录，且是只读视图（无重命名/删除）', () => {
@@ -608,15 +665,22 @@ test('切换用户：清空当前用户后回到输入表单', () => {
 // 由冒烟那一侧钉住（tests/smoke-browser.js 的「当前用户候选下拉」）；
 // 这里守的是**纯逻辑**：什么输入才发请求、下拉该不该开、键盘选中谁。
 
-/** 造一次「用户输入」：改 value 再叫一遍 input 监听器（假 DOM 没有 dispatchEvent） */
-function typeInto(els, value) {
-  els.userKeyword.value = value;
-  (els.userKeyword.listeners.input || []).forEach((fn) => fn({ target: els.userKeyword }));
+/**
+ * 组件内部那个真输入框（home.js 靠 `.searchable-select .searchable-select-input` 找它）。
+ * 宿主 <select> 是隐藏的，用户真正打字的是这个框。
+ */
+function userBox(els) {
+  const wrap = els.userField.children
+    .find((c) => String(c.className || '').split(/\s+/).includes('searchable-select'));
+  return wrap ? wrap.children[0] : null;
 }
 
-/** 造一次按键；假 DOM 没有 KeyboardEvent，直接叫 keydown 监听器 */
-function pressOn(els, key) {
-  (els.userKeyword.listeners.keydown || []).forEach((fn) => fn({ key, preventDefault() {} }));
+/** 造一次「用户输入」：写进真输入框，再叫一遍 input 监听器（假 DOM 没有 dispatchEvent） */
+function typeInto(els, value) {
+  const box = userBox(els);
+  box.value = value;
+  // home.js 把 input 监听**直接挂在组件内部那个输入框上**（不再挂宿主容器上用 capture 兜）
+  (box.listeners.input || []).forEach((fn) => fn({ target: box }));
 }
 
 const TWO_ZHANG = [
@@ -624,52 +688,46 @@ const TWO_ZHANG = [
   { userId: '1002', userName: '张三四', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' },
 ];
 
-test('首页：光输入就出候选下拉（不用点「查 询」）', async () => {
-  const { win, els } = buildEnv({
+test('首页：光输入就出候选（走 searchable-select 组件，不点「查 询」）', async () => {
+  const { win, els, selects } = buildEnv({
     currentUser: null,
     lookupResult: { ok: true, mode: 'name', list: TWO_ZHANG },
   });
   win.HomePage.render();
-  assert.strictEqual(win.HomePage.candsOpen(), false, '一开始是收着的');
+  const inst = selects[0];
+  assert.ok(inst, '组件应该被建出来（宿主就是那个 <select>）');
+  assert.deepStrictEqual(inst.options, [], '一开始没有候选');
 
   typeInto(els, '张三');
   await new Promise((r) => setTimeout(r, 320));   // 防抖 250ms
 
-  assert.strictEqual(win.HomePage.candsOpen(), true, '光输入就该自己出下拉');
-  assert.strictEqual(win.HomePage.candCount(), 2);
-  assert.strictEqual(els.userKeyword.attrs['aria-expanded'], 'true', 'combobox 要如实报告展开状态');
-  els.userCands.children.forEach((el) => assert.strictEqual(el.attrs.role, 'option', '每项都要有 option 语义'));
+  assert.strictEqual(inst.options.length, 2, '候选要灌进组件');
+  assert.strictEqual(inst.options[0].value, '1001', 'value 用工号（选中后靠它反查这个人）');
+  assert.ok(/张三/.test(inst.options[0].label), 'label 是给人看的：' + inst.options[0].label);
+  assert.ok(/开发一部/.test(inst.options[0].label), 'label 里要带部门，选人时才有区分度');
+  assert.strictEqual(inst.isOpen(), true, '出候选的时候要把面板展开');
 });
 
-test('首页：候选下拉 —— ↓ 高亮、Enter 选中、Esc 只收不改身份', async () => {
-  const { win, els, cuState } = buildEnv({
+test('首页：在组件里选中一项 → 身份落到那个人身上', async () => {
+  const { win, els, selects, cuState } = buildEnv({
     currentUser: null,
     lookupResult: { ok: true, mode: 'name', list: TWO_ZHANG },
   });
   win.HomePage.render();
   typeInto(els, '张三');
   await new Promise((r) => setTimeout(r, 320));
+  assert.strictEqual(cuState.user, null, '光出候选不自动套用身份');
 
-  pressOn(els, 'ArrowDown');
-  const first = els.userCands.children[0];
-  assert.strictEqual(els.userKeyword.attrs['aria-activedescendant'], first.id, '高亮要指到第一项');
-  assert.ok(/is-active/.test(first.className), '要有能看见的高亮类');
+  // 模拟组件完成一次选择：宿主 <select> 的 value 变成 userId，再派发 change
+  els.userKeyword.value = '1001';
+  (els.userKeyword.listeners.change || []).forEach((fn) => fn({ target: els.userKeyword }));
 
-  pressOn(els, 'Enter');
-  assert.strictEqual(cuState.user && cuState.user.userId, '1001', 'Enter 选中的是当前高亮那项');
-  assert.strictEqual(win.HomePage.candsOpen(), false, '选完要收起');
-
-  // 再来一次：Esc 只收下拉
-  cuState.user = null;
-  win.HomePage.render();
-  typeInto(els, '张三');
-  await new Promise((r) => setTimeout(r, 320));
-  pressOn(els, 'Escape');
-  assert.strictEqual(win.HomePage.candsOpen(), false);
-  assert.strictEqual(cuState.user, null, 'Esc 不许顺手改身份');
+  assert.strictEqual(cuState.user && cuState.user.userId, '1001', '选中的是谁就设成谁');
+  assert.strictEqual(els.userForm.hidden, true, '设好之后输入表单收起');
+  assert.ok(selects[0].options.length === 0, '选完要把候选清掉，下次重新搜');
 });
 
-test('首页：边打边搜不替用户拍板 —— 只有 1 个命中也只出下拉', async () => {
+test('首页：手动点「查 询」且唯一命中 → 直接设上（自动搜索不走这条）', async () => {
   const { win, els, cuState } = buildEnv({
     currentUser: null,
     lookupResult: { ok: true, mode: 'name', list: [TWO_ZHANG[0]] },
@@ -677,19 +735,20 @@ test('首页：边打边搜不替用户拍板 —— 只有 1 个命中也只出
   win.HomePage.render();
   typeInto(els, '张三');
   await new Promise((r) => setTimeout(r, 320));
+  assert.strictEqual(cuState.user, null, '输入即搜只出下拉，不替用户拍板');
 
-  assert.strictEqual(cuState.user, null, '自动搜索不自动套用，等用户确认');
-  assert.strictEqual(win.HomePage.candsOpen(), true, '唯一命中也摆在下拉里');
-  assert.strictEqual(win.HomePage.candCount(), 1);
+  els.btnUserSearch.click();   // 手动查询沿用旧语义
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(cuState.user && cuState.user.userId, '1001', '手动点查 询且只命中一个 → 直接设上');
 });
 
-test('首页：输入太短不发请求、清空即收起', async () => {
+test('首页：输入太短不发请求；清空后候选跟着清掉', async () => {
   let calls = 0;
-  const { win, els } = buildEnv({ currentUser: null });
+  const { win, els, selects } = buildEnv({ currentUser: null });
   win.CurrentUser.lookup = async () => { calls += 1; return { ok: true, list: [] }; };
   win.HomePage.render();
 
-  typeInto(els, '47');            // 纯数字不足 3 位：不是工号（与 looksLikeId 同口径），别打接口
+  typeInto(els, '47');            // 纯数字不足 3 位：不是工号（与 looksLikeId 同口径）
   await new Promise((r) => setTimeout(r, 320));
   assert.strictEqual(calls, 0, '两位数不是工号，不该发请求');
 
@@ -697,10 +756,10 @@ test('首页：输入太短不发请求、清空即收起', async () => {
   await new Promise((r) => setTimeout(r, 320));
   assert.strictEqual(calls, 1, '够位数就该发');
 
-  typeInto(els, '');              // 清空 → 收起，且不再发
+  typeInto(els, '');              // 清空 → 候选清掉，且不再发
   await new Promise((r) => setTimeout(r, 320));
-  assert.strictEqual(win.HomePage.candsOpen(), false);
   assert.strictEqual(calls, 1, '清空不该再发一次');
+  assert.deepStrictEqual(selects[0].options, [], '输入清空后候选也要清掉');
 });
 
 // ══════════════════════════════════════════════════════════

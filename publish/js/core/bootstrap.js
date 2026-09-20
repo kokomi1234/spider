@@ -28,6 +28,9 @@
         && has(window.SavedQuery, 'mineFromServer')],
       ['CurrentUser', () => has(window.CurrentUser, 'get') && has(window.CurrentUser, 'lookup')],
       ['UserApi', () => has(window.UserApi, 'fetchUserList')],
+      // 「当前用户」用可搜索下拉（js/ui/searchable-select.js）。少了它首页不会白屏，
+      // 只是降级成原生下拉（home.js 的 initUserSelect 里那条 warn），所以这里是点名登记
+      ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
       ['toast', () => typeof window.toast === 'function'],
     ],
     // 服务发布数据查询页（publish.html，旧 index.html 迁过来的）

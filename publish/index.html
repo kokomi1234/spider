@@ -177,8 +177,7 @@
        display:none（类选择器优先于 UA 样式），未设置时「切换用户」按钮会漏出来、
        设置完输入框也不消失（2026-09-19 截图复核过）。 */
     .home-user[hidden],
-    .home-user-form[hidden],
-    .home-user-cands[hidden] { display: none; }
+    .home-user-form[hidden] { display: none; }
 
     .home-user { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     /* 头像圈：姓名首字，一眼看出「这条是我」 */
@@ -213,113 +212,29 @@
     /* 输入组：label 在上、控件定宽在下，和查询页筛选区同一套语言。
        原来输入框 flex:1 撑满 1100+px，和按钮离得太远，整行都是散的。 */
     .home-user-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
-    .home-field { display: flex; flex-direction: column; gap: 6px; }
+    /* 宽度给宿主容器：组件自己的 .searchable-select 是 width:100%，
+       所以「多宽」由这里决定（与旧的 300px 输入框对齐） */
+    .home-field { display: flex; flex-direction: column; gap: 6px; width: 300px; max-width: 100%; }
     .home-field-label {
       font-size: var(--fs-nano);
       font-weight: 600;
       color: var(--muted);
       letter-spacing: .02em;
     }
-    .home-input-wrap { position: relative; display: block; }
-    .home-input {
-      width: 300px;
-      max-width: 100%;
-      box-sizing: border-box;
-      padding: 8px 34px 8px 12px;   /* 右侧留给清空按钮 */
-      font-size: var(--fs-md);
-      font-family: inherit;
-      color: var(--on-surface);
-      background: var(--surface);
-      border: 1px solid var(--outline);
-      border-radius: var(--r-xs);
-      min-height: 38px;
-    }
-    .home-input::placeholder { color: var(--muted); }
-    .home-input:hover { border-color: var(--primary-hover, var(--primary)); }
-    .home-input:focus {
-      outline: none;
-      border-color: var(--primary);
-      box-shadow: 0 0 0 2px var(--primary-c);
-    }
-    .home-input-clear {
-      position: absolute;
-      top: 50%;
-      right: 6px;
-      transform: translateY(-50%);
-      width: 22px;
-      height: 22px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border: none;
-      border-radius: var(--r-pill);
-      background: transparent;
-      color: var(--muted);
-      font-size: var(--fs-sm);
-      line-height: 1;
-      cursor: pointer;
-      padding: 0;
-    }
-    .home-input-clear:hover { background: var(--surface-1); color: var(--on-surface); }
-    .home-input-clear[hidden] { display: none; }
+    /* （2026-09-20）原来这里有一整套自写的输入框 + ✕ 按钮样式（.home-input-wrap /
+       .home-input / .home-input-clear）。「当前用户」改用 js/ui/searchable-select.js 之后，
+       输入框、✕、▼、下拉面板都由组件自己建，样式走 theme.css 的 .searchable-select 系列，
+       这一套不再需要，已删。 */
     /* 窄屏：输入框跟按钮各占一行，不挤成半截 */
     @media (max-width: 560px) {
       .home-user-form { align-items: stretch; }
-      .home-input { width: 100%; }
+      .home-field { width: 100%; }
       .home-user-form #btnUserSearch { width: 100%; }
     }
 
-    /* 输入即出的候选下拉：贴在输入框正下方（.home-input-wrap 已是 relative）。
-       2026-09-20 改：以前是表单下方的一列静态按钮，必须先点「查 询」才出现；
-       现在边打边出，宽度与输入框对齐，层级走 --z-popup（文档流内弹出面板那一档）。 */
-    .home-user-cands {
-      position: absolute;
-      left: 0;
-      top: calc(100% + 6px);
-      width: 300px;
-      max-width: 100%;
-      z-index: var(--z-popup);
-      display: grid;
-      gap: 2px;
-      padding: 6px;
-      max-height: 268px;
-      overflow-y: auto;
-      box-sizing: border-box;
-      background: var(--surface);
-      border: 1px solid var(--outline-soft);
-      border-radius: var(--r-xs);
-      box-shadow: var(--shadow-pop);
-    }
-    /* 键盘 ↑↓ 高亮的那一项：与 :hover 同一套视觉，免得鼠标党和键盘党看到两种样子 */
-    .home-user-cands .cand.is-active { border-color: var(--primary); background: var(--surface-1); }
-    .home-user-cands .cand {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: baseline;
-      column-gap: 10px;
-      row-gap: 2px;
-      padding: 8px 12px;
-      /* 透明边框 + 透明底：进下拉以后由容器提供底和框，
-         每一项只在 hover / 键盘高亮时显色（透明边框占位，出现时不会挤动行高） */
-      border: 1px solid transparent;
-      border-radius: var(--r-xs);
-      background: transparent;
-      cursor: pointer;
-      text-align: left;          /* 按钮默认居中，这里必须显式覆盖，否则整行文字居中 */
-      font-family: inherit;
-      font-size: var(--fs-sm);
-      color: var(--on-surface);
-      width: 100%;
-    }
-    .home-user-cands .cand:hover,
-    .home-user-cands .cand:focus-visible { border-color: var(--primary); background: var(--surface-1); }
-    .home-user-cands .cand .cand-name { font-weight: 600; }
-    .home-user-cands .cand .cand-dept {
-      grid-column: 1 / -1;
-      color: var(--muted);
-      font-size: var(--fs-nano);
-    }
-    .home-user-cands .cand .cand-id { color: var(--muted); font-size: var(--fs-nano); }
+    /* （2026-09-20）原来这里有一整套自写的候选项样式（.home-user-cands / .cand 系列）。
+       「当前用户」改用 js/ui/searchable-select.js 之后，面板与选项都由组件自己渲染
+       （.searchable-select-dropdown / .searchable-select-option，样式在 theme.css），已删。 */
 
     /* 部门排行：条数切换 */
     .dept-topn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); color: var(--muted); }
@@ -424,22 +339,12 @@
 
         <!-- 未设置：定宽输入组（对齐查询页「label + 控件」的版式，不再撑满整行） -->
         <div class="home-user-form" id="userForm">
+          <!-- 当前用户用项目统一的可搜索下拉（js/ui/searchable-select.js）：
+               输入即出候选、↑↓ 选、Enter 确认、Esc 关掉 —— 键盘与无障碍口径和别的页只有一份。
+               这个 <select> 会被组件隐藏并接管（它自己在父节点里插入 .searchable-select 结构）。 -->
           <label class="home-field" for="userKeyword">
             <span class="home-field-label">工号或姓名</span>
-            <span class="home-input-wrap">
-              <input type="text" id="userKeyword" class="home-input"
-                     placeholder="输入工号或姓名，下拉里直接选" inputmode="text"
-                     autocomplete="off" autocapitalize="off" spellcheck="false"
-                     role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
-                     aria-controls="userCands" aria-expanded="false">
-              <button type="button" class="home-input-clear" id="btnUserClear" hidden
-                      aria-label="清空输入" title="清空">✕</button>
-              <!-- 输入即出候选：下拉挂在输入框正下方（.home-input-wrap 是 relative），
-                   不必再点「查 询」。候选多时用 ↑↓ 选、Enter 确认、Esc 关掉。
-                   放在 <label> 内是有意的：<button> 是交互元素，点它不会触发 label 的聚焦转发。 -->
-              <div class="home-user-cands" id="userCands" role="listbox"
-                   aria-label="候选人员" hidden></div>
-            </span>
+            <select id="userKeyword"></select>
           </label>
           <button type="button" class="filled btn-sm" id="btnUserSearch">查 询</button>
         </div>
@@ -523,6 +428,8 @@
   <script src="js/core/debug.js"></script>
   <script src="js/core/format.js"></script>
   <script src="js/ui/popup-position.js"></script>
+  <!-- 「当前用户」的可搜索下拉用它（组件在这个 <select> 的原位置建输入框 + 面板） -->
+  <script src="js/ui/searchable-select.js"></script>
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/ui/toast.js"></script>
   <script src="js/ui/token-manager.js"></script>

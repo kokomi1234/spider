@@ -32,9 +32,9 @@
   const userLabelEl = $('#userLabel');
   const userDeptEl = $('#userDept');
   const userFormEl = $('#userForm');
+  // 「当前用户」的可搜索下拉：这个 <select> 是**宿主**，会被 js/ui/searchable-select.js
+  // 隐藏并接管（组件在它的父节点里插入 .searchable-select 结构，输入框/✕/▼/面板都是组件建的）。
   const userKeywordEl = $('#userKeyword');
-  const userClearEl = $('#btnUserClear');
-  const userCandsEl = $('#userCands');
   const userHintEl = $('#userHint');
 
   const deptTitleEl = $('#deptTitle');
@@ -329,13 +329,6 @@
   // 当前用户
   // ══════════════════════════════════════════════════════
 
-  /** 输入框有内容时才显示「清空」，空着时别多一个无意义的叉 */
-  function syncClearBtn() {
-    if (!userClearEl) return;
-    const hasText = !!(userKeywordEl && String(userKeywordEl.value || '').trim());
-    userClearEl.hidden = !hasText;
-  }
-
   function renderUser() {
     const CU = window.CurrentUser;
     if (!CU) {
@@ -361,141 +354,137 @@
       if (userSetEl) userSetEl.removeAttribute('title');
     }
     if (userHintEl) userHintEl.textContent = has ? '已设置' : '未设置';
-    closeCands();   // 身份一变（设好 / 切换 / 清空）就把候选下拉收掉，别让它悬在那儿
-    syncClearBtn();
+    resetUserSearch();   // 身份一变（设好 / 切换 / 清空）就把候选与搜索词一起清掉
     // 「我的常用查询」和部门排行都随身份变，所以在这里一起刷；
     // render() 那边就不再单独调 renderSaved()，免得一次首屏发两遍请求
     renderSaved();
     renderDept();
   }
 
-  // ── 候选下拉的状态 ────────────────────────────────────
-  // 下拉是「输入即出」的，DOM 每搜一次就重建，键盘高亮若只存在 DOM 上会随重建丢失，
-  // 所以在 JS 里显式记一份（candItems 是当前这轮的按钮，candIdx 是高亮到第几个）。
-  let candItems = [];
-  let candIdx = -1;
-
-  /** 收起下拉并清掉键盘状态（重渲染 / 选中 / Esc / 点别处都走它，只留一个出口） */
-  function closeCands() {
-    candIdx = -1;
-    candItems = [];
-    if (userCandsEl) {
-      userCandsEl.hidden = true;
-      clear(userCandsEl);
-    }
-    if (userKeywordEl) {
-      userKeywordEl.setAttribute('aria-expanded', 'false');
-      userKeywordEl.removeAttribute('aria-activedescendant');
-    }
-  }
-
-  /** 键盘 ↑↓：把高亮挪到第 i 项（越界回绕），并同步 aria-activedescendant */
-  function setCandActive(i) {
-    if (!candItems.length) return;
-    const n = (i + candItems.length) % candItems.length;
-    candIdx = n;
-    candItems.forEach((el, k) => {
-      // 用 className 而不是 classList：单测的假 DOM 没有 classList（会直接抛）
-      el.className = k === n ? 'cand is-active' : 'cand';
-      el.setAttribute('aria-selected', String(k === n));
-    });
-    const cur = candItems[n];
-    if (cur && cur.id && userKeywordEl) userKeywordEl.setAttribute('aria-activedescendant', cur.id);
-  }
-
-  /**
-   * 渲染候选下拉。
-   * 每项带 role="option" + 稳定 id —— 输入框是 role="combobox"，键盘高亮靠
-   * aria-activedescendant 指过来（与 js/ui/searchable-select.js 同一套约定，
-   * 「可访问名称 / 下拉语义」全项目只有一套口径）。
-   */
-  function renderCandidates(list, onPick) {
-    if (!userCandsEl) return;
-    clear(userCandsEl);
-    candItems = [];
-    candIdx = -1;
-    if (userKeywordEl) userKeywordEl.removeAttribute('aria-activedescendant');
-
-    list.forEach((u, i) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'cand';
-      btn.setAttribute('role', 'option');
-      btn.id = 'userCand-' + i;
-      btn.setAttribute('aria-selected', 'false');
-      // 两列栅格：左「姓名」右「工号」，部门独占第二行小字。
-      // 原来是两个 span 挤在一行居中，姓名和部门粘在一起看不出层级。
-      const name = document.createElement('span');
-      name.className = 'cand-name';
-      name.textContent = u.userName || '（无名）';
-      const id = document.createElement('span');
-      id.className = 'cand-id';
-      id.textContent = u.userId ? `工号 ${u.userId}` : '';
-      const dept = document.createElement('span');
-      dept.className = 'cand-dept';
-      dept.textContent = u.teamName || u.orgName || '（未识别部门）';
-      btn.appendChild(name);
-      btn.appendChild(id);
-      btn.appendChild(dept);
-      // 按下时别让输入框先失焦（有失焦收起的实现时，用 click 会收不到这一次点选）
-      btn.addEventListener('mousedown', (e) => { if (e && e.preventDefault) e.preventDefault(); });
-      btn.addEventListener('click', () => onPick(u));
-      userCandsEl.appendChild(btn);
-      candItems.push(btn);
-    });
-
-    const has = list.length > 0;
-    if (userCandsEl) userCandsEl.hidden = !has;
-    if (userKeywordEl) userKeywordEl.setAttribute('aria-expanded', String(has));
-    if (!has) closeCands();   // 空结果不留一个空框在原地
-  }
-
-  // ── 输入即搜（防抖）──────────────────────────────────
+  // ── 「当前用户」的可搜索下拉：复用 js/ui/searchable-select.js ──────────
   //
-  // 以前必须点「查 询」或回车才出候选：输完工号还得再动一次手。
-  // 而按姓名搜索本来就可能命中多人（接口是模糊匹配），候选一多更需要「直接挑」。
-  // 现在边打边搜：250ms 防抖；慢响应用序号作废 —— 期间又输了别的，旧结果不许回来覆盖。
-  const SEARCH_DEBOUNCE_MS = 250;
-  let searchTimer = null;
-  let searchSeq = 0;
+  // 为什么用组件而不是自己写一套：下拉的键盘、焦点、aria（combobox / listbox /
+  // aria-activedescendant）以及「可访问名称」全项目只该有**一份口径** —— 组件里那套
+  // 已经被冒烟与无障碍用例钉住了（tests/a11y-name.test.js、smoke 的控件语义段）。
+  // 这个 <select> 只是**宿主**：组件会把它藏起来，接管成「输入框 + ✕ + ▼ + 面板」。
+  const USER_SEARCH_DEBOUNCE_MS = 250;
+  let userInst = null;      // 组件实例
+  let userCandMap = {};     // userId → 用户对象（选中后按宿主的 value 反查，与评委工号同一手法）
+  let userSearchTimer = null;
+  let userSearchSeq = 0;    // 防竞态：只认最后一次搜索的结果
+
+  /** 宿主容器（组件把 .searchable-select 插在 <select> 的原位置，也就是父节点里） */
+  function userHost() {
+    return (userKeywordEl && userKeywordEl.parentElement) || null;
+  }
+
+  /** 组件里那个真正给用户打字的输入框 */
+  function userSearchBox() {
+    const host = userHost();
+    return host ? host.querySelector('.searchable-select .searchable-select-input') : null;
+  }
 
   /**
-   * 这个输入值值不值得发一次请求：空的不发；纯数字不足 3 位不是工号
-   * （与 js/ui/current-user.js 的 looksLikeId 同口径），发了也白搭。
+   * 现在该拿什么当搜索词。
+   *
+   * 判据：**输入框里的内容是不是"已选中那一项的展示文本"**——
+   * 选中过之后组件会把 label 回填进输入框，那时它是展示文本、不是用户想搜的东西，
+   * 要改用组件的 freeText（用户手打、没选中任何项的内容）。
+   * 不直接只读 freeText 的原因：它只在组件自己的 input 事件里更新，
+   * 而测试 / 探针常常是"直接写 value 再驱动一次"，那条路径下它是空的。
    */
-  function shouldSearch(kw) {
+  function userSearchKeyword() {
+    // 以组件的 freeText 为准：它是「用户手打、还没选中任何一项」的内容，由组件自己在
+    // input 事件里维护 —— 比读输入框的 value 可靠：选中一项后组件会把 label 回填进输入框、
+    // 清空时又会把 value 抹掉（2026-09-20 真浏览器实测踩过：读 value 拿到空串，搜索永远不触发）。
+    if (userInst && typeof userInst.getFreeText === 'function') {
+      const t = String(userInst.getFreeText() || '').trim();
+      if (t) return t;
+    }
+    // 兜底：组件没提供 freeText 时（老版本 / 测试替身）退回读输入框
+    const box = userSearchBox();
+    return box ? String(box.value || '').trim() : '';
+  }
+
+  /** 一条候选怎么念给用户看：「张三（4711510） · 中国银行软件中心（深圳）开发三部」 */
+  function userOptionLabel(u) {
+    const who = [u.userName || '（无名）', u.userId ? `（${u.userId}）` : ''].join('');
+    const dept = u.teamName || u.orgName || '';
+    return dept ? `${who} · ${dept}` : who;
+  }
+
+  /** 值不值得发请求：空的不发；纯数字不足 3 位不是工号（与 current-user 的 looksLikeId 同口径） */
+  function shouldSearchUser(kw) {
     const s = String(kw || '').trim();
     if (!s) return false;
     if (/^\d+$/.test(s)) return s.length >= 3;
     return true;
   }
 
-  /** 取消在途的防抖与请求（清空 / 切换 / 收起表单时用）；序号一加，回来的结果就作废 */
-  function cancelSearch() {
-    if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
-    searchSeq += 1;
+  /** 清掉候选与在途请求（身份变化 / 切换用户时走它） */
+  function resetUserSearch() {
+    userSearchSeq += 1;
+    if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
+    userCandMap = {};
+    if (userInst) {
+      try { userInst.setValue(''); userInst.updateOptions([]); userInst.close(); } catch (_) { /* 实例已销毁 */ }
+    }
   }
 
   /**
-   * 输入变化后延迟一次搜索。
-   * 表单收着（身份已设置）就不搜 —— 那时输入框用户看不见，白发请求；
-   * 也让「程序化改 value + 触发 input」这类调用不会意外搜一次。
+   * 建组件并接线。组件没加载时**降级**成原生下拉（功能少「输入即搜」，
+   * 但不至于变成"什么都没有"，也不抛错打断首页其它部分）。
    */
-  function scheduleSearch() {
-    if (userFormEl && userFormEl.hidden) return;
-    if (searchTimer) clearTimeout(searchTimer);
-    const kw = userKeywordEl ? userKeywordEl.value : '';
-    if (!shouldSearch(kw)) {
-      cancelSearch();
-      closeCands();
-      if (userHintEl) userHintEl.textContent = '未设置';
+  function initUserSelect() {
+    if (userInst || !userKeywordEl) return;
+    if (typeof window.createSearchableSelect !== 'function') {
+      console.warn('[home] createSearchableSelect 未加载（js/ui/searchable-select.js），「当前用户」降级为原生下拉');
       return;
     }
-    searchTimer = setTimeout(() => {
-      searchTimer = null;
-      doUserSearch({ auto: true });
-    }, SEARCH_DEBOUNCE_MS);
+    userInst = window.createSearchableSelect(userKeywordEl, [], {
+      label: '当前用户',
+      placeholder: '输入工号或姓名',
+    });
+    // 选中：宿主 <select> 的 value 就是我们灌进候选的 userId
+    userKeywordEl.addEventListener('change', () => {
+      const u = userCandMap[String(userKeywordEl.value || '')];
+      if (u) applyUser(u);   // 空值（组件清空时）不进这里
+    });
+    // 输入即搜：**直接绑组件内部那个输入框**。
+    // （原来抄的是评委行的写法 —— 绑在宿主容器上用 capture 兜，因为那边的行会被重建；
+    //   首页没有这种场景，而且 capture 那条路在真浏览器里实测没送达，
+    //   绑在真输入框上更直接、也少一层对组件内部结构的依赖。）
+    const box = userSearchBox();
+    if (!box) return;
+    box.addEventListener('input', (e) => {
+      if (e && e.isComposing) return;   // 中文输入法组字中的中间态不搜
+      scheduleUserSearch();
+    });
+    box.addEventListener('compositionend', () => scheduleUserSearch());
   }
+
+  /** 输入变化后延迟搜一次；表单收着（身份已设置）就不搜 —— 那时输入框用户看不见 */
+  function scheduleUserSearch() {
+    if (userFormEl && userFormEl.hidden) return;
+    if (userSearchTimer) { clearTimeout(userSearchTimer); userSearchTimer = null; }
+    const kw = userSearchKeyword();
+    if (!shouldSearchUser(kw)) {
+      resetUserSearch();
+      return;
+    }
+    userSearchTimer = setTimeout(() => {
+      userSearchTimer = null;
+      doUserSearch({ auto: true });
+    }, USER_SEARCH_DEBOUNCE_MS);
+  }
+
+  /**
+   * 这个输入值值不值得发一次请求：空的不发；纯数字不足 3 位不是工号
+   * （与 js/ui/current-user.js 的 looksLikeId 同口径），发了也白搭。
+   */
+  // （2026-09-20）这里原来是 shouldSearch / cancelSearch / scheduleSearch 三个自写函数。
+  // 「当前用户」改用 searchable-select 组件后，防抖与竞态处理搬到了上面的
+  // shouldSearchUser / resetUserSearch / scheduleUserSearch，旧的已删。
 
   /**
    * 查人并处理结果。
@@ -509,55 +498,59 @@
     const auto = !!o.auto;
     const CU = window.CurrentUser;
     if (!CU) { showToast('当前用户模块未加载', 3000, 'error'); return; }
-    const kw = userKeywordEl ? userKeywordEl.value : '';
-    if (!String(kw).trim()) {
+    const kw = userSearchKeyword();
+    if (!kw) {
       if (!auto) showToast('请输入工号或姓名', 2400, 'warn');
-      closeCands();
       return;
     }
-    if (auto && !shouldSearch(kw)) { closeCands(); return; }
+    if (auto && !shouldSearchUser(kw)) return;
 
-    const seq = (searchSeq += 1);
-    if (userHintEl) userHintEl.textContent = '查询中…';
+    const seq = (userSearchSeq += 1);
+    if (userInst) userInst.setBusy('查询中…');
     let r;
     try {
       r = await CU.lookup(kw);
     } catch (e) {
       r = { ok: false, error: (e && e.message) || String(e) };
     }
-    if (seq !== searchSeq) return;   // 期间又输入了：这份结果作废，不许覆盖新的
+    if (seq !== userSearchSeq) return;   // 期间又输入了：这份结果作废，不许覆盖新的
 
     if (!r.ok) {
-      if (userHintEl) userHintEl.textContent = '';
-      closeCands();
+      if (userInst) userInst.setBusy('');
       // 这是真故障（接口挂了 / 离线回放没这条缓存），两种模式都要说出来
       showToast(`查询失败：${r.error || '未知错误'}`, 3600, 'error');
       return;
     }
-    // 接口返回的人里没有一个名字含关键词：与其把不相关的人当结果用，不如说清。
+    // 返回的人里没有一个名字含关键词：与其把不相关的人当结果用，不如说清。
     // （措辞不再断言「后端不按姓名过滤」—— 那是把离线回放的宽松匹配当成了后端行为，
     //   2026-09-20 用抓到报文更正过，见 current-user.js 的注释。）
     if (r.nameSearchUnsupported) {
-      if (userHintEl) userHintEl.textContent = '未设置';
-      closeCands();
+      if (userInst) userInst.setBusy('没有名字含这个关键词的人');
       showToast('返回的结果里没有名字含这个关键词的人，换个完整姓名或改用工号再试', 4200, 'warn');
       return;
     }
     if (!r.list.length) {
-      if (userHintEl) userHintEl.textContent = auto ? '没找到匹配的人' : '未设置';
-      closeCands();
-      if (!auto) showToast(r.mode === 'id' ? `没有找到工号 ${String(kw).trim()}` : '没有找到匹配的人员', 3200, 'warn');
+      if (userInst) userInst.setBusy(r.mode === 'id' ? '没有找到这个工号' : '没有找到匹配的人');
+      if (!auto) showToast(r.mode === 'id' ? `没有找到工号 ${kw}` : '没有找到匹配的人员', 3200, 'warn');
       return;
     }
+    // 手动点「查 询」且只命中一个 → 直接设上（沿用旧语义）；
+    // 自动搜索一律只出下拉，等用户自己挑 —— 还没确认就把身份改掉太激进。
     if (!auto && r.list.length === 1) {
       applyUser(r.list[0]);
       return;
     }
-    // 同名多人（或自动搜索）：让用户在下拉里自己挑，别替他猜
-    if (userHintEl) userHintEl.textContent = r.list.length === 1
-      ? '1 人，回车即可选中'
-      : `匹配到 ${r.list.length} 人，请选择`;
-    renderCandidates(r.list, applyUser);
+    // 把候选灌进组件（value 用 userId；选中后靠 userCandMap 反查完整的人）
+    userCandMap = {};
+    const options = r.list.map((u) => {
+      const val = String(u.userId || u.userName || '');
+      userCandMap[val] = u;
+      return { value: val, label: userOptionLabel(u) };
+    });
+    if (userInst) {
+      userInst.updateOptions(options);
+      userInst.open();   // 只有输入框还聚焦着它才展开（组件自己判断，不抢焦点）
+    }
   }
 
   function applyUser(u) {
@@ -565,29 +558,22 @@
     const r = CU.set(u);
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
     showToast(`已切换为 ${CU.label(r.user)}`, 2400, 'success');
-    if (userKeywordEl) userKeywordEl.value = '';
+    resetUserSearch();   // 选完了就把候选与搜索词清掉，下次重新搜
     renderUser();
   }
 
   function switchUser() {
     const CU = window.CurrentUser;
     if (CU) CU.clear();
-    cancelSearch();
-    if (userKeywordEl) userKeywordEl.value = '';
+    resetUserSearch();
     renderUser();
-    if (userKeywordEl) userKeywordEl.focus();
+    const box = userSearchBox();
+    if (box) box.focus();   // 焦点回到组件内部那个真正的输入框（宿主 <select> 是隐藏的）
   }
 
-  /** 清空输入框（不改「当前用户」，就是重打一遍） */
-  function clearKeyword() {
-    if (userKeywordEl) {
-      userKeywordEl.value = '';
-      userKeywordEl.focus();
-    }
-    cancelSearch();   // 在途那次搜索跟着作废，否则它回来还会把下拉重新顶出来
-    closeCands();
-    syncClearBtn();
-  }
+  // （2026-09-20）原来这里有个 clearKeyword + #btnUserClear「清空输入」按钮。
+  // 改用 searchable-select 组件后，组件自带的 ✕ 就是干这个的（只清值、不动「当前用户」），
+  // 那个按钮和它的样式一并删了。
 
   // ══════════════════════════════════════════════════════
   // 部门常用查询（本机口径）
@@ -759,58 +745,10 @@
   if ($('#btnImportQueries')) $('#btnImportQueries').addEventListener('click', importQueries);
   if ($('#btnUserSearch')) $('#btnUserSearch').addEventListener('click', doUserSearch);
   if ($('#btnUserChange')) $('#btnUserChange').addEventListener('click', switchUser);
-  if ($('#btnUserClear')) $('#btnUserClear').addEventListener('click', clearKeyword);
-  if (userKeywordEl) {
-    userKeywordEl.addEventListener('keydown', (e) => {
-      const open = !!(userCandsEl && !userCandsEl.hidden && candItems.length);
-      // 下拉开着时，↑↓ / Enter / Esc 归下拉；没开就维持原有语义
-      if (e.key === 'ArrowDown') {
-        if (!open) return;                 // 没候选时不抢方向键（页面滚动仍归浏览器）
-        e.preventDefault();
-        setCandActive(candIdx + 1);
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        if (!open) return;
-        e.preventDefault();
-        setCandActive(candIdx - 1);
-        return;
-      }
-      if (e.key === 'Escape') {
-        if (!open) return;
-        e.preventDefault();
-        closeCands();
-        return;
-      }
-      if (e.key === 'Enter') {
-        // 输入法正在组字时，Enter 是「确认候选字」，不是选中/查询
-        if (e.isComposing || e.keyCode === 229) return;
-        e.preventDefault();
-        if (open) {
-          // 没有键盘高亮时回车选第一项（与 js/ui/searchable-select.js 的行为一致）
-          const pick = candItems[candIdx >= 0 ? candIdx : 0];
-          if (pick) pick.click();
-          return;
-        }
-        doUserSearch();   // 下拉没开（比如结果为空被收起）→ 当成一次显式查询
-      }
-    });
-    // 有内容才显示「清空」；粘贴/输入法都走 input 事件，覆盖得住。
-    // 顺手触发「输入即搜」—— 这是本次改动的核心：不必再点「查 询」。
-    userKeywordEl.addEventListener('input', () => { syncClearBtn(); scheduleSearch(); });
-  }
-
-  // 点到别处就收起下拉（点在输入框或候选项上不算）
-  document.addEventListener('click', (e) => {
-    if (!userCandsEl || userCandsEl.hidden) return;
-    const t = e && e.target;
-    if (!t || t === userKeywordEl) return;
-    // 假 DOM 没有 contains：用「子节点里有没有它」判断，真/假两种实现都能跑
-    const inside = userCandsEl.children
-      && Array.prototype.indexOf.call(userCandsEl.children, t) >= 0;
-    if (!inside) closeCands();
-  });
-  syncClearBtn();
+  // 「当前用户」：建可搜索下拉并接上「输入即搜」。
+  // 键盘（↑↓ / Enter / Esc）、焦点、aria、✕ 的显隐、点外部收起 —— 全由组件负责，
+  // 这里不再自己接一套（那正是「复用组件」的意义：口径只有一份）。
+  initUserSelect();
   if (deptTopNEl) {
     deptTopNEl.addEventListener('change', () => {
       writeTopN(Number(deptTopNEl.value) || DEFAULT_TOPN);
@@ -859,19 +797,27 @@
     render,
     renderDept,
     renderSync,
-    /** 走「显式查询」那条路（等同点「查 询」；唯一命中会直接设上当前用户） */
+    /**
+     * 走「显式查询」那条路（等同点「查 询」）：传 kw 就先写进输入框再查一次。
+     * 唯一命中会直接设上当前用户（旧语义）。
+     */
     searchUser: (kw) => {
-      if (userKeywordEl && kw !== undefined) userKeywordEl.value = kw;
+      const box = userSearchBox();
+      if (box && kw !== undefined) box.value = kw;
       return doUserSearch();
     },
     /** 走「输入即搜」那条路（绕过防抖，供冒烟 / 探针直接 await；一律只出下拉不自动套用） */
     searchUserAuto: (kw) => {
-      if (userKeywordEl && kw !== undefined) userKeywordEl.value = kw;
+      const box = userSearchBox();
+      if (box && kw !== undefined) box.value = kw;
       return doUserSearch({ auto: true });
     },
-    /** 下拉当前有几项 / 是不是开着（-1 = 节点都不在） */
-    candCount: () => (userCandsEl ? userCandsEl.children.length : -1),
-    candsOpen: () => !!(userCandsEl && !userCandsEl.hidden),
+    /** 下拉开着没有（组件自己的状态；要数选项就直接查 DOM 的 .searchable-select-option） */
+    candsOpen: () => !!(userInst && typeof userInst.isOpen === 'function' && userInst.isOpen()),
+    /** 组件实例（冒烟要读它内部的输入框 / 面板时用；没建起来是 null） */
+    userSelect: () => userInst,
+    /** 「输入即搜」的监听挂在哪个节点上（诊断用：应当等于宿主 <select> 的父节点） */
+    searchHost: () => userHost(),
     count: () => (savedListEl ? savedListEl.children.length : -1),
     deptCount: () => (deptListEl ? deptListEl.children.length : -1),
   };

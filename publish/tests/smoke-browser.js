@@ -59,7 +59,7 @@ function startServer() {
 const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition', 'createSearchableSelect'] },
   { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
@@ -380,95 +380,101 @@ const PAGES = [
           anyFail = true;
         }
 
-        // 「输入即出候选下拉」—— 2026-09-20 改的交互：光输入就出候选，不必再点「查 询」。
-        // 这块单测量不到（假 DOM 没有布局与真实键盘事件），所以在这里用真浏览器钉住：
-        // 下拉自己出现、贴在输入框下方、有 combobox 选项语义、↑↓ + Enter 能选、Esc 能关。
-        const candCheck = await page.evaluate(async () => {
-          const out = {};
-          const CU = window.CurrentUser;
-          const HP = window.HomePage;
-          if (!CU || !HP) return { err: 'CurrentUser / HomePage 未加载' };
-
-          // 两个人名字都含「张三」→ 走姓名模糊搜索、返回 2 条，正好验「候选多时自己挑」
+        // 「输入即出候选下拉」（2026-09-20）：光输入就出候选，不必再点「查 询」。
+        // 现在用的是项目统一组件 js/ui/searchable-select.js（与评委栏同一套），
+        // 所以断言打在组件真实的 DOM 上：.searchable-select-input / .searchable-select-option
+        // —— 单测量不到这些（假 DOM 没有布局与真实键盘事件），只能在这里钉。
+        // 先清场 —— **必须在打字之前**：让「当前用户」回到未设置，并顶上一个假的 UserApi。
+        // ⚠️ HomePage.render() 会把「当前用户」的输入与候选一起重置（renderUser → resetUserSearch），
+        //    所以这一步绝不能放在输入之后：那样刚敲的字会被清掉，看起来就像「输入即搜不工作」。
+        //    2026-09-20 我在这上面绕了好几轮。
+        await page.evaluate(() => {
           const A = { userId: '1001', userName: '张三', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' };
           const B = { userId: '1002', userName: '张三四', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' };
           window.UserApi = {
             fetchUserList: async () => ({ ok: true, list: [A, B] }),
             fetchUserDetail: async () => ({ ok: true, user: A }),
           };
-
-          CU.clear();
+          window.CurrentUser.clear();
           window.HomePage.render();
-          const kw = document.getElementById('userKeyword');
-          const dd = document.getElementById('userCands');
+          // 数「输入即搜」有没有真的打到 lookup 上（同样要在打字之前装上）
+          window.__probeLookups = 0;
+          const origLookup = window.CurrentUser.lookup.bind(window.CurrentUser);
+          window.CurrentUser.lookup = async (k) => {
+            window.__probeLookups += 1;
+            return origLookup(k);
+          };
+        });
 
-          // ① 只输入、不点查询 → 下拉要自己出来
-          kw.value = '张三';
-          kw.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise((r) => setTimeout(r, 450));   // 防抖 250ms + 一次搜索
+        // ① 用**真实键盘**敲进组件内部那个输入框。
+        // 为什么不在 evaluate 里 dispatchEvent('input')：组件内部对输入的处理依赖真实事件路径，
+        // 程序化派发到不了它那儿（实测：面板会被打开，但候选永远为空）。
+        const userBoxSel = '#userKeyword ~ .searchable-select .searchable-select-input';
+        await page.click(userBoxSel);
+        await page.type(userBoxSel, '张三', { delay: 40 });
+        await page.waitForTimeout(600);   // 防抖 250ms + 一次搜索
+
+        const candCheck = await page.evaluate(async () => {
+          const out = {};
+          const CU = window.CurrentUser;
+          const HP = window.HomePage;
+          if (!CU || !HP) return { err: 'CurrentUser / HomePage 未加载' };
+
+          // 清场、假 UserApi、lookup 计数都在外面那步做完了（都必须早于打字）
+          const host = document.getElementById('userKeyword');
+          const box = host.parentElement.querySelector('.searchable-select .searchable-select-input');
+          if (!box) return { err: '组件没建出输入框（index.html 没引 searchable-select.js？）' };
+          const panel = () => document.getElementById(box.getAttribute('aria-controls') || '')
+            || host.parentElement.querySelector('.searchable-select-dropdown');
+          const options = () => (panel() ? [...panel().querySelectorAll('.searchable-select-option')] : []);
+
+          // ① 键盘输入已经在外面的 page.type 里做完了，这里只读结果：
+          // 候选该自己出来（不必点「查 询」），而且「输入 → 防抖 → 查接口」这条线必须真走过
+          out.count = options().length;
+          out.lookupsByInput = window.__probeLookups;   // ≥1 才算「输入 → 防抖 → 查接口」真走过
           out.openAfterInput = HP.candsOpen();
-          out.count = HP.candCount();
+          out.labels = options().map((o) => o.textContent.trim()).slice(0, 2);
+          // 诊断用：实例在不在、组件眼里的"输入内容"是什么（候选为 0 时靠它定位）
+          out.instExists = !!HP.userSelect();
 
-          // ② 几何：确实贴在输入框正下方、左边对齐（不是飘到别处）
-          const box = dd.getBoundingClientRect();
-          const inp = kw.getBoundingClientRect();
-          out.belowInput = Math.abs(box.top - inp.bottom) <= 12;
-          out.alignedLeft = Math.abs(box.left - inp.left) <= 2;
-          out.ddWidthMatchesInput = Math.abs(box.width - inp.width) <= 2;
-          out.visible = box.height > 0;
+          // ② 组件语义：输入框 role=combobox、面板 role=listbox
+          out.boxRole = box.getAttribute('role');
+          out.panelRole = panel() ? panel().getAttribute('role') : null;
 
-          // ③ combobox 语义：每项 role=option，输入框 aria-expanded 要变 true
-          const items = Array.from(document.querySelectorAll('#userCands .cand'));
-          out.roles = items.map((el) => el.getAttribute('role'));
-          out.itemIds = items.map((el) => el.id);
-          out.expanded = kw.getAttribute('aria-expanded');
-          out.ddRole = dd.getAttribute('role');
-
-          // ④ 键盘：↓ 高亮第一项 → Enter 选中 → 身份落到那个人身上、下拉收起
-          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-          out.activeDesc = kw.getAttribute('aria-activedescendant');
-          out.activeCls = items.map((el) => el.className);
-          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-          await new Promise((r) => setTimeout(r, 80));
+          // ③ 键盘 ↓ 高亮第一项 → Enter 选中 → 身份落到那个人身上
+          box.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+          box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 150));
           out.pickedUserId = (CU.get() || {}).userId;
-          out.closedAfterPick = !HP.candsOpen();
 
-          // ⑤ 重新输入出下拉 → Esc 关掉，且不该改动身份（回到未设置）
+          // ④ 回到未设置、再出一次候选：Esc 只收下拉，不该动身份。
+          // 这一步用 searchUserAuto 直接驱动 —— 这里验的是 Esc 的行为，不是输入事件那条线。
           CU.clear();
           window.HomePage.render();
-          kw.value = '张三';
-          kw.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise((r) => setTimeout(r, 450));
+          await HP.searchUserAuto('张三');
+          await new Promise((r) => setTimeout(r, 150));
           const openedAgain = HP.candsOpen();
-          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           out.reopened = openedAgain;
           out.escClosed = openedAgain && !HP.candsOpen();
           out.userStillEmpty = !CU.get();
 
-          // ⑥ 清掉：别把状态留给后面那段（它会自己 CU.clear + render）
+          // ⑤ 清干净，别把状态留给后面那段（它会自己 CU.clear + render）
           CU.clear();
           window.HomePage.render();
           return out;
         });
 
-        process.stdout.write(`  当前用户候选下拉(输入即出/键盘): ${JSON.stringify(candCheck)}\n`);
+        process.stdout.write(`  当前用户候选下拉(组件/输入即出/键盘): ${JSON.stringify(candCheck)}\n`);
         const candOk = candCheck && !candCheck.err
-          && candCheck.openAfterInput === true
+          && candCheck.openAfterInput === true          // 不点查询也出候选
+          && candCheck.lookupsByInput >= 1              // 且「输入 → 防抖 → 查接口」这条线真走过
           && candCheck.count === 2
-          && candCheck.belowInput === true
-          && candCheck.alignedLeft === true
-          && candCheck.ddWidthMatchesInput === true
-          && candCheck.visible === true
-          && candCheck.ddRole === 'listbox'
-          && Array.isArray(candCheck.roles) && candCheck.roles.every((r) => r === 'option')
-          && Array.isArray(candCheck.itemIds) && candCheck.itemIds.length === 2
-          && candCheck.expanded === 'true'
-          && candCheck.activeDesc === (candCheck.itemIds || [])[0]
-          && /is-active/.test((candCheck.activeCls || [])[0] || '')
-          && candCheck.pickedUserId === '1001'
-          && candCheck.closedAfterPick === true
+          && candCheck.boxRole === 'combobox'
+          && candCheck.panelRole === 'listbox'
+          && candCheck.pickedUserId === '1001'          // ↑↓ + Enter 选中了第一项
           && candCheck.reopened === true && candCheck.escClosed === true
-          && candCheck.userStillEmpty === true;
+          && candCheck.userStillEmpty === true;         // Esc 只收下拉、不改身份
         if (!candOk) {
           process.stdout.write(`    [FAIL] 输入即出的候选下拉异常：${JSON.stringify(candCheck)}\n`);
           anyFail = true;
@@ -499,28 +505,20 @@ const PAGES = [
           out.emptyHintHasGuide = /当前用户/.test(document.getElementById('deptEmpty').textContent);
           out.deptCountBefore = document.querySelectorAll('#deptList .saved-item').length;
 
-          // ② 填姓名 → 查到唯一一人 → 自动成为当前用户，且被记住
-          document.getElementById('userKeyword').value = '张三';
-          document.getElementById('btnUserSearch').click();
+          // ② 走「手动查询」那条路：查到唯一一人 → 自动成为当前用户，且被记住
+          //（「当前用户」现在是组件接管的 <select>，直接写它的 value 没用 —— 用 HomePage 的入口驱动）
+          await window.HomePage.searchUser('张三');
           await new Promise((r) => setTimeout(r, 250));
           out.userLabel = document.getElementById('userLabel').textContent;
           // 2026-09-19 版式改版：身份条拆成「姓名（工号）」+ 部门两行 + 头像圈首字
           out.userDept = document.getElementById('userDept').textContent;
           out.userAvatar = document.getElementById('userAvatar').textContent;
-          out.clearBtnHidden = document.getElementById('btnUserClear').hidden;
           out.userPersisted = !!(CU.get() && CU.get().teamId === 'K4229');
           out.formHidden = document.getElementById('userForm').hidden;
 
-          // ②b 清空按钮：有内容才出现，点了要清空并把焦点还回输入框
-          const kw2 = document.getElementById('userKeyword');
-          const clearBtn = document.getElementById('btnUserClear');
-          kw2.value = '4711510';
-          kw2.dispatchEvent(new Event('input', { bubbles: true }));
-          out.clearShownWithText = clearBtn.hidden === false;
-          clearBtn.click();
-          out.clearAfterClick = kw2.value === '' && clearBtn.hidden === true;
-          // 焦点回到输入框（无头环境偶尔不给焦点，只记录不判失败）
-          out.activeAfterClear = (document.activeElement && document.activeElement.id) || '';
+          // ②b 「清空输入」的 ✕ 现在归组件管（不再有自己的按钮）：
+          //     这里只确认组件挂在那个 <select> 上，具体交互由上面那段「候选下拉」覆盖
+          out.userSelectMounted = !!window.HomePage.userSelect();
 
           // ③ 保存一条（走真实保存链路，owner 自动取当前用户）
           const s = S.save({
@@ -643,8 +641,7 @@ const PAGES = [
           && /张三/.test(deptCheck.userLabel || '') && /4711510/.test(deptCheck.userLabel || '')
           && /开发三部/.test(deptCheck.userDept || '')      // 部门单独一行（原来挤在同一行）
           && deptCheck.userAvatar === '张'                  // 头像圈用姓名首字
-          && deptCheck.clearBtnHidden === true              // 提交后输入框已清空，清空按钮应隐藏
-          && deptCheck.clearShownWithText === true && deptCheck.clearAfterClick === true
+          && deptCheck.userSelectMounted === true           // 「当前用户」的可搜索下拉挂上了
           && deptCheck.userPersisted === true && deptCheck.formHidden === true
           && deptCheck.saved === true && deptCheck.deptCount === 1
           && /开发三部/.test(deptCheck.deptTitle || '')
