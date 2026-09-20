@@ -614,13 +614,13 @@ test('角标：还没同步过时不显示（首屏不该闪一个假的「仅�
   assert.strictEqual(els.savedSync.textContent, '');
 });
 
-test('角标：已同步 → 「已同步 N 条」+ is-shared，title 里能看到代理在读写哪个库文件', () => {
+test('角标：已同步 → 「已同步 · 库内 N 条」+ is-shared（这个数是全库的，必须写明，别被读成「我的」）', () => {
   const { els } = buildEnv({
     items: [],
     syncState: { state: 'shared', total: 12, file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 4, at: Date.now() },
   });
   assert.strictEqual(els.savedSync.hidden, false);
-  assert.strictEqual(els.savedSync.textContent, '已同步 12 条');
+  assert.strictEqual(els.savedSync.textContent, '已同步 · 库内 12 条');
   assert.strictEqual(els.savedSync.className, 'sync-state is-shared');
   assert.ok(/saved-queries\.db/.test(els.savedSync.title), 'title 要含库文件：' + els.savedSync.title);
   assert.ok(/SQLite/.test(els.savedSync.title), 'title 要说清存储类型');
@@ -653,7 +653,7 @@ test('角标：同步状态一变就自己刷新，不需要重画整页', () =>
   assert.strictEqual(els.savedSync.hidden, true);
   sq._emitSync({ state: 'shared', total: 5, file: '/srv/x.db', at: Date.now() });
   assert.strictEqual(els.savedSync.hidden, false, '回调到了就该显示');
-  assert.strictEqual(els.savedSync.textContent, '已同步 5 条');
+  assert.strictEqual(els.savedSync.textContent, '已同步 · 库内 5 条');
 });
 
 test('角标：回到 pending 要清掉上一次的残留（文案/类名/title 都不能留）', () => {

@@ -367,7 +367,7 @@ const PAGES = [
         });
         process.stdout.write(`  同步角标: ${JSON.stringify(syncCheck)}\n`);
         const syncOk = !syncCheck.err
-          && /已同步 7 条/.test(syncCheck.shared.text) && /is-shared/.test(syncCheck.shared.cls)
+          && /已同步 · 库内 7 条/.test(syncCheck.shared.text)   // 角标的数必须写明是「库内」，不是「我的」 && /is-shared/.test(syncCheck.shared.cls)
           && /saved-queries\.db/.test(syncCheck.shared.title)
           && /仅本机/.test(syncCheck.local.text) && /is-local/.test(syncCheck.local.cls)
           && /同步失败/.test(syncCheck.fail.text) && /HTTP 500/.test(syncCheck.fail.title)

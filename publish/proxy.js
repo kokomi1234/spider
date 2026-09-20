@@ -58,14 +58,12 @@ const crypto = require('crypto');
 // 仍可用 PROXY_ENV_PATH 显式指定；前端「Token 管理」的写入位置也跟着这个值走。
 const envPath = process.env.PROXY_ENV_PATH || path.join(__dirname, '..', '.env');
 
-const PORT = process.env.PROXY_PORT || 3000;
-// 默认只绑回环。以前 listen(PORT) 不传 host → 绑 `::`（所有网卡），而
-// /local/saved-queries、/local/batch-times 默认不鉴权、CORS 又是 *，
-// 实测同网段任意主机（甚至任意网页）都能读光/改写/删空这份团队库。
-// 「大家连同一份代理」时显式设 PROXY_HOST=0.0.0.0（并强烈建议同时设 PROXY_ADMIN_TOKEN）。
-const HOST = process.env.PROXY_HOST || '127.0.0.1';
-const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
-const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
+// ⚠️ .env 必须**先于下面这些常量**加载。曾经不是：loadEnv() 只在 refreshConfig() 里调，
+// 而 refreshConfig() 在这些 const 之后才跑 —— 结果是 `.env` 里写 PROXY_HOST / PROXY_PORT /
+// PROXY_TARGET / PROXY_TIMEOUT **完全无效**（只有 shell 环境变量管用），
+// 「大家连同一份代理」按文档配了 .env 却仍绑在 127.0.0.1 上，同事连不上、各自存各自的。
+// loadEnv() 用到 FIRST_LOAD（决定"命令行优先"），所以它的声明也必须一起提前，否则 TDZ 直接抛错。
+let FIRST_LOAD = true;
 
 // ── .env 热更新 ───────────────────────────────────────────────
 function loadEnv() {
@@ -86,6 +84,19 @@ function loadEnv() {
   });
   return vars;
 }
+
+
+loadEnv();   // ← 关键一行：让下面这几个常量读得到 .env
+
+const PORT = process.env.PROXY_PORT || 3000;
+// 默认只绑回环。以前 listen(PORT) 不传 host → 绑 `::`（所有网卡），而
+// /local/saved-queries、/local/batch-times 默认不鉴权、CORS 又是 *，
+// 实测同网段任意主机（甚至任意网页）都能读光/改写/删空这份团队库。
+// 「大家连同一份代理」时显式设 PROXY_HOST=0.0.0.0（并强烈建议同时设 PROXY_ADMIN_TOKEN）。
+const HOST = process.env.PROXY_HOST || '127.0.0.1';
+const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
+const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
+
 
 function refreshConfig() {
   loadEnv();
@@ -109,7 +120,6 @@ const EXTRA_HEADERS = {};
 
 let TOKEN_REFRESHED = '';
 let OFFLINE_REFRESHED = false;
-let FIRST_LOAD = true;
 
 // 启动时先加载一次 .env
 refreshConfig();

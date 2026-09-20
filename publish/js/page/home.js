@@ -299,11 +299,13 @@
     let text = '';
     let title = '';
     if (st.state === 'shared') {
-      text = `已同步 ${Number(st.total) || 0} 条`;
+      // total 是**整个团队库**的条数，而下面的列表按当前用户过滤 —— 两者口径不同，
+      // 所以这里必须写明「库内」，否则换个人就会被读成「条数还是上一个用户的」（2026-09-20 用户报的）。
+      text = `已同步 · 库内 ${Number(st.total) || 0} 条`;
       title = [`正与共享库同步（${ago}）`, `库文件：${st.file || '（代理未告知）'}`];
       if (st.storage) title.push(`存储：${st.storage === 'sqlite' ? 'SQLite' : st.storage}`);
       if (Number(st.people) > 0) title.push(`保存过查询的人：${st.people} 个`);
-      title.push('这个文件里有哪些人的记录，这里就能看到哪些');
+      title.push('这个数是全库条数；下面的列表只显示你保存的那些');
     } else if (st.state === 'fail') {
       text = '同步失败';
       title = [`这次没能与共享库同步（${ago}）`, `原因：${st.error || '未知错误'}`, '现在看到的是这台浏览器里存过的记录'];

@@ -42,5 +42,7 @@ require('./current-user.test');
 require('./home-page.test');
 // 2026-09-19：常用查询改落 SQLite（回答「这份条件被几个人保存过」）
 require('./queries-db.test');
+// 2026-09-20：.env 加载顺序防线（PROXY_HOST/PORT 写在 .env 里曾静默失效）
+require('./proxy-env-order.test');
 
 runAll();
