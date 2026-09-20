@@ -17,6 +17,10 @@ shared/saved-queries.json
 # 而且要留在服务器上给恢复用 —— 别入库、别被 .gitignore 之外的东西搬走
 shared/backups/
 
+# 订阅页「批量修改批次时间」的落盘（2026-09-20 从 publish/config/ 搬来）：
+# 同样是运行时数据，放 shared/ 是为了**重新部署时不被新包覆盖**
+shared/batch-times.json
+
 # Real captured internal responses / sensitive network traces
 publish/cache/
 *.har

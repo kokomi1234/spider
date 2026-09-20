@@ -335,7 +335,7 @@ test('token-manager：填上 token 点确认 → POST /admin/token 并关闭弹�
   );
 });
 
-test('token-manager：页面带 ?token= 时透传给管理端点（代理设了 PROXY_ADMIN_TOKEN 才需要）', async () => {
+test('token-manager：页面带 ?token= 时透传给管理端点（代理已不鉴权，但参数继续带着——将来要收紧时还用得上）', async () => {
   const btn = fakeEl('button');
   const calls = [];
 

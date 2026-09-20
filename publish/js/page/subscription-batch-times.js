@@ -29,8 +29,8 @@
  *   init({ toast, setLoading, batchWindow, refreshPriority })
  *
  * ── 落盘路径（不走 ITAMP 后端）────────────────────────
- *   GET/POST local/batch-times（代理端点，写 config/batch-times.json）
- *   → 静态 config/batch-times.json → localStorage，三级降级。
+ *   GET/POST local/batch-times（代理端点，写 shared/batch-times.json）
+ *   → 静态 config/batch-times.json（**只读默认**，仅纯静态部署时走这条）→ localStorage，三级降级。
  */
 (function () {
   'use strict';
@@ -63,8 +63,8 @@
   /**
    * 读取批次时间配置（不走 ITAMP 后端）。三个来源按「**有数据的**优先」取，
    * 而不是「第一个成功就当准」：
-   *   1) 代理的本地端点 GET /local/batch-times（可写回文件，开发态首选）
-   *   2) 静态文件 config/batch-times.json（手改即可生效；静态部署时走这条）
+   *   1) 代理的本地端点 GET /local/batch-times（写服务器上的 shared/batch-times.json，本项目的常态）
+   *   2) 静态文件 config/batch-times.json（**纯静态部署时的只读默认**；有代理就不会走到这条）
    *   3) localStorage（无代理、无文件时的兜底）
    * ⚠️ 静态部署时随包发的 config/batch-times.json 是**空的**：按「第一个成功」取会让它
    *    永远盖住 localStorage 里用户真正保存过的批次 —— 表现就是「刚保存的行 / 独立批次，
@@ -99,7 +99,7 @@
 
   /**
    * 保存批次时间。**localStorage 先镜像一份**（静态部署下它是唯一存储），
-   * 再尽力写回代理端点 → config/batch-times.json。返回 { ok, where|error }
+   * 再尽力写回代理端点 → 服务器上的 shared/batch-times.json。返回 { ok, where|error }
    */
   async function persist(map) {
     // 先落地到 localStorage：即使后面写文件失败，用户填的东西也不会丢
@@ -111,7 +111,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchTimes: map }),
       });
-      if (r.ok) return { ok: true, where: 'config/batch-times.json' };
+      if (r.ok) return { ok: true, where: 'batch-times.json（服务器数据目录）' };
       const j = await r.json().catch(() => ({}));
       // 端点存在但写失败（权限/磁盘等）：不要谎报「写进了文件」，但数据已在 localStorage 里，
       // 明确告诉用户落在哪，别让他以为白填了。
@@ -258,7 +258,7 @@
    * 基线状态转换规则：设置日期后，该批次下所有订阅关系按以下规则自动升级 status。
    *   · 设了功能测试时间（testDate） → 「开发基线」→「功能测试基线」
    *   · 设了上线时间（releaseDate）  → 「功能测试基线」→「正式版基线」
-   * 本页只负责把日期存进本地配置（config/batch-times.json），**不调后端**；
+   * 本页只负责把日期存进本地配置（走代理写服务器的 shared/batch-times.json），**不调后端**；
    * 这里预演「会触发哪些转换」给用户确认，也是优先级里程碑规则的书面说明。
    */
   const BASELINE_TRANSITIONS = [

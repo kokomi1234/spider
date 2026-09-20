@@ -37,7 +37,7 @@
   /** 批次时间覆盖表：{ '2609批次': { testDate, releaseDate } }（由 setBatchTimes 注入） */
   let batchTimeOverrides = {};
 
-  /** 注入批次时间配置（来自本地配置文件 config/batch-times.json） */
+  /** 注入批次时间配置（来自服务器上的 shared/batch-times.json，页面经代理端点拿到） */
   function setBatchTimes(map) {
     batchTimeOverrides = (map && typeof map === 'object') ? map : {};
   }

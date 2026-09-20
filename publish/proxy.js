@@ -91,9 +91,9 @@ loadEnv();   // ← 关键一行：让下面这几个常量读得到 .env
 const PORT = process.env.PROXY_PORT || 3000;
 // 默认**绑全网卡**（2026-09-20 用户拍板：内网自用，不做限制，同事直接连这份代理）。
 // 只给本机用就设 PROXY_HOST=127.0.0.1。
-// 事实说清楚（不是拦你）：/local/* 与 /cache/* 在不设 PROXY_ADMIN_TOKEN 时不鉴权，
-// 而 CORS 是 * —— 所以同网段任意主机、以及任意人浏览器里打开的任意网页，
-// 都能读改删这份团队库。要那层锁就设一个 PROXY_ADMIN_TOKEN。
+// 安全口径（2026-09-20 用户拍板，别再加回来）：这份代理**不做鉴权** ——
+// 原来那层 PROXY_ADMIN_TOKEN 的 token 校验已整体去掉。前提是"一个人部署、数据只落这一台、
+// 跑在内网"。要收窄的话设 PROXY_HOST=127.0.0.1 就行（只绑本机）。
 const HOST = process.env.PROXY_HOST || '0.0.0.0';
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
 const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
@@ -623,6 +623,12 @@ const QUERIES_DB_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-querie
 const QUERIES_JSON_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.json');
 const QUERIES_JSON_LEGACY = path.join(__dirname, 'config', 'saved-queries.json');
 
+// 批次时间（订阅页「批量修改批次时间」的落盘）。
+// 2026-09-20 从 publish/config/ 搬到 shared/ —— 它和库一样是**运行时数据**，
+// 而 config/ 在代码目录里：重新部署（新包覆盖目录）会把它盖成包里那份空文件，数据就没了。
+const BATCH_TIMES_DEFAULT = path.resolve(__dirname, '..', 'shared', 'batch-times.json');
+const BATCH_TIMES_LEGACY = path.join(__dirname, 'config', 'batch-times.json');
+
 let queriesDbState = null;      // { store, file } | null（不可用 / 未成功打开）
 let queriesDbTried = false;
 
@@ -630,6 +636,13 @@ let queriesDbTried = false;
  * @returns {string} */
 function legacyQueriesFile() {
   return process.env.PROXY_QUERIES_FILE || QUERIES_JSON_DEFAULT;
+}
+
+/** 批次时间的落盘文件：环境变量优先（与 legacyQueriesFile 同一口径）
+ * @returns {string} */
+function batchTimesFile() {
+  const f = process.env.PROXY_BATCH_TIMES_FILE;
+  return f ? path.resolve(f) : BATCH_TIMES_DEFAULT;
 }
 
 /** 把旧 JSON 文件里的记录搬进数据库（只在库还是空的时候做一次） */
@@ -774,19 +787,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 缓存管理：设了 PROXY_ADMIN_TOKEN 才需要带 ?token= 才放行（默认不设=不鉴权，方便本地开发）
-  const ADMIN_TOKEN = process.env.PROXY_ADMIN_TOKEN || '';
+  // 缓存管理。这些是**内网自用**的管理端点，不做鉴权。
+  // （2026-09-20 用户拍板：整台服务器只有他一个人部署、数据也只落这一台，
+  //   原来那层 PROXY_ADMIN_TOKEN 的 token 校验一并去掉，别再加回来。）
   const cachePath = (() => { try { return new URL(req.url, 'http://localhost').pathname; } catch (_) { return req.url; } })();
-  const adminOk = () => {
-    if (!ADMIN_TOKEN) return true;
-    try {
-      const t = new URL(req.url, 'http://localhost').searchParams.get('token') || '';
-      return t === ADMIN_TOKEN;
-    } catch (_) { return false; }
-  };
 
   if (cachePath === '/cache/list') {
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     const idx = readIndex();
     sendJson(res, 200, {
       code: 200,
@@ -798,7 +805,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (cachePath === '/cache/clear') {
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     try {
       let removed = 0;
       for (const f of fs.readdirSync(CACHE_DIR)) {
@@ -818,7 +825,7 @@ const server = http.createServer((req, res) => {
   // ⚠️ 这条以前既不鉴权、又把 loadEnv() 原样回出去（= 任何人 curl 一下就拿到
   //    PROXY_TOKEN / PROXY_COOKIE，而代理默认监听所有网卡）。现在：要 token、且只回键名。
   if (cachePath === '/reload') {
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     refreshConfig();
     const keys = Object.keys(loadEnv() || {});
     sendJson(res, 200, { code: 200, msg: 'reloaded', keys });
@@ -826,9 +833,9 @@ const server = http.createServer((req, res) => {
   }
 
   // Token 管理端点：页面上更改 token，支持覆盖 .env 或仅当次有效
-  // 鉴权与 /cache/* 一致：设了 PROXY_ADMIN_TOKEN 才要求 ?token=（默认不设=不鉴权，方便本地开发）
+  // 内网自用，不做鉴权（与 /cache/* 同一口径）
   if (cachePath === '/admin/token') {
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     const bufs = [];
     req.on('data', (c) => bufs.push(c));
     req.on('end', () => {
@@ -883,9 +890,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // 获取当前 token 状态（同 /admin/token，设了 PROXY_ADMIN_TOKEN 才鉴权）
+  // 获取当前 token 状态（同 /admin/token）
   if (cachePath === '/admin/token/status') {
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     sendJson(res, 200, {
       code: 200,
       hasToken: !!TOKEN_REFRESHED,
@@ -900,19 +907,33 @@ const server = http.createServer((req, res) => {
   //   GET  /local/batch-times → { code:200, data:{ batchTimes:{...} } }
   //   POST /local/batch-times   body { batchTimes:{...} } → 写回文件
   if (cachePath === '/local/batch-times') {
-    // 与 /cache/*、/admin/* 同一口径：设了 PROXY_ADMIN_TOKEN 才要求 ?token=（默认不设=不鉴权）。
-    // 代理默认监听所有网卡 + CORS 是 *，所以「团队共用一个代理」时这些端点全网卡可写；
-    // 至少留一个开关能把写权限收住（不改默认行为，避免弄坏现在的本机开发）。
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
-    const FILE = path.join(__dirname, 'config', 'batch-times.json');
-    if (req.method === 'GET' || req.method === 'HEAD') {
+    const FILE = batchTimesFile();
+    // 老位置（publish/config/）的文件第一次用到时**复制**过去，不删原文件（留着当备份）——
+    // 与 saved-queries 的迁移同一手法：只在"新位置还没有"时搬，免得把已经写进去的新数据盖掉。
+    if (FILE === BATCH_TIMES_DEFAULT && !fs.existsSync(FILE) && fs.existsSync(BATCH_TIMES_LEGACY)) {
+      try {
+        fs.mkdirSync(path.dirname(FILE), { recursive: true });
+        fs.copyFileSync(BATCH_TIMES_LEGACY, FILE);
+        console.log(`[batch-times] 已把旧文件迁到 ${FILE}（旧的留着当备份，可自行删除）`);
+      } catch (e) {
+        console.log(`[batch-times] 迁移旧文件失败（不影响使用）: ${e.message}`);
+      }
+    }
+
+    /** 读当前文件：不存在 / 坏了都当"空配置"，不让一次坏数据把端点打成 500 */
+    const readBatch = () => {
       try {
         const raw = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : '';
-        const data = raw ? JSON.parse(raw) : { batchTimes: {} };
-        sendJson(res, 200, { code: 200, data });
-      } catch (e) {
-        sendJson(res, 500, { code: 500, msg: '读取批次时间失败: ' + e.message });
+        if (!raw) return { batchTimes: {} };
+        const parsed = JSON.parse(raw);
+        return (parsed && typeof parsed === 'object') ? parsed : { batchTimes: {} };
+      } catch (_) {
+        return { batchTimes: {} };
       }
+    };
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      sendJson(res, 200, { code: 200, data: readBatch() });
       return;
     }
     if (req.method === 'POST' || req.method === 'PUT') {
@@ -923,14 +944,31 @@ const server = http.createServer((req, res) => {
           const text = Buffer.concat(bufs).toString('utf8') || '{}';
           if (text.length > 64 * 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
           const parsed = JSON.parse(text);   // 必须是合法 JSON，避免把配置文件写坏
+
+          // ⚠️ **按键合并，不是整份覆盖**（2026-09-20 改）。
+          // 页面发上来的是"它手上那份完整 batchTimes"，而多个人可能同时在改**不同批次**：
+          // 直接覆盖会让后保存的那份把先保存的整份盖掉 —— 甲的改动凭空消失。
+          // 规则：以文件里现有的铺底，再用这次的键覆盖同名键。
+          // （页面传空串表示"清空这个批次的日期"，也算一次有效覆盖，要保留。）
+          const old = readBatch();
+          const merged = Object.assign({}, old, parsed);
+          merged.batchTimes = Object.assign({}, old.batchTimes || {}, (parsed && parsed.batchTimes) || {});
           // 页面只写 batchTimes，保留文件里的 _comment（让配置自带说明）
-          try {
-            const old = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-            if (old && old._comment && parsed._comment == null) parsed._comment = old._comment;
-          } catch (_) { /* 旧文件不存在/损坏 → 忽略 */ }
+          if (old && old._comment && merged._comment == null) merged._comment = old._comment;
+
+          // 原子写：先写 .tmp 再 rename。直接 writeFileSync 中途失败（磁盘满 / 进程被杀）
+          // 会留下半截 JSON，下次 GET 就再也读不出来 —— 与 saved-queries 的 JSON 分支同一手法。
           fs.mkdirSync(path.dirname(FILE), { recursive: true });
-          fs.writeFileSync(FILE, JSON.stringify(parsed, null, 2) + '\n', 'utf8');
-          sendJson(res, 200, { code: 200, msg: '已保存', file: 'config/batch-times.json' });
+          const tmp = `${FILE}.tmp-${process.pid}-${Date.now()}`;
+          try {
+            fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + '\n', 'utf8');
+            fs.renameSync(tmp, FILE);
+          } catch (e) {
+            try { fs.unlinkSync(tmp); } catch (_) { /* 临时文件清不掉不重要 */ }
+            sendJson(res, 500, { code: 500, msg: `写入失败（${FILE}）: ${e.message}` });
+            return;
+          }
+          sendJson(res, 200, { code: 200, msg: '已保存', file: path.basename(FILE), batchTimes: merged.batchTimes });
         } catch (e) {
           sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
         }
@@ -950,9 +988,9 @@ const server = http.createServer((req, res) => {
   // 存储：优先 SQLite（shared/saved-queries.db，能回答「多少人保存过」）；
   //       Node 不支持内置 node:sqlite 时自动降级到原来的 JSON 文件实现。
   if (cachePath === '/local/saved-queries') {
-    // 同 /local/batch-times：默认不鉴权（本机开发要用），设了 PROXY_ADMIN_TOKEN 就必须带 ?token=。
+    // 同 /local/batch-times：内网自用，不做鉴权。
     // 不设这道关时，同网段任何机器（甚至任意网页，因为 CORS 是 *）都能读光、改写、删空这份团队库。
-    if (!adminOk()) { sendJson(res, 401, { code: 401, msg: '未授权：缺少或错误的 token（需 ?token=）' }); return; }
+    // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
     const store = getQueriesStore();          // SQLite 不可用返回 null → 走下面 JSON 兜底
     if (store) {
       if (handleQueriesSqlite(req, res, store)) return;
@@ -1240,9 +1278,7 @@ server.on('error', (err) => {
 server.listen(PORT, HOST, () => {
   console.log(`\n✅ 服务器运行在 http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`);
   console.log(`   🌐 监听地址：${HOST}` + (HOST === '127.0.0.1' ? '（只本机）' : '（全网卡，同事可直接连这台）')
-    + (process.env.PROXY_ADMIN_TOKEN
-      ? '；/local/* 与 /cache/* 需 ?token='
-      : '；未设 PROXY_ADMIN_TOKEN → /local/* 与 /cache/* 不鉴权（内网自用，见 proxy.js 顶部注释）'));
+    + '；/local/* 与 /cache/* 不鉴权（内网自用，见 proxy.js 顶部注释）');
   console.log(`   📄 静态文件：从 ${__dirname} 提供（HTML/JS/CSS 等）`);
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);

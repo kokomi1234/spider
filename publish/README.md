@@ -253,7 +253,7 @@ publish/
   右侧固定操作列；列宽可拖（双击恢复）
 - 投产优先级：批次 → 基线里程碑，逾期整行标红；规则集中在 `js/ui/priority.js`
 - 默认按优先级排序（结果 ≤1000 条时整批拉回前端排序分页）；「查 看」跳转 ITAMP 真实系统
-- 批量修改批次时间弹窗：日期统一走 `js/ui/date-picker.js`，落盘到 `config/batch-times.json`
+- 批量修改批次时间弹窗：日期统一走 `js/ui/date-picker.js`，落盘到 `shared/batch-times.json`（经代理端点，2026-09-20 从 publish/config/ 搬来）
 
 ## ⚙️ 配置说明
 

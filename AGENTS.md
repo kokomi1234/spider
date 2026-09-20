@@ -82,7 +82,7 @@ node tests/smoke-browser.js  # 无头浏览器冒烟，必须打印 "ALL PASS"�
 | `shared/saved-queries.db*`、`shared/saved-queries.json` | ❌ 不入库、不当测试靶子 | 「常用查询」团队库运行时数据（含人名/部门）。探针必须用 `PROXY_QUERIES_DB=/tmp/...` 指到临时文件 |
 | `.workbuddy/` | ⚠️ 只能**追加**，不重写别人的既有条目 | 跨会话记忆；重写会让别的会话丢上下文 |
 | `publish/tools/my-subscribed-services.txt` | ❌ 不改不提交 | 真实订阅数据 |
-| `publish/config/batch-times.json` | ⚠️ 随包为空文件，别往里写本机值 | 页面靠「取有数据的来源」逻辑合并，塞值会盖住用户自己的设置 |
+| `publish/config/batch-times.json` | ⚠️ 只当"随包发的静态默认值"（空文件），别往里写运行时的值 | 运行时数据现在落 `shared/batch-times.json`（2026-09-20 搬的，避免重新部署被新包盖掉） |
 | `.env`、`publish/.env` | ❌ 绝不提交、绝不打印 | 凭据 |
 
 ## 6. 本项目最容易踩的硬规则（细节以 `MEMORY.md` 为准）
