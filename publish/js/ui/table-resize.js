@@ -78,7 +78,6 @@
         const handle = document.createElement('span');
         handle.className = 'col-resizer';
         handle.dataset.col = String(i);
-        handle.title = '拖动调整列宽，双击恢复默认';
         handle.setAttribute('aria-hidden', 'true');
         th.appendChild(handle);
 

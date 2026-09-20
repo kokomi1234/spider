@@ -63,7 +63,6 @@
   const PAGE_SIZE = 10;   // 与抓包里的 pageSize 默认值一致
   const EXPORT_PAGE_SIZE = 500;
   const EXPORT_MAX = 5000;
-  const EXPORT_BTN_TITLE = '导出当前筛选结果（全部，不限当前页）';
   // 进行中的导出：ctl 让「再点一次」能取消，progress 给 #resultCount 报数
   // （5000 条要串行拉 10 页，是页面里最长的一个动作，不能只有一个「导出中…」）
   let exportCtl = null;
@@ -407,7 +406,6 @@
     if (btn) {
       if (!btn.dataset.label) btn.dataset.label = btn.textContent.trim();
       btn.textContent = '取消导出';
-      btn.title = '点击取消本次导出（不会生成文件）';
     }
     exportCtl = (typeof window.AbortController === 'function') ? new window.AbortController() : null;
     const signal = exportCtl ? exportCtl.signal : null;
@@ -446,7 +444,6 @@
       setProgress(null);
       if (btn) {
         btn.textContent = btn.dataset.label || '导出 CSV';
-        btn.title = EXPORT_BTN_TITLE;
       }
     }
   }

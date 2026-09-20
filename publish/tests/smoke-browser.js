@@ -2983,7 +2983,7 @@ const PAGES = [
         document.body.appendChild(wrap);
         const inst = window.createSearchableSelect(sel, [{ value: 'v1', label: '一个特别长的选项名称用于验证省略号后的完整值' }]);
         inst.setValue('v1');
-        out.selTitle = wrap.querySelector('.searchable-select-input').title;
+        out.selTitle = wrap.querySelector('.searchable-select-input').getAttribute('aria-label') || '';
         inst.destroy();
         wrap.remove();
         return out;
@@ -3008,8 +3008,10 @@ const PAGES = [
       }
       if (!r.infoInsideBar) fails.push('#pageInfo 应在分页条内');
       if (!r.infoLiveMatchesCount) fails.push('#pageInfo 的 aria-live 应与 #resultCount 同口径');
-      if (!r.selTitle || !r.selTitle.includes('特别长')) {
-        fails.push(`可搜索下拉选中后应把完整 label 写进 title，实际 ${JSON.stringify(r.selTitle)}`);
+      // 2026-09-21：提示文字删光后，完整值不再进 title/aria-label；
+      // aria-label 只承担「可访问名=字段名」这一个职责，永远非空即可。
+      if (!r.selTitle || !r.selTitle.trim()) {
+        fails.push(`可搜索下拉的 aria-label（可访问名）必须非空，实际 ${JSON.stringify(r.selTitle)}`);
       }
     } catch (e) {
       fails.push(`第三批（尺寸/语义）段异常：${e.message}`);
@@ -3596,9 +3598,8 @@ const PAGES = [
       process.stdout.write(`  订阅面板本地口径: ${JSON.stringify(r)}\n`);
       if (r.hasBtn !== true || r.hasMgr !== true) fails.push('订阅面板/管理器未就绪，用例无效');
       if (r.btnText !== '已订阅 (2)') fails.push(`计数按钮应显示「已订阅 (2)」，实际 ${JSON.stringify(r.btnText)}`);
-      if (!/本机/.test(r.btnTitle)) fails.push(`计数按钮 title 要说明是本机清单，实际 ${JSON.stringify(r.btnTitle)}`);
-      if (!/本机维护的标记/.test(r.bodyText)) fails.push('面板里应写清「本机维护的标记」，否则会被当成服务端数据');
-      if (!/换浏览器|清缓存/.test(r.bodyText)) fails.push('面板里要提示「换浏览器/清缓存会丢」');
+      // 2026-09-21：提示文字删光，来源说明收进面板一行「本机清单（非服务端订阅关系）」
+      if (!/本机清单/.test(r.bodyText)) fails.push('面板里要写明「本机清单」，否则会被当成服务端数据');
       if (!(/本机清单|本机这条标记/.test(r.confirmText))) {
         fails.push(`删除确认要说清只删本机标记，实际 ${JSON.stringify(r.confirmText)}`);
       }

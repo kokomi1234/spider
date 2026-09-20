@@ -96,7 +96,6 @@
     const main = document.createElement('a');
     main.className = 'saved-main';
     main.href = window.SavedQuery.hrefFor(item.page, item.id);
-    main.title = `打开常用查询：${item.name}`;
     // 从首页点开一次就算一次「打开」，这是「高频」的判据（纯本地计数）
     main.addEventListener('click', () => {
       // hit 已 async 化（服务端优先）：失败也绝不挡跳转 —— 同步异常与 Promise 拒绝都要吞掉
@@ -134,7 +133,6 @@
       meta.className = 'saved-meta';
       meta.textContent = who;
       if (Array.isArray(item.saverNames) && item.saverNames.length) {
-        meta.title = `保存过这份条件的人：${item.saverNames.join('、')}`;
       }
       main.appendChild(meta);
     }
@@ -373,7 +371,6 @@
       if (userAvatarEl) userAvatarEl.textContent = name.slice(0, 1);
       if (userLabelEl) userLabelEl.textContent = u.userId ? `${name}（${u.userId}）` : name;
       if (userDeptEl) userDeptEl.textContent = CU.deptLabel(u) || '（未识别部门）';
-      if (userSetEl) userSetEl.title = CU.label(u) || name;   // hover 看完整一行
     } else {
       if (userAvatarEl) userAvatarEl.textContent = '';
       if (userLabelEl) userLabelEl.textContent = '';

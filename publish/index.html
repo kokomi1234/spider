@@ -271,7 +271,7 @@
     <div class="page-header">
       <h1>ITAMP 数据查询</h1>
       <div class="toolbar">
-        <button class="outlined btn-sm" id="btnTokenManager" title="代理 Token 管理">🔑 Token</button>
+        <button class="outlined btn-sm" id="btnTokenManager">🔑 Token</button>
       </div>
     </div>
 
@@ -348,12 +348,6 @@
           </label>
           <button type="button" class="filled btn-sm" id="btnUserSearch">查 询</button>
         </div>
-        <p class="field-note">
-          用于把常用查询归到你的部门（首页「部门常用查询」按它过滤）。
-          数据只写进本地代理的库文件，不提交给 ITAMP 服务端。<br>
-          提示：<strong>工号或姓名都能查</strong>——工号是唯一的、最稳；按姓名是模糊匹配，
-          同名多命中时接口会直接报错，那种情况改用完整姓名或工号即可。
-        </p>
       </div>
     </div>
 
@@ -368,10 +362,8 @@
           <span class="sync-state is-local" id="savedSync" aria-live="polite" hidden></span>
           <!-- 列表按「当前用户」过滤（服务端 ?user=<工号>，回落本机），所以换人就会换列表；
                导出/导入导的是**本机全部记录**，不只当前用户这几条 -->
-          <button type="button" class="outlined btn-xs" id="btnExportQueries"
-                  title="把本机全部常用查询导出成 JSON，发给同团队的人">导 出</button>
-          <button type="button" class="outlined btn-xs" id="btnImportQueries"
-                  title="导入他人导出的 JSON（按 id 或同页面同名合并，重复导入不会翻倍）">导 入</button>
+          <button type="button" class="outlined btn-xs" id="btnExportQueries">导 出</button>
+          <button type="button" class="outlined btn-xs" id="btnImportQueries">导 入</button>
         </div>
       </div>
       <div class="card-body">
@@ -400,21 +392,9 @@
       <div class="card-body">
         <div class="saved-list" id="deptList"></div>
         <div class="home-empty" id="deptEmpty" hidden></div>
-        <p class="home-note">
-          <strong>本机口径</strong>：这张卡是按「<strong>同一份查询条件被本部门几个人保存过</strong>」排的 ——
-          人多的排前面（一个人反复存同一份，也只算一个人）。统计需要把大家的数据凑在一起，
-          所以要先起本地代理（<code>node proxy.js</code>），数据落在它的 SQLite 库里；
-          <b>没连代理时退回本机算</b>，那时只能看到这台电脑上存过的。
-          设置「当前用户」后，你自己保存的查询会自动归入所在部门。
-        </p>
       </div>
     </div>
 
-    <p class="home-note">
-      数据来自 ITAMP 内网服务，需通过本地代理（<code>node proxy.js</code>）访问；
-      常用查询与当前用户<b>先落本机浏览器（localStorage）</b>，起了代理时才会与它的共享库双向同步
-      —— 上面那个角标就是当前的同步状态，「仅本机」意味着同事的记录你这边看不到。
-    </p>
   </div>
 
   <!-- Toast -->

@@ -66,11 +66,10 @@
 
     dialog.innerHTML = `
       <h2 style="margin:0 0 16px 0;">已订阅服务管理</h2>
-      <!-- 来源说明：远端查不到「我订阅了哪些服务」，这份清单只能本地维护。
-           不写清楚的话，用户会默认是服务端数据，清一次缓存就以为订阅丢了。 -->
-      <p style="margin:0 0 16px 0;font-size:var(--fs-xs);color:var(--muted);line-height:1.6;">
-        这份清单是<strong>本机维护的标记</strong>：后端没有可用的订阅查询接口，列表来自手动添加 / 批量导入的记录。
-        它不等于服务端的真实订阅关系；换浏览器或清缓存会丢，建议用「批量导出」留一份备份。
+      <!-- 2026-09-21 用户要求删光提示文字：这段长说明改成一行事实标签。
+           必须留「本机」两字 —— 远端查不到「我订阅了哪些服务」，不写清楚用户会当成服务端数据。 -->
+      <p style="margin:0 0 16px 0;font-size:var(--fs-xs);color:var(--muted);">
+        本机清单（<strong>非服务端订阅关系</strong>）
       </p>
       
       <!-- 统计 -->
@@ -142,7 +141,6 @@
     btnSubscribePanel.textContent = `已订阅 (${count})`;
     // 悬停说明来源：后端查不到订阅关系，这个数字是本机清单的条数。
     // 不写会被当成服务端数据，清一次缓存就以为订阅丢了。
-    btnSubscribePanel.title = `本机「已订阅」清单里有 ${count} 条（后端无订阅查询接口，数据来自手动添加 / 批量导入；换浏览器或清缓存会丢）`;
     const countEl = $('#subCount');
     if (countEl) countEl.textContent = count;
   }
