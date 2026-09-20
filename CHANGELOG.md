@@ -30,6 +30,39 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-21 01:45] Agent-Review（只读全量测试，分支 `workbuddy/dev-e2d2ccd2`）
+
+**性质：只读任务，未改任何业务代码。** 用户要求「先拉最新 → 全量测前端 → 只报问题，等我确认再改」。
+
+**同步**：起点 `1d785ad` 落后 `origin/dev` 4 个提交，工作区干净 → `git merge --ff-only origin/dev` 到
+`47c4d49`，**无冲突、未产生提交**。
+
+**交付物**：`docs/前端全量测试报告-20260921.md`（53 项被测项 + 10 个问题，含复现步骤与修复建议）。
+
+**结论摘要（下一个 Agent 别重新判断）**
+- **唯一会抛异常的缺陷**：`home.js:731` `exportQueries()` 的 toast 引用了不存在的 `items`
+  → 首页点「导 出」抛 `ReferenceError`（文件其实下载成功，但没有成功提示）。
+  根因是 2026-09-20 改版后导出主体变成服务端团队库，本机 `items` 数组没了、toast 那行没跟着改。
+  修法建议从 `exportJsonAsync()` 的文本里解析条数，**别在导出路径上再引入第二个异常**。
+- 门禁基线：`602/603 通过` + 冒烟 `ALL PASS`。那 1 条失败是 `业务时区…` 报 `spawnSync EBUSY`，
+  **已确认是环境错误**：手工跑 `tests/probes/tz-probe.js`（4 个时区）输出全是
+  `today=2026-10-01` / 窗口起点 `2608批次`，逻辑正确。Windows 下 `execFileSync` 连续 spawn 被拒。
+- 真实缺陷集中在「用户不知道发生了什么」：订阅页 3 个多选选项为空却显示「没有匹配项」
+  （`subscription.js:668-671` 不判 `res.ok`）；401 无任何 Token 过期引导。
+- 响应式 **11 个视口 0 横向溢出**，唯一破口是 `subscription.html:261`
+  `.batch-time-dialog{min-width:600px}` 在 390px 下右溢出 98px。
+
+**测试环境的三个硬限制（下次别重复踩）**
+1. **任务单查询接口 `taskFormSelectList` 在缓存里 0 命中** → 离线该页查询必然失败，
+   成功态测不了（失败态已完整验证）。
+2. **缓存目录不在本 worktree**：`publish/cache/` 是空的，真实的 82 条录制在
+   `C:/Users/10669/Desktop/spider/publish/cache/`。跑代理要显式 `PROXY_CACHE_DIR` 指过去。
+3. 订阅页必填校验会拦下查询，**route 注入 500/401 也进不了请求阶段**；
+   它的错误态只能靠同构的任务单页佐证（两页共用 `query-feedback` + `#failBar`）。
+
+**下一步**：**等用户确认后再动手改**。建议顺序 P1-1 → P2-2/P2-1 → P2-3/P2-4 → P3 一批清理。
+无锁定。
+
 ### [2026-09-21 00:05] 主会话（发布 stable-20260920-4）
 
 **动作**：dev 跑全门禁（`603/603 通过` + 冒烟 `ALL PASS`）→ `git checkout main && git merge --ff-only dev`
