@@ -176,6 +176,7 @@
     if (!name || !String(name).trim()) return; // 点取消 / 空输入：什么都不做
     const r = window.SavedQuery.rename(id, String(name).trim());
     if (!r.ok) { showToast(r.error || '重命名失败', 3000, 'error'); return; }
+    markLocalWrite();   // 本地刚改过：别让紧接着的 ?user= 旧响应把新名字刷回去
     showToast('已重命名', 1800, 'success');
     render();
   }
@@ -190,6 +191,7 @@
     if (!yes) return;
     const r = window.SavedQuery.remove(id);
     if (!r.ok) { showToast(r.error || '删除失败', 3000, 'error'); return; }
+    markLocalWrite();   // 同上：别让旧响应把已经删掉的卡片又画回来
     showToast('已删除', 1800, 'success');
     render();
   }
@@ -281,6 +283,20 @@
   /** 记录「我的列表」这次请求是针对谁的：慢响应回来时人已经换过就不能覆盖（与部门区同一手法） */
   let mineReqSeq = 0;
 
+  /**
+   * 本地最近一次**写操作**的时间（重命名 / 删除 / 导入）。
+   *
+   * 为什么要它：这些操作写本地之后，`SavedQuery` 里的同步推送是 fire-and-forget 的
+   * （`autoPush()` 不 await），而首页这边 `renderSaved()` 每次渲染又会去 `?user=` 拉一份
+   * 服务端数据覆盖 DOM —— **GET 经常跑赢 POST**，拿回来的是"改之前"的旧数据，
+   * 于是刚改好的名字被刷回去，而且之后不会再有重渲染来纠正，看起来就像"改名没生效"。
+   * （2026-09-20 子代理真点 UI 才发现；调 API 的测法看不到。）
+   */
+  let lastLocalWriteAt = 0;
+
+  /** 记一次本地写操作，供上面的陈旧响应判断使用 */
+  function markLocalWrite() { lastLocalWriteAt = Date.now(); }
+
   async function loadMineFromServer(u) {
     const S = window.SavedQuery;
     if (!S || typeof S.mineFromServer !== 'function') return;
@@ -292,6 +308,11 @@
       return;   // 请求炸了不该影响已经渲染好的本机视图
     }
     if (seq !== mineReqSeq) return;                            // 已经有更新的请求了
+    // 本地刚写过（重命名/删除/导入）的 5 秒内，?user= 拉回来的都可能是旧数据 ——
+    // 那次写操作的 POST 还在路上，服务端返回的是"改之前"的全集，拿它覆盖 DOM
+    // 就会表现成「改名后名字弹回旧名 / 导入的东西看不见」。
+    // 本地才是最新的真相：窗口期内以本地为准。（2026-09-20 子代理真点 UI 发现。）
+    if (Date.now() - lastLocalWriteAt < 5000) return;
     const CU = window.CurrentUser;
     const now = CU ? CU.get() : null;
     if (!now || String(now.userId || now.userName || '') !== String(u.userId || u.userName || '')) return;
@@ -753,9 +774,12 @@
       if (!file) { input.remove(); return; }
       const reader = new FileReader();
       reader.onload = () => {
-        const r = S.importJson(String(reader.result || ''));
+        const r = window.SavedQuery.importJson(String(reader.result || ''));
         input.remove();
         if (!r.ok) { showToast(r.error || '导入失败', 3800, 'error'); return; }
+        // 导入是本机的一次**写操作**：记下来，免得紧接着那次 ?user= 的响应（可能还是空库）
+        // 把刚导入的条目从 DOM 上盖掉（2026-09-20 子代理真点 UI 发现的）。
+        markLocalWrite();
         render();
         showToast(`已导入：新增 ${r.added} 条、合并 ${r.merged} 条，本机现有 ${r.total} 条`, 4000, 'success');
       };

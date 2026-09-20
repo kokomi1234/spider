@@ -550,6 +550,10 @@
       return fail(`合并后共 ${items.length} 条，超过上限 ${MAX_ITEMS} 条，请先清理一些再导入`);
     }
     const w = writeRaw(items);
+    // 与 save / rename / remove 一致：导入也是本机的一次**写操作**，要推给共享库。
+    // 之前只有它没有 autoPush —— 后果是"从空库导入后，首页 ?user= 拉回空数据把刚导入的
+    // 条目盖掉"，而且导进来的东西永远只留在这一台机器上（2026-09-20 子代理真点 UI 发现）。
+    if (w.ok) autoPush();
     return w.ok ? { ok: true, added, merged, total: items.length } : w;
   }
 
