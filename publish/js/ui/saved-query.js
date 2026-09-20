@@ -119,6 +119,31 @@
     return String(o.userId || o.userName || '').trim();
   }
 
+  /**
+   * 这条记录**谁保存过**（可能不止一个人）。
+   *
+   * 为什么不能只看 owner：记录经服务端往返之后，owner 是「最早保存的那个人」
+   * （lib/queries-db.js 的 toRecord 取 savers[0]）——「我保存过」这件事在 owner 上看不出来。
+   * 2026-09-20 实测：B 保存后服务端回传的 owner 仍是 A，本机列表被服务端全集覆盖，
+   * 于是 listForUser(B) 恒为空，表现成「第二个用户怎么存都存不进去、条数还是第一个人的」。
+   * 服务端在 saverKeys 里如实回传了全部保存者，这里把它和 owner 合起来用。
+   *
+   * @param {object} item 记录
+   * @returns {string[]} 去重后的键（工号优先、姓名兜底）
+   */
+  function saverKeysOf(item) {
+    const out = [];
+    const own = userKeyOf(item && item.owner);
+    if (own) out.push(own);
+    if (item && Array.isArray(item.saverKeys)) {
+      item.saverKeys.forEach((k) => {
+        const s = String(k == null ? '' : k).trim();
+        if (s) out.push(s);
+      });
+    }
+    return Array.from(new Set(out));
+  }
+
   /** labels 只收 string（展示用），空值丢弃 */
   function cleanLabels(labels) {
     const out = {};
@@ -178,6 +203,13 @@
         ? item.saverNames.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim())
         : [],
       recentUser: typeof item.recentUser === 'string' ? item.recentUser.trim() : '',
+      // 服务端（SQLite 侧 saver 表）回传的「谁保存过」全集。本机离线写的记录没有这个字段，
+      // 那时退化成只看 owner —— 两种来源都要能用，所以「有就用、没有就空数组」。
+      saverKeys: Array.isArray(item.saverKeys)
+        ? Array.from(new Set(item.saverKeys
+          .map((k) => String(k == null ? '' : k).trim())
+          .filter(Boolean)))
+        : [],
     };
   }
 
@@ -282,7 +314,9 @@
     const key = userKeyOf(user);
     if (!key) return [];
     const mine = list()
-      .filter((it) => userKeyOf(it.owner) === key)
+      // 用 saverKeysOf 而不是 owner：owner 只是「最早保存的那个人」，
+      // 经服务端往返后可能不是我（见 saverKeysOf 的注释）。
+      .filter((it) => saverKeysOf(it).includes(key))
       .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || (b.at - a.at));
     const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
     return n ? mine.slice(0, n) : mine;
@@ -332,14 +366,24 @@
       if (v !== null && v !== '') cleanedFields[k] = v;
     });
 
-    const items = list();
-    const exists = items.find((it) => it.page === page && it.name === title);
     // 谁保存的（用于「我的常用查询」与部门排行）。没显式传就取「当前用户」。
     // ⚠️ 这个兜底**要求每个引用本模块的页面都加载了 current-user.js** ——
     // 少引一个脚本不会报错，只会让 owner 静默变成 null，那条记录就永远进不了
     // 任何按人/按部门的视图（2026-09-19 的三个查询页正是这么坏的）。
     // 所以这里把「取不到归属」显式回给调用方，由页面 toast 说给用户听。
+    // 注意它要**先于**同名判重算出来 —— 归属人是「同名算更新还是新增」的一半判据。
     const ownerInfo = cleanOwner(owner || (window.CurrentUser && window.CurrentUser.get()));
+    const myKey = userKeyOf(ownerInfo);
+
+    const items = list();
+    // 「同名同页」只对**同一个人**算更新。
+    // 团队库里 A 和 B 各自保存一份同名查询是**两条不同的记录**（默认名由筛选条件生成，
+    // 两个人从同一份条件保存必然同名）：以前只看 page+name，B 保存会复用 A 的 id，
+    // 服务端 `ON CONFLICT(id)` 把 B 的条件写进 A 那条，A 反过来也看不到 B 的。
+    // 2026-09-20 实测：B 保存后服务端回传的 owner 仍是 A（savers[0]），本机被服务端全集覆盖
+    // → listForUser(B) 恒为空，表现成「第二个用户怎么存都存不进去」。
+    const exists = items.find((it) => it.page === page && it.name === title
+      && userKeyOf(it.owner) === myKey);
     const item = {
       id: exists ? exists.id : newId(),
       page,
@@ -454,9 +498,11 @@
    * @returns {{ok:boolean, added?:number, merged?:number, total?:number, error?:string}}
    */
   /**
-   * 合并两份列表（幂等）：按 id 或「同页面 + 同名」判重，计数取 max ——
+   * 合并两份列表（幂等）：按 id，或「同页面 + 同名 + 同一个人」判重，计数取 max ——
    * 反复提交同一个文件不该把「高频」刷上去。
-   * 导出/导入与代理同步共用这一份规则（代理侧 proxy.js 有等价实现）。
+   * 判重**必须带上人**：不同的人各自保存同名查询是两条记录，只看 page+name 会把别人的吞掉
+   * （2026-09-20 实测：第二个用户那条就是这样消失的）。
+   * 导出/导入与代理同步共用这一份规则。
    */
   function mergeItems(localItems, incoming) {
     const items = (localItems || []).slice();
@@ -464,13 +510,17 @@
     let merged = 0;
     (incoming || []).forEach((inc) => {
       const same = items.find((it) => it.id === inc.id
-        || (it.page === inc.page && it.name === inc.name));
+        || (it.page === inc.page && it.name === inc.name
+          && userKeyOf(it.owner) === userKeyOf(inc.owner)));
       if (same) {
         same.hits = Math.max(same.hits || 0, inc.hits || 0);
         same.saves = Math.max(same.saves || 1, inc.saves || 1);
         same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
         if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
         if (!same.labels && inc.labels && Object.keys(inc.labels).length) same.labels = inc.labels;
+        // 「谁保存过」取并集：合并后两个人的名单都要留着，
+        // 否则并过来的那一位又看不见这条了（与 owner 只看最早的那位是同一个坑）。
+        same.saverKeys = Array.from(new Set([...(same.saverKeys || []), ...(inc.saverKeys || [])]));
         merged += 1;
       } else {
         items.push(inc);
@@ -810,6 +860,7 @@
     listForUser,
     mineFromServer,
     userKeyOf,
+    saverKeysOf,
     fingerprintOf,
     exportJson,
     importJson,

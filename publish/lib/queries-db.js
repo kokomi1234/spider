@@ -184,6 +184,10 @@ function open(file) {
       } : null,
       // 服务端算好的「几个人保存过」：前端不必再猜
       savers: new Set(savers.map((s) => s.user_key)).size,
+      // 「谁保存过」的全集（去重后的 user_key）。前端 saved-query.js 的 listForUser 靠它
+      // 判断「这条是不是我的」—— 只看 owner 不行：owner 是 savers[0]（最早保存的那位），
+      // 第二个人保存过的记录会被判成别人的（2026-09-20 实测：第二个用户看不到自己存的）。
+      saverKeys: [...new Set(savers.map((s) => s.user_key))],
       saverNames: [...new Set(savers.map((s) => s.user_name || s.user_key))],
       recentUser: savers.length
         ? (savers.slice().sort((a, b) => b.saved_at - a.saved_at)[0].user_name || '')

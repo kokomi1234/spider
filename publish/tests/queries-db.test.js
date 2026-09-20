@@ -141,6 +141,22 @@ testOrSkip('queries-db：byUser 只返回这个人保存过的（个人视图）
   s.close();
 });
 
+testOrSkip('queries-db：记录带 saverKeys —— 前端靠它认「我保存过」，不能只给 owner', () => {
+  // owner 只是 savers[0]（最早保存的那位），第二个保存的人在 owner 上看不出来。
+  // 2026-09-20 实测：少了 saverKeys，第二个用户的「我的常用查询」恒为空。
+  const s = freshStore();
+  s.upsert([
+    { id: 'q1', page: 'publish', name: '共同条件', fields: { ...COND }, owner: A, at: 1000 },
+    { id: 'q1', page: 'publish', name: '共同条件', fields: { ...COND }, owner: B, at: 2000 },
+  ], []);
+  const rec = s.all()[0];
+  assert.strictEqual(rec.savers, 2);
+  assert.deepStrictEqual([...rec.saverKeys].sort(), ['1001', '1002'], '两个人的 key 都要在');
+  assert.strictEqual(rec.owner.userId, '1001', 'owner 仍是最早保存的那位（保持旧契约）');
+  assert.deepStrictEqual(s.byUser('1002', 10).map((x) => x.name), ['共同条件'], '后保存的人个人视图里要有');
+  s.close();
+});
+
 testOrSkip('queries-db：重复 upsert 幂等（条数不涨、人数不涨、hits 取 max）', () => {
   const s = freshStore();
   const item = { id: 'q1', page: 'publish', name: '一条', fields: { ...COND }, owner: A, at: 1000, hits: 2 };

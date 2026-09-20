@@ -100,6 +100,20 @@ test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 
   assert.strictEqual(S.list()[0].fields.x, '2', '应覆盖为最新条件');
 });
 
+test('saved-query：同名同页但换了个人 → 新建一条，不复用别人的 id（2026-09-20 回归）', () => {
+  // 用户报的现场：A 存过一条，B 用同样的名字（默认名由筛选条件生成，很容易撞）再存。
+  // 以前复用 A 的 id → 服务端按 id 覆盖 → A 的条件被改写，B 还看不到自己那条。
+  const S = load(fakeStorage());
+  const a = S.save({ page: 'publish', name: '同名', fields: { x: '1' }, owner: OWNER_A });
+  const b = S.save({ page: 'publish', name: '同名', fields: { x: '2' }, owner: OWNER_B });
+  assert.strictEqual(b.ok, true);
+  assert.notStrictEqual(b.item.id, a.item.id, '同名不同人必须是两条记录');
+  assert.strictEqual(b.updated, false, '不能算作对别人那条的更新');
+  assert.strictEqual(S.list().length, 2);
+  assert.strictEqual(S.listForUser(OWNER_A)[0].fields.x, '1', 'A 那条不能被 B 改掉');
+  assert.strictEqual(S.listForUser(OWNER_B)[0].fields.x, '2');
+});
+
 test('saved-query：不同页同名互不干扰', () => {
   const S = load(fakeStorage());
   S.save({ page: 'publish', name: '同名', fields: {} });
@@ -345,6 +359,23 @@ test('saved-query：新记录 hits=0 / saves=1；同名覆盖时 saves 累加、
   assert.strictEqual(b.item.hits, 2, '打开次数不能被保存重置');
 });
 
+test('saved-query：listForUser 认服务端回传的 saverKeys（owner 不是我，但我保存过）', () => {
+  // 服务端一条记录只带一个 owner（最早保存的那位），所以「我保存过」必须靠 saverKeys 认。
+  // 这是 2026-09-20「第二个用户看不到自己存的」的根因之一。
+  const S = load(fakeStorage());
+  S.importJson(JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{
+      id: 'q1', page: 'publish', name: '共同条件', fields: { a: '1' },
+      owner: OWNER_A, saverKeys: ['4711510', '1001'],
+    }],
+  }));
+  assert.strictEqual(S.listForUser(OWNER_A).length, 1, 'owner 本人看得到');
+  assert.strictEqual(S.listForUser(OWNER_B).length, 1, 'owner 不是我，但 saverKeys 里有我 → 也要看得到');
+  assert.strictEqual(S.listForUser({ userId: '查无此人' }).length, 0, '没保存过的人不许看到');
+  assert.deepStrictEqual(S.saverKeysOf(S.list()[0]).sort(), ['1001', '4711510'], 'owner 与 saverKeys 要合起来算');
+});
+
 test('saved-query：hit 累加打开次数并记最近打开时间', () => {
   const S = load(fakeStorage());
   const r = S.save({ page: 'publish', name: '甲', fields: {} });
@@ -557,7 +588,7 @@ test('saved-query：导出 → 导入 往返，记录与归属都在', () => {
   assert.deepStrictEqual(got.labels, { f_prodBatch: '2611批次' });
 });
 
-test('saved-query：同 id / 同页面同名 视为同一条合并，不重复堆积', () => {
+test('saved-query：同 id → 视为同一条合并，不重复堆积', () => {
   const S = load(fakeStorage());
   const mine = S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
   S.hit(mine.item.id);
@@ -566,17 +597,54 @@ test('saved-query：同 id / 同页面同名 视为同一条合并，不重复�
   const other = {
     app: 'spider-saved-queries', v: 2,
     items: [{
-      id: '别人的id', page: 'publish', name: '共同查询',
-      fields: { a: '1' }, owner: OWNER_B, hits: 5, saves: 3, lastAt: Date.now(),
+      id: mine.item.id, page: 'publish', name: '共同查询',
+      fields: { a: '1' }, owner: OWNER_A, hits: 5, saves: 3, lastAt: Date.now(),
     }],
   };
   const r = S.importJson(JSON.stringify(other));
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.added, 0, '同页面同名要合并，不能再加一条');
+  assert.strictEqual(r.added, 0, '同 id 就是同一条，不能再加一条');
   assert.strictEqual(r.merged, 1);
   assert.strictEqual(S.list().length, 1);
   assert.strictEqual(S.list()[0].hits, 5, '打开次数取较大值（本机 2 次 vs 对方 5 次）');
   assert.strictEqual(S.list()[0].owner.userName, '张三', '本地已有归属时不覆盖');
+});
+
+// 2026-09-20：判重从「同页面 + 同名」改成「同 id，或同页面 + 同名 + 同一个人」。
+// 拆成下面两条：同名**同人**该合，同名**不同人**绝不能合（原来就是后者被吃掉，
+// 用户报成「第二个用户怎么搞都没法保存」）。
+test('saved-query：同页面同名 + 同一个人（跨机器各存了一份）→ 仍然合并', () => {
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
+  const r = S.importJson(JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{
+      id: '另一台机器上的id', page: 'publish', name: '共同查询',
+      fields: { a: '1' }, owner: OWNER_A, hits: 5,
+    }],
+  }));
+  assert.strictEqual(r.added, 0, '同一个人存同名 → 还是同一条');
+  assert.strictEqual(r.merged, 1);
+  assert.strictEqual(S.list().length, 1);
+});
+
+test('saved-query：同页面同名但不是同一个人 → 各自独立，绝不合并（2026-09-20 回归）', () => {
+  // 两个人从同一份筛选条件保存，默认名由条件生成 → 必然同名。
+  // 以前只看 page+name，第二个人那条会被并进第一个人的记录里，等于"存不进去"。
+  const S = load(fakeStorage());
+  S.save({ page: 'publish', name: '共同查询', fields: { a: '1' }, owner: OWNER_A });
+  const r = S.importJson(JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{
+      id: '别人的id', page: 'publish', name: '共同查询',
+      fields: { a: '1' }, owner: OWNER_B, hits: 5,
+    }],
+  }));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.added, 1, '同名不同人 = 两条记录，不许把别人的合并掉');
+  assert.strictEqual(S.list().length, 2);
+  assert.strictEqual(S.listForUser(OWNER_A).length, 1, 'A 还能看到自己那条');
+  assert.strictEqual(S.listForUser(OWNER_B).length, 1, 'B 也能看到自己那条');
 });
 
 test('saved-query：重复导入同一文件幂等 —— 不会把「高频」刷上去', () => {
@@ -592,7 +660,9 @@ test('saved-query：重复导入同一文件幂等 —— 不会把「高频」�
   assert.strictEqual(S.list()[0].hits, 3, '反复导入不该累加，否则排行会被刷');
 });
 
-test('saved-query：本地没归属时，导入能把 owner 补上', () => {
+test('saved-query：本机没归属的同名记录，不会被别人的同名记录顶掉', () => {
+  // 归属不明的那条（页面没引 current-user.js 那类）跟「别人的同名记录」不是同一条：
+  // 判重时 owner 对不上就不合并 —— 宁可多留一条，也不能把别人的记录标成自己的。
   const S = load(fakeStorage());
   S.save({ page: 'task', name: '甲', fields: {} });   // 没设当前用户 → owner 为 null
   assert.strictEqual(S.list()[0].owner, null);
@@ -600,7 +670,9 @@ test('saved-query：本地没归属时，导入能把 owner 补上', () => {
     app: 'spider-saved-queries', v: 2,
     items: [{ id: 'q9', page: 'task', name: '甲', fields: {}, owner: OWNER_A }],
   }));
-  assert.strictEqual(S.list()[0].owner.userName, '张三');
+  assert.strictEqual(S.list().length, 2, '归属不明那条不能被吞掉');
+  const imported = S.list().find((x) => x.id === 'q9');
+  assert.strictEqual(imported.owner.userName, '张三', '导入的那条带着自己的归属');
 });
 
 test('saved-query：导入脏文件一律报错，不破坏现有数据', () => {
