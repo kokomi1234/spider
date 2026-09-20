@@ -8,12 +8,7 @@
 ## 📌 当前锁定
 
 ```
-【锁定】publish/js/ui/current-user.js, publish/js/page/home.js,
-       publish/js/ui/subscribe-model.js, publish/js/ui/subscribe-dialog.js,
-       publish/tests/current-user.test.js, publish/tests/subscribe-model.test.js,
-       publish/tests/smoke-browser.js
-       —— 处理者：Agent-Dev / WorkBuddy；任务：更正「后端忽略查询参数 / 不按姓名过滤」这条错误结论；
-       起于：2026-09-20 11:45
+【状态：无锁定】任何 Agent 可认领文件。
 ```
 
 > **2026-09-20 决定：不做脱敏**（上一条锁定的结论）。本仓库是**内网自用**，
@@ -34,6 +29,40 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-20 12:05] Agent-Dev（主会话，第六批）
+
+**当前分支**：`dev`。
+
+**任务**：① 按用户要求把首页「当前用户」改成**输入即出候选下拉**（不必再点「查 询」）；
+② 用户提示「不是有工号查询的请求吗」→ 复核后**更正一条被写进代码 / 文档 / 测试的错误结论**。
+
+**改动面**：`index.html`（候选改浮层 + combobox 语义）、`js/page/home.js`（防抖搜索 + 键盘导航 +
+统一的关闭出口 + `HomePage.searchUser / searchUserAuto / candCount / candsOpen`）、
+`js/ui/current-user.js`（注释更正）、`js/ui/subscribe-model.js`（注释 + 3 处文案）、
+`tests/harness.js`（注入 `clearTimeout` + 定时器兜底宿主实现）、`tests/home-page.test.js`(+4)、
+`tests/current-user.test.js`、`tests/subscribe-model.test.js`、`tests/user-api.test.js`（注释）、
+`tests/smoke-browser.js`（+1 段真浏览器断言、1 处文案断言）。
+
+**门禁原话**：`node tests/run.js` → `595/595 通过`；`node tests/smoke-browser.js` →
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**关键结论（下一个 Agent 别重新判断）**
+- ⛔ **「后端会忽略查询参数 / 不按姓名过滤」是错的，别再引用**。那是把**离线回放的宽松匹配**
+  当成了后端行为（`PROXY_LOOSE_MATCH`：精确 key 未命中就回同 path 的最近一条，看着像参数没生效）。
+  报文证据：`getUserList?userName=李胜` 一次回了 **11 个不同分行的李胜**（登录人不可能是一群人）；
+  同一会话相隔 9 秒的两条，`getUserInfo?userId=4711510` → 郑梓辉、`getUserList?userName=吴树海` → 吴树海。
+  → **工号能换身份、姓名也能搜到人**；接口唯一的坑是「同名多命中时直接回失败码」（如 `userName=郑梓`）。
+  核对逻辑（`u.userId !== kw`、`matched` 过滤）**继续保留**，依据换成「返回了不相关的人就不许当结果用」。
+- 首页候选下拉的**自动搜索不自动套用身份**（只出下拉，等用户确认）；手动点「查 询」才沿用旧语义。
+- ⚠️ `tests/harness.js` 的 `loadScript` 现在**把定时器默认兜底成宿主实现**。改这里要意识到一件事：
+  把某个全局**列进 `new Function` 的形参**，会让脚本里的同名标识符从「借到宿主全局」变成「undefined」——
+  今天就是这么把 `api-client` 的超时取消打挂的（2 条 user-api 用例当场红）。
+
+**下一步（用户已提，本轮未动）**：把**评委行**的 `<select>`（`subscribe-dialog.js` 的 `.judge-role` /
+`.judge-no`，现被 `createSearchableSelect` 接管成自定义面板）改回**原生 `<select>`** ——
+原话「原生 select 的那种下拉，而不是面板」。**待用户确认范围**：只改「评委角色」（固定枚举，
+原生下拉即可），还是「评委工号」也改（后者是查人的，原生 select 需要预置候选来源）。
 
 ### [2026-09-20 02:20] Agent-Dev（主会话，分支 `dev`）
 
