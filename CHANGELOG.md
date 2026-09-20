@@ -8,7 +8,12 @@
 ## 📌 当前锁定
 
 ```
-【状态：无锁定】任何 Agent 可认领文件。
+【锁定】publish/js/ui/current-user.js, publish/js/page/home.js,
+       publish/js/ui/subscribe-model.js, publish/js/ui/subscribe-dialog.js,
+       publish/tests/current-user.test.js, publish/tests/subscribe-model.test.js,
+       publish/tests/smoke-browser.js
+       —— 处理者：Agent-Dev / WorkBuddy；任务：更正「后端忽略查询参数 / 不按姓名过滤」这条错误结论；
+       起于：2026-09-20 11:45
 ```
 
 > **2026-09-20 决定：不做脱敏**（上一条锁定的结论）。本仓库是**内网自用**，
@@ -29,6 +34,39 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-20 02:20] Agent-Dev（主会话，分支 `dev`）
+
+**任务**：用户报「第二个用户怎么搞都存不进常用查询，且条数看着还是第一个用户的」。
+
+**两个独立缺陷，都修了**
+1. **`.env` 里写 `PROXY_HOST`/`PROXY_PORT`/`PROXY_TARGET`/`PROXY_TIMEOUT` 完全无效**（另一路会话报了诊断，
+   我核实后**范围比它写的窄**：只有排在 `refreshConfig()` 之前的这 4 个顶层 const 坏；
+   `PROXY_RECORD`/`LOOSE_MATCH`/`CACHE_DIR` 实测生效）。根因是加载顺序，不是 const/let。
+   **关键区别：shell 传参有效、`.env` 文件无效，而文档教的偏偏是写 `.env`** ——
+   所以"按文档配了 PROXY_HOST=0.0.0.0，同事还是连不上这份代理"。
+   实测双向验证过：改前 `.env` 写 3056/0.0.0.0 → 仍绑 `127.0.0.1:3000`；改后 → `*:3056`。
+   修法是把 `FIRST_LOAD` + `loadEnv()` 定义与调用**一起**提前（只搬调用会撞 TDZ；
+   也别靠函数声明提升"碰巧能跑"）。防线新增 `tests/proxy-env-order.test.js`，**做过变异检验**。
+2. **首页角标「已同步 N 条」的 N 一直是全库条数**，而主列表刚改成按当前用户过滤 →
+   "列表 1 条 / 角标 3 条"被读成"条数还是上一个用户的"。文案改为「已同步 · 库内 N 条」+ title 说明。
+
+**⚠️ 更正我上面写的一句"最可能是缺陷 1"**：那是**错的**（我在自己那条记录里一度写"没能复现"）。
+真正根因由**同一天另一路会话**先定位并已修复（提交 `8800199`，它的记录在下面那条 11:05 里）：
+`save()` 按 `page + name` 判重，而**两个人从同一份筛选条件保存时默认名必然相同** →
+第二个人复用第一个人的 `id` → 服务端 `ON CONFLICT(id)` 覆盖 → 返回全集覆盖本机 → `listForUser(B)` 恒空。
+**我复现失败的原因就是我特意取了两个不同的名字**（`A-批次2611` / `B-刚存的`），刚好绕开了同名路径 ——
+教训：**复现用户报的 bug 时不许自己改输入，尤其别"顺手起个不冲突的名字"**。
+我这边补上的两件仍然有效、且不重叠：缺陷 1（`.env` 的 `PROXY_HOST/PORT/TARGET/TIMEOUT` 曾静默失效）
+与角标「库内 N 条」的文案（它解决的是"条数看着还是第一个人的"那半句）。
+
+**独立复验**（跑了那路会话留的探针 `tests/probes/live-probe-two-users.js`，真浏览器 + 真代理 3012 +
+临时库 `PROXY_QUERIES_DB=/tmp/probe-two-users.db`）：同名两条记录现在拿到**不同 id**、
+各自 `saverKeys` 只含自己；B 的首页标题「我的常用查询（…）」+ `共 2 条`；
+`?user=<B>` 回 2 条；`?dept=K4229` 回 1 条且 `savers:[2]`（同一条件两人保存）。**修复成立。**
+
+**门禁原话**：`591/591 通过`；`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+**状态**：提交 `f67c092` 在 `dev`；**未推远端**（`dev` 领先 2、`main` 停在 `8e9d88d`）。
 
 ### [2026-09-20 11:05] Agent-Dev（主会话，第五批）
 
