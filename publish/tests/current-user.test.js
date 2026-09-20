@@ -205,24 +205,28 @@ test('current-user：deptLabel 团队优先、一级单位兜底', () => {
 });
 
 // ══════════════════════════════════════════════════════════
-// 5) 与真实后端行为对齐：参数被忽略时必须挡住，不能把别人当成你
-//    （2026-09-18 实测：传任意姓名/不存在的姓名/错误参数名，后端都返回同一个登录人）
+// 5) 返回结果里的不相关的人必须挡住，不能把别人当成你
+//    ⚠️ 2026-09-20 更正：标题原先写「与真实后端行为对齐：参数被忽略时……」，依据是
+//    2026-09-18 那次「实测」—— 它其实是在**离线回放**下做的：代理精确 key 未命中时会把
+//    同 path 的最近一条返回（宽松匹配），看着就像参数没生效。接到手里的真实报文证明
+//    接口**按参数返回**（getUserList?userName=李胜 一次回了 11 个不同分行的李胜）。
+//    防线的依据换成「不管什么原因，返回了不相关的人就不许当结果用」—— 这条永远成立。
 // ══════════════════════════════════════════════════════════
 
-test('current-user：姓名搜索返回无关的人 → 明确标记「后端不按姓名过滤」而不是当结果用', async () => {
+test('current-user：姓名搜索返回无关的人 → 当没查到，绝不把别人当成你', async () => {
   const w = load(fakeStorage());
   w.UserApi = {
     fetchUserList: async () => ({
       ok: true,
-      // 无论传什么关键字，后端都回这个人
+      // 返回的人名字里不含搜索词（离线回放的宽松匹配、接口异常，都可能出现）
       list: [{ userId: '6464402', userName: '吴树海', orgName: '中国银行软件中心（深圳）' }],
     }),
   };
   const r = await w.CurrentUser.lookup('张三');
   assert.strictEqual(r.ok, true, '接口本身成功，不该报错');
   assert.deepStrictEqual(r.list, [], '绝不能把无关的人当成搜索结果返回');
-  assert.strictEqual(r.nameSearchUnsupported, true, '要能被上层识别出来并提示改用工号');
-  assert.deepStrictEqual(r.returned, ['吴树海'], '把后端实际返回的人带出来，便于排查');
+  assert.strictEqual(r.nameSearchUnsupported, true, '要能被上层识别出来并给出「换个词」的提示');
+  assert.deepStrictEqual(r.returned, ['吴树海'], '把实际返回的人带出来，便于排查');
 });
 
 test('current-user：姓名命中时才作为结果，且只保留名字含关键字的人', async () => {

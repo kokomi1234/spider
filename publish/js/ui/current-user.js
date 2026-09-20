@@ -109,8 +109,14 @@
       if (!r.ok) return { ok: false, list: [], mode: 'id', error: r.error || '查询失败' };
       const u = normalize(r.user);
       if (!u) return { ok: true, list: [], mode: 'id', empty: true };
-      // 核对返回的工号与输入是否一致：2026-09-18 实测后端会**忽略查询参数**、
-      // 直接返回 token 对应的登录人 —— 不核对就会把别人当成你，比查不到更糟。
+      // 核对返回的工号与输入是否一致。
+      // ⚠️ 2026-09-20 更正：这里原先写的是「实测后端会忽略查询参数、直接返回 token 对应的
+      // 登录人」—— 那是把**离线回放的宽松匹配**当成了后端行为（精确 key 未命中时，
+      // 代理会把同 path 的最近一条返回，看起来就像参数没生效）。
+      // 接到手里的报文其实证明接口**按参数返回**：getUserList?userName=李胜 一次回了
+      // 11 个不同分行的李胜；同一会话相隔 9 秒的两条，getUserInfo?userId=4711510 → 郑梓辉、
+      // getUserList?userName=吴树海 → 吴树海。
+      // 核对本身仍然留着：离线回放 / 接口异常时，它挡的是「把别人当成你」这个更坏的后果。
       if (u.userId && u.userId !== kw) {
         return {
           ok: false, list: [], mode: 'id',
@@ -131,11 +137,15 @@
     const list = (r.list || []).map(normalize).filter(Boolean);
     if (!list.length) return { ok: true, list: [], mode: 'name', empty: true };
 
-    // 与工号同理：只认「名字里真的含这个关键字」的结果。
-    // 实测（2026-09-18）传任意姓名都会返回同一个登录人，若原样展示，
-    // 用户会以为查到的就是自己要找的人 —— 这里把这种情况显式标出来。
+    // 只认「名字里真的含这个关键字」的结果：接口是模糊匹配，多命中时（如「郑梓」）会直接
+    // 返回失败码；万一它返回了不相关的人，宁可当「没查到」，也不能让用户选错人。
+    // ⚠️ 2026-09-20 更正：原先这里写着「实测传任意姓名都会返回同一个登录人」——
+    // 与上面工号那段同源，都是离线回放宽松匹配造成的假象；真实报文里按姓名**是**能过滤的。
     const matched = list.filter((u) => u.userName && u.userName.includes(kw));
     if (!matched.length) {
+      // 返回了人、但没一个名字含关键词 —— 当「没查到」处理。
+      // （字段名 nameSearchUnsupported 是历史遗留，它曾经表示「接口不按姓名过滤」；
+      //   那个结论已被报文推翻，但改名要牵动 home.js 的调用点，这里只收窄语义。）
       return {
         ok: true, list: [], mode: 'name', empty: true, nameSearchUnsupported: true,
         returned: list.map((u) => u.userName).filter(Boolean),

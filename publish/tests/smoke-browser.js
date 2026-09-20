@@ -380,6 +380,100 @@ const PAGES = [
           anyFail = true;
         }
 
+        // 「输入即出候选下拉」—— 2026-09-20 改的交互：光输入就出候选，不必再点「查 询」。
+        // 这块单测量不到（假 DOM 没有布局与真实键盘事件），所以在这里用真浏览器钉住：
+        // 下拉自己出现、贴在输入框下方、有 combobox 选项语义、↑↓ + Enter 能选、Esc 能关。
+        const candCheck = await page.evaluate(async () => {
+          const out = {};
+          const CU = window.CurrentUser;
+          const HP = window.HomePage;
+          if (!CU || !HP) return { err: 'CurrentUser / HomePage 未加载' };
+
+          // 两个人名字都含「张三」→ 走姓名模糊搜索、返回 2 条，正好验「候选多时自己挑」
+          const A = { userId: '1001', userName: '张三', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' };
+          const B = { userId: '1002', userName: '张三四', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' };
+          window.UserApi = {
+            fetchUserList: async () => ({ ok: true, list: [A, B] }),
+            fetchUserDetail: async () => ({ ok: true, user: A }),
+          };
+
+          CU.clear();
+          window.HomePage.render();
+          const kw = document.getElementById('userKeyword');
+          const dd = document.getElementById('userCands');
+
+          // ① 只输入、不点查询 → 下拉要自己出来
+          kw.value = '张三';
+          kw.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 450));   // 防抖 250ms + 一次搜索
+          out.openAfterInput = HP.candsOpen();
+          out.count = HP.candCount();
+
+          // ② 几何：确实贴在输入框正下方、左边对齐（不是飘到别处）
+          const box = dd.getBoundingClientRect();
+          const inp = kw.getBoundingClientRect();
+          out.belowInput = Math.abs(box.top - inp.bottom) <= 12;
+          out.alignedLeft = Math.abs(box.left - inp.left) <= 2;
+          out.ddWidthMatchesInput = Math.abs(box.width - inp.width) <= 2;
+          out.visible = box.height > 0;
+
+          // ③ combobox 语义：每项 role=option，输入框 aria-expanded 要变 true
+          const items = Array.from(document.querySelectorAll('#userCands .cand'));
+          out.roles = items.map((el) => el.getAttribute('role'));
+          out.itemIds = items.map((el) => el.id);
+          out.expanded = kw.getAttribute('aria-expanded');
+          out.ddRole = dd.getAttribute('role');
+
+          // ④ 键盘：↓ 高亮第一项 → Enter 选中 → 身份落到那个人身上、下拉收起
+          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+          out.activeDesc = kw.getAttribute('aria-activedescendant');
+          out.activeCls = items.map((el) => el.className);
+          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+          await new Promise((r) => setTimeout(r, 80));
+          out.pickedUserId = (CU.get() || {}).userId;
+          out.closedAfterPick = !HP.candsOpen();
+
+          // ⑤ 重新输入出下拉 → Esc 关掉，且不该改动身份（回到未设置）
+          CU.clear();
+          window.HomePage.render();
+          kw.value = '张三';
+          kw.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 450));
+          const openedAgain = HP.candsOpen();
+          kw.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          out.reopened = openedAgain;
+          out.escClosed = openedAgain && !HP.candsOpen();
+          out.userStillEmpty = !CU.get();
+
+          // ⑥ 清掉：别把状态留给后面那段（它会自己 CU.clear + render）
+          CU.clear();
+          window.HomePage.render();
+          return out;
+        });
+
+        process.stdout.write(`  当前用户候选下拉(输入即出/键盘): ${JSON.stringify(candCheck)}\n`);
+        const candOk = candCheck && !candCheck.err
+          && candCheck.openAfterInput === true
+          && candCheck.count === 2
+          && candCheck.belowInput === true
+          && candCheck.alignedLeft === true
+          && candCheck.ddWidthMatchesInput === true
+          && candCheck.visible === true
+          && candCheck.ddRole === 'listbox'
+          && Array.isArray(candCheck.roles) && candCheck.roles.every((r) => r === 'option')
+          && Array.isArray(candCheck.itemIds) && candCheck.itemIds.length === 2
+          && candCheck.expanded === 'true'
+          && candCheck.activeDesc === (candCheck.itemIds || [])[0]
+          && /is-active/.test((candCheck.activeCls || [])[0] || '')
+          && candCheck.pickedUserId === '1001'
+          && candCheck.closedAfterPick === true
+          && candCheck.reopened === true && candCheck.escClosed === true
+          && candCheck.userStillEmpty === true;
+        if (!candOk) {
+          process.stdout.write(`    [FAIL] 输入即出的候选下拉异常：${JSON.stringify(candCheck)}\n`);
+          anyFail = true;
+        }
+
         // 当前用户 + 部门常用查询（本机口径）。
         // 用一个假的 UserApi 顶掉真接口（冒烟没有后端），验完整链路：
         // 填姓名 → 查到人 → 落到 localStorage → 保存的查询带上归属 → 部门区出现排行。
@@ -2155,8 +2249,11 @@ const PAGES = [
         if (jr.irrelevantOption) {
           fails.push(`后端返回无关的人时不该出现在下拉里，实际 ${jr.irrelevantOptionLabel}`);
         }
-        if (!/不按姓名/.test(String(jr.busyText || ''))) {
-          fails.push(`无关结果时应提示「不按姓名过滤，请填工号」，实际 ${JSON.stringify(String(jr.busyText || '').slice(0, 60))}`);
+        // 文案口径（2026-09-20 改）：不再断言「接口不按姓名过滤」—— 那是把离线回放的宽松匹配
+        // 当成了后端行为（接到手里的报文里按姓名是能过滤的）。要守的是「无关结果不许进下拉 +
+        // 得有一句话说清该怎么办」，措辞本身不是契约。
+        if (!/没有名字含这个关键词的人/.test(String(jr.busyText || ''))) {
+          fails.push(`无关结果时应提示「没有名字含这个关键词的人」，实际 ${JSON.stringify(String(jr.busyText || '').slice(0, 60))}`);
         }
       }
     } catch (e) {

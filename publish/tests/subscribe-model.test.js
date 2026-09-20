@@ -519,10 +519,13 @@ test('JUDGE_ROW_TEMPLATE：仍是 6 个单元格的评委行', () => {
 // 评委搜索结果核对（从 subscribe-dialog 的搜索闭包里抽出来的那段判断）
 // ══════════════════════════════════════════════════════════
 //
-// 抽出来的动机：后端会**忽略查询参数**（2026-09-18 实测：按姓名搜返回的是 token
-// 对应的登录人）。这段核对以前只有浏览器冒烟覆盖，node 侧测不到；
-// 而它守的是「把评委填成别人」——评委要提交给后端审批，填错人代价很高。
+// 抽出来的动机：结果里可能混进不相关的人，直接采信就等于「把评委填成别人」——
+// 评委要提交给后端审批，填错人代价很高。
+// ⚠️ 2026-09-20 更正：这里曾经写「后端会忽略查询参数（2026-09-18 实测）」，那次实测
+// 其实是在**离线回放**下做的（代理宽松匹配会回同 path 的最近一条，看着就像参数没生效）；
+// 真实报文里接口是**按参数返回**的。核对逻辑保留，依据换成「不许把不相关的人当结果」。
 
+/** 一个「不相关的人」的替身：名字与搜索词对不上，任何过滤都该把它筛掉 */
 const LOGINER = { userId: '4711510', userName: '兰春武', teamName: '开发三部' };
 
 test('judgeQueryIsEmpNo：纯数字算工号，带空格也算；汉字/混合都不算', () => {
@@ -561,23 +564,25 @@ test('工号搜索：没这个人 → 明说按 userId 精确匹配；接口失�
   assert.ok(/HTTP 500/.test(f.text), f.text);
 });
 
-test('姓名搜索：只认「名字里真的含关键字」的人，登录人不算命中', () => {
+test('姓名搜索：只认「名字里真的含关键字」的人，不相关的返回一律不进下拉', () => {
   const other = { userId: '1001', userName: '郑梓辉' };
   const o = SM.judgeSearchOutcome({ ok: true, list: [LOGINER, other] }, '郑梓辉');
   assert.strictEqual(o.byEmpNo, false);
   assert.strictEqual(o.kind, 'users');
-  assert.deepStrictEqual(o.users, [other], '登录人必须被筛掉，否则选中就把评委填成了他');
+  assert.deepStrictEqual(o.users, [other], '不相关的人必须被筛掉，否则选中就把评委填成了他');
 });
 
-test('姓名搜索：返回的全是不相干的人（典型=登录人）→ 提示改用工号，不进下拉', () => {
+test('姓名搜索：返回的全是不相干的人 → 当没查到，不进下拉', () => {
+  // 措辞不再断言「后端不按姓名过滤」—— 那是把离线回放的宽松匹配当成了后端行为
+  // （2026-09-20 用抓到报文更正过）。这里要守的仍然是「不许把不相关的人当结果」。
   const o = SM.judgeSearchOutcome({ ok: true, list: [LOGINER] }, '郑梓辉');
   assert.strictEqual(o.kind, 'busy');
-  assert.ok(/请直接填工号/.test(o.text), o.text);
+  assert.ok(/没有名字含这个关键词的人/.test(o.text), o.text);
 });
 
 test('姓名搜索：空列表 / 缺 list / 接口失败，三种情况文案各不同', () => {
-  assert.ok(/只认完整姓名/.test(SM.judgeSearchOutcome({ ok: true, list: [] }, '郑梓辉').text));
-  assert.ok(/只认完整姓名/.test(SM.judgeSearchOutcome({ ok: true }, '郑梓辉').text),
+  assert.ok(/完整姓名/.test(SM.judgeSearchOutcome({ ok: true, list: [] }, '郑梓辉').text));
+  assert.ok(/完整姓名/.test(SM.judgeSearchOutcome({ ok: true }, '郑梓辉').text),
     '后端给了 ok 但没有 list 数组时不该抛，也不该当命中');
   assert.ok(/搜索失败/.test(SM.judgeSearchOutcome({ ok: false, error: '查询失败' }, '郑梓辉').text));
 });
@@ -592,7 +597,7 @@ test('核对口径不依赖调用方传的 byEmpNo：由输入自己判', () => 
   // 传第三个参数也不该改变行为（避免有人以为可以从外面指定）
   const o = SM.judgeSearchOutcome({ ok: true, user: LOGINER }, '郑梓辉');
   assert.strictEqual(o.byEmpNo, false, '非纯数字一律按姓名口径');
-  assert.ok(/只认完整姓名/.test(o.text) || /填工号/.test(o.text), o.text);
+  assert.ok(/完整姓名/.test(o.text) || /填工号/.test(o.text), o.text);
 });
 
 test('结果核对的畸形入参：list 不是数组 / user 没有工号，都不许进下拉', () => {

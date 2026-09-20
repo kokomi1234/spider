@@ -269,7 +269,29 @@
       .home-user-form #btnUserSearch { width: 100%; }
     }
 
-    .home-user-cands { margin-top: 10px; display: grid; gap: 6px; max-width: 520px; }
+    /* 输入即出的候选下拉：贴在输入框正下方（.home-input-wrap 已是 relative）。
+       2026-09-20 改：以前是表单下方的一列静态按钮，必须先点「查 询」才出现；
+       现在边打边出，宽度与输入框对齐，层级走 --z-popup（文档流内弹出面板那一档）。 */
+    .home-user-cands {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 6px);
+      width: 300px;
+      max-width: 100%;
+      z-index: var(--z-popup);
+      display: grid;
+      gap: 2px;
+      padding: 6px;
+      max-height: 268px;
+      overflow-y: auto;
+      box-sizing: border-box;
+      background: var(--surface);
+      border: 1px solid var(--outline-soft);
+      border-radius: var(--r-xs);
+      box-shadow: var(--shadow-pop);
+    }
+    /* 键盘 ↑↓ 高亮的那一项：与 :hover 同一套视觉，免得鼠标党和键盘党看到两种样子 */
+    .home-user-cands .cand.is-active { border-color: var(--primary); background: var(--surface-1); }
     .home-user-cands .cand {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -277,9 +299,11 @@
       column-gap: 10px;
       row-gap: 2px;
       padding: 8px 12px;
-      border: 1px solid var(--outline-soft);
+      /* 透明边框 + 透明底：进下拉以后由容器提供底和框，
+         每一项只在 hover / 键盘高亮时显色（透明边框占位，出现时不会挤动行高） */
+      border: 1px solid transparent;
       border-radius: var(--r-xs);
-      background: var(--surface);
+      background: transparent;
       cursor: pointer;
       text-align: left;          /* 按钮默认居中，这里必须显式覆盖，否则整行文字居中 */
       font-family: inherit;
@@ -401,18 +425,24 @@
         <!-- 未设置：定宽输入组（对齐查询页「label + 控件」的版式，不再撑满整行） -->
         <div class="home-user-form" id="userForm">
           <label class="home-field" for="userKeyword">
-            <span class="home-field-label">你的工号</span>
+            <span class="home-field-label">工号或姓名</span>
             <span class="home-input-wrap">
               <input type="text" id="userKeyword" class="home-input"
-                     placeholder="如 4711510" inputmode="numeric"
-                     autocomplete="off" autocapitalize="off" spellcheck="false">
+                     placeholder="输入工号或姓名，下拉里直接选" inputmode="text"
+                     autocomplete="off" autocapitalize="off" spellcheck="false"
+                     role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
+                     aria-controls="userCands" aria-expanded="false">
               <button type="button" class="home-input-clear" id="btnUserClear" hidden
                       aria-label="清空输入" title="清空">✕</button>
+              <!-- 输入即出候选：下拉挂在输入框正下方（.home-input-wrap 是 relative），
+                   不必再点「查 询」。候选多时用 ↑↓ 选、Enter 确认、Esc 关掉。
+                   放在 <label> 内是有意的：<button> 是交互元素，点它不会触发 label 的聚焦转发。 -->
+              <div class="home-user-cands" id="userCands" role="listbox"
+                   aria-label="候选人员" hidden></div>
             </span>
           </label>
           <button type="button" class="filled btn-sm" id="btnUserSearch">查 询</button>
         </div>
-        <div class="home-user-cands" id="userCands" hidden></div>
         <p class="field-note">
           用于把常用查询归到你的部门（首页「部门常用查询」按它过滤）。
           数据只写进本地代理的库文件，不提交给 ITAMP 服务端。<br>

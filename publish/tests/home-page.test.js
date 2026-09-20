@@ -261,7 +261,8 @@ function buildEnv(opts = {}) {
     promptText: () => Promise.resolve(opts.promptResult !== undefined ? opts.promptResult : ''),
   };
 
-  loadScript('js/page/home.js', { document: doc }, win);
+  // 定时器要显式注入：沙箱里没有它们，而「输入即搜」的防抖真会调用（setTimeout/clearTimeout）
+  loadScript('js/page/home.js', { document: doc, setTimeout, clearTimeout }, win);
 
   return { win, doc, els, sq, toasts, ls, cuState };
 }
@@ -597,6 +598,109 @@ test('切换用户：清空当前用户后回到输入表单', () => {
   assert.strictEqual(win.CurrentUser.get(), null);
   assert.strictEqual(els.userForm.hidden, false);
   assert.strictEqual(els.userSet.hidden, true);
+});
+
+// ══════════════════════════════════════════════════════════
+// 输入即出的候选下拉（2026-09-20：不必再点「查 询」）
+// ══════════════════════════════════════════════════════════
+//
+// 假 DOM 量不到布局与真实键盘事件 —— 「贴不贴在输入框正下方」「真浏览器里按键什么样」
+// 由冒烟那一侧钉住（tests/smoke-browser.js 的「当前用户候选下拉」）；
+// 这里守的是**纯逻辑**：什么输入才发请求、下拉该不该开、键盘选中谁。
+
+/** 造一次「用户输入」：改 value 再叫一遍 input 监听器（假 DOM 没有 dispatchEvent） */
+function typeInto(els, value) {
+  els.userKeyword.value = value;
+  (els.userKeyword.listeners.input || []).forEach((fn) => fn({ target: els.userKeyword }));
+}
+
+/** 造一次按键；假 DOM 没有 KeyboardEvent，直接叫 keydown 监听器 */
+function pressOn(els, key) {
+  (els.userKeyword.listeners.keydown || []).forEach((fn) => fn({ key, preventDefault() {} }));
+}
+
+const TWO_ZHANG = [
+  { userId: '1001', userName: '张三', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' },
+  { userId: '1002', userName: '张三四', orgId: 'O1', orgName: '软件中心', teamId: 'K1', teamName: '开发一部' },
+];
+
+test('首页：光输入就出候选下拉（不用点「查 询」）', async () => {
+  const { win, els } = buildEnv({
+    currentUser: null,
+    lookupResult: { ok: true, mode: 'name', list: TWO_ZHANG },
+  });
+  win.HomePage.render();
+  assert.strictEqual(win.HomePage.candsOpen(), false, '一开始是收着的');
+
+  typeInto(els, '张三');
+  await new Promise((r) => setTimeout(r, 320));   // 防抖 250ms
+
+  assert.strictEqual(win.HomePage.candsOpen(), true, '光输入就该自己出下拉');
+  assert.strictEqual(win.HomePage.candCount(), 2);
+  assert.strictEqual(els.userKeyword.attrs['aria-expanded'], 'true', 'combobox 要如实报告展开状态');
+  els.userCands.children.forEach((el) => assert.strictEqual(el.attrs.role, 'option', '每项都要有 option 语义'));
+});
+
+test('首页：候选下拉 —— ↓ 高亮、Enter 选中、Esc 只收不改身份', async () => {
+  const { win, els, cuState } = buildEnv({
+    currentUser: null,
+    lookupResult: { ok: true, mode: 'name', list: TWO_ZHANG },
+  });
+  win.HomePage.render();
+  typeInto(els, '张三');
+  await new Promise((r) => setTimeout(r, 320));
+
+  pressOn(els, 'ArrowDown');
+  const first = els.userCands.children[0];
+  assert.strictEqual(els.userKeyword.attrs['aria-activedescendant'], first.id, '高亮要指到第一项');
+  assert.ok(/is-active/.test(first.className), '要有能看见的高亮类');
+
+  pressOn(els, 'Enter');
+  assert.strictEqual(cuState.user && cuState.user.userId, '1001', 'Enter 选中的是当前高亮那项');
+  assert.strictEqual(win.HomePage.candsOpen(), false, '选完要收起');
+
+  // 再来一次：Esc 只收下拉
+  cuState.user = null;
+  win.HomePage.render();
+  typeInto(els, '张三');
+  await new Promise((r) => setTimeout(r, 320));
+  pressOn(els, 'Escape');
+  assert.strictEqual(win.HomePage.candsOpen(), false);
+  assert.strictEqual(cuState.user, null, 'Esc 不许顺手改身份');
+});
+
+test('首页：边打边搜不替用户拍板 —— 只有 1 个命中也只出下拉', async () => {
+  const { win, els, cuState } = buildEnv({
+    currentUser: null,
+    lookupResult: { ok: true, mode: 'name', list: [TWO_ZHANG[0]] },
+  });
+  win.HomePage.render();
+  typeInto(els, '张三');
+  await new Promise((r) => setTimeout(r, 320));
+
+  assert.strictEqual(cuState.user, null, '自动搜索不自动套用，等用户确认');
+  assert.strictEqual(win.HomePage.candsOpen(), true, '唯一命中也摆在下拉里');
+  assert.strictEqual(win.HomePage.candCount(), 1);
+});
+
+test('首页：输入太短不发请求、清空即收起', async () => {
+  let calls = 0;
+  const { win, els } = buildEnv({ currentUser: null });
+  win.CurrentUser.lookup = async () => { calls += 1; return { ok: true, list: [] }; };
+  win.HomePage.render();
+
+  typeInto(els, '47');            // 纯数字不足 3 位：不是工号（与 looksLikeId 同口径），别打接口
+  await new Promise((r) => setTimeout(r, 320));
+  assert.strictEqual(calls, 0, '两位数不是工号，不该发请求');
+
+  typeInto(els, '471');           // 3 位起才当工号
+  await new Promise((r) => setTimeout(r, 320));
+  assert.strictEqual(calls, 1, '够位数就该发');
+
+  typeInto(els, '');              // 清空 → 收起，且不再发
+  await new Promise((r) => setTimeout(r, 320));
+  assert.strictEqual(win.HomePage.candsOpen(), false);
+  assert.strictEqual(calls, 1, '清空不该再发一次');
 });
 
 // ══════════════════════════════════════════════════════════

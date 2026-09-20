@@ -16,8 +16,8 @@ const assert = require('assert');
 /** 加载真实协议层 + user-api（同一 window，与浏览器脚本顺序一致） */
 function freshUserApi() {
   const win = {};
-  // harness 的 new Function 只注入列出的全局：api-client 的超时计时用 setTimeout，
-  // 不传进去会在请求时抛「setTimeout is not a function」（与浏览器无关，纯测试环境问题）
+  // harness 的 new Function 会把 setTimeout / clearTimeout 注进来（未显式传时兜底到宿主实现），
+  // api-client 的超时计时要用它们。这里仍然显式传一份：万一将来换掉兜底策略，这条仍走我们给的版本
   loadScript('js/core/api-client.js', { setTimeout: (fn, ms) => setTimeout(fn, ms) }, win);
   loadScript('js/api/user-api.js', {}, win);
   return win.UserApi;

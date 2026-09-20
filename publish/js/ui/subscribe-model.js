@@ -556,11 +556,15 @@
    * 评委搜索结果核对（纯函数）。
    *
    * ⚠️ 这段判断原先长在 subscribe-dialog.js 的搜索闭包里，只能靠浏览器冒烟测；
-   * 抽出来是因为它守的是「**填错人**」这种代价很高的错：
-   * 2026-09-18 实测 getUserList / getUserInfo 会**忽略查询参数** —— 按姓名搜时，
-   * 传任意关键字甚至错误的参数名，后端都返回 token 对应的那个登录人。
-   * 直接采信返回值的话，「在工号框里输入任何姓名，下拉里都只蹦出登录人，
-   * 选中就把评委填成了他」。所以：**结果必须核对过才能用**。
+   * 抽出来是因为它守的是「**填错人**」这种代价很高的错：直接采信返回值的话，
+   * 「在工号框里输入任何东西，下拉里都蹦出同一个人，选中就把评委填成了他」。
+   * 所以：**结果必须核对过才能用**。
+   *
+   * ⚠️ 2026-09-20 更正：这里原先的依据是「2026-09-18 实测 getUserList / getUserInfo 会
+   * **忽略查询参数**，传任意关键字都返回登录人」—— 那次实测其实是在**离线回放**下做的：
+   * 代理精确 key 未命中时会把同 path 的最近一条返回（宽松匹配），看着就像参数没生效。
+   * 真实报文里接口**按参数返回**（getUserList?userName=李胜 一次回了 11 个不同分行的李胜）。
+   * 核对逻辑本身继续留着 —— 离线 / 接口异常时它挡的还是同一件事，只是别再把原因归给后端。
    *
    * @param {{ok:boolean, user?:object, list?:Array, error?:string}} r 接口返回
    * @param {string} kw 用户输入的工号或姓名（纯数字按工号处理，与抓包口径一致）
@@ -576,7 +580,7 @@
       // getUserInfo 只返回单个对象，没有「列表」可筛，所以核对工号是不是输入的那个
       const u = r && r.ok ? r.user : null;
       if (u && u.userId && String(u.userId) !== k) {
-        return { byEmpNo, kind: 'busy', text: `⚠️ 接口返回的是工号 ${u.userId}，与输入的 ${k} 不一致（后端忽略了查询参数），请核对` };
+        return { byEmpNo, kind: 'busy', text: `⚠️ 返回的工号是 ${u.userId}，与输入的 ${k} 不一致，请核对工号后重试` };
       }
       if (u && u.userId) return { byEmpNo, kind: 'users', users: [u] };
       if (r && r.ok) return { byEmpNo, kind: 'busy', text: '未找到该工号（接口按 userId 精确匹配）' };
@@ -590,9 +594,9 @@
         const matched = list.filter((u) => u && u.userName && String(u.userName).includes(k));
         return matched.length
           ? { byEmpNo, kind: 'users', users: matched }
-          : { byEmpNo, kind: 'busy', text: '⚠️ 接口当前不按姓名过滤（返回的是登录人），请直接填工号' };
+          : { byEmpNo, kind: 'busy', text: '⚠️ 返回的结果里没有名字含这个关键词的人，换个完整姓名或用工号再试' };
       }
-      return { byEmpNo, kind: 'busy', text: '未找到匹配姓名（接口只认完整姓名，如「郑梓辉」）' };
+      return { byEmpNo, kind: 'busy', text: '未找到匹配姓名（可换完整姓名，或用工号查）' };
     }
     return { byEmpNo, kind: 'busy', text: failText };
   }
