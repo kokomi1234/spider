@@ -30,6 +30,33 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 13:07] 主会话（发布 stable-20260920-2）
+
+**动作**：dev 上跑全门禁（`595/595 通过` + `ALL PASS`）→ `git checkout main && git merge --ff-only dev`
+→ `git tag stable-20260920-2` → 两条线各自 push。**`main` / `dev` / 该标签现已全部同步（`0 0`）**。
+
+**这一版包含**（相对上一个稳定版 `stable-20260920` = `ae66258`，共 14 个提交）：
+- `fix(常用查询)`：第二个用户的记录不再被吞 —— 同名判重带上保存人、归属改认 `saverKeys`
+- `feat/refactor(首页)`：「当前用户」从「必须点查询才出」→ 输入即出，并最终**改用统一的
+  `js/ui/searchable-select.js` 组件**（与评委栏同一套，不再自写）
+- `feat(代理)`：默认改绑 `0.0.0.0`；`.env` 的 `PROXY_*` 不再静默失效
+- 一批按抓到报文更正的错误结论（「后端忽略查询参数 / 不按姓名过滤」那条）
+- 协作规则改为**单写者**（用户拍板，见 `AGENTS.md` §1）
+
+**⚠️ 标签名为什么带 `-2`**：`stable-20260920` 已被上午那一版占用（仓库第一个标签）。
+同一天再发就往后加 `-2` / `-3` —— **别把旧标签挪走**，同事手里的旧包还要对得上。
+
+**交付包**（放在外层 `/Users/a1/Desktop/spider/`，那里不是 git 仓库、刻意不入库）：
+- `spider-stable-3bc7a19-20260920.zip` 4.1M / **235 文件** = HEAD 的精确快照
+- `spider-history-3bc7a19-20260920.bundle` 4.6M（`git bundle verify` → complete history）
+- `spider-workbuddy-memory-20260920-1307.tar.gz` 85K（`.workbuddy/` 不在 git 里，这是它唯一的离线备份）
+- **验证**（在解压出来的副本里真跑，不是只看包列表）：`595/595 通过`、`ALL PASS`、
+  235 个文件与 `git ls-tree -r HEAD` 一致、中文名文件（`analysis/output/ITAMP接口总览.md` 等）正常解出。
+- 📌 打包姿势固定：`git checkout-index` 铺树 + Python `zipfile`（自动置 UTF-8 标志）。
+  **别用 `git archive --format=zip`** —— macOS `unzip` 解中文名会写盘失败（踩过）。
+
+**下一步**：无锁定。
+
 ### [2026-09-20 12:35] Agent-Dev（主会话，第七批）
 
 **当前分支**：`dev`。
