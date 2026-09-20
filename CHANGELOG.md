@@ -30,6 +30,28 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 13:51] 主会话（交付包重出：0b33aa5）
+
+**动作**：用户要求「重出一版交付包，把前两份删了」。
+
+**当前状态**：`dev` 的 HEAD = `0b33aa5`（**未合并到 `main`**，也没打新 tag —— 用户这次只说了出包，
+没说发布；要不要并到 `main` 等他表态）。
+
+**交付包**（外层 `/Users/a1/Desktop/spider/`，不入库）：
+- `spider-stable-0b33aa5-20260920.zip` 4.1M / **236 文件** = HEAD 精确快照
+- `spider-history-0b33aa5-20260920.bundle` 4.6M（`git bundle verify` → complete history）
+- `spider-workbuddy-memory-20260920-1351.tar.gz` 87K（`.workbuddy/` 的唯一离线备份）
+- **验证**（解压副本里真跑）：`595/595 通过`、`ALL PASS`、236 个文件与 `git ls-tree -r HEAD` 一致、
+  中文名正常解出；并抽查了本轮改动确实在包里（`proxy.js` 的按键合并、`queries-db.js` 的
+  `BEGIN IMMEDIATE`、`tools/backup-queries-db.js`）。
+
+**删掉的旧两批**（`ae66258` 与 `3bc7a19` 各 3 件，共 6 个文件）：用 Finder 的「移到废纸篓」
+（`osascript … delete`），**不是 `rm`** —— 可回退。
+⚠️ **它们不在本地 `~/.Trash/`，而在 iCloud 废纸篓**：`~/Library/Mobile Documents/.Trash/`
+（这台机器的桌面走 iCloud 同步）。以后要确认"删掉的东西能不能找回来"，去这个路径看。
+
+**下一步**：无锁定。
+
 ### [2026-09-20 13:45] Agent-Dev（主会话，第八批）
 
 **当前分支**：`dev`。
