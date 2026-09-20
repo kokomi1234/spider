@@ -30,6 +30,39 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-20 11:05] Agent-Dev（主会话，第五批）
+
+**当前分支**：`dev`。
+
+**任务**：用户报「常用查询用了一个用户，第二个用户怎么搞都没法保存，显示的条数还是第一个用户的」。
+
+**改动面**：`js/ui/saved-query.js`（`save()` 判重带上归属人、`listForUser` 改认 `saverKeys`、
+`mergeItems` 合并键带上归属人并合并 saverKeys、`sanitize` 保留 `saverKeys`、新增 `saverKeysOf`）、
+`lib/queries-db.js`（`toRecord` 回传 `saverKeys`）、`tests/saved-query.test.js`(+5 改写 2)、
+`tests/queries-db.test.js`(+1)、**新增** `tests/probes/live-probe-two-users.js`。
+
+**门禁原话**：`node tests/run.js` → `589/589 通过`；`node tests/smoke-browser.js` →
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**根因（下一个 Agent 别重新判断）**
+- **一条记录只能带一个 `owner`，而 `owner` 是 `savers[0]`（最早保存的那位）**。前端却拿它当
+  「这条是不是我的」的判据 —— 于是第二个人保存过的记录永远判成第一个人的。
+- `save()` 原来按 `page + name` 判重：两个人从**同一份筛选条件**保存时默认名一样（必然同名），
+  第二个人会**复用第一个人的 id** → 服务端 `ON CONFLICT(id)` 把第二人的条件写进第一人那条 →
+  返回全集覆盖本机 → `listForUser(B)` 恒为空。表现就是「怎么存都存不进去、条数还是第一个人的」。
+- 实测证据（真浏览器 + 真代理 + 临时库）：修复前 B 存同名返回 `id` 与 A 相同、`mine(B)` 为 `[]`；
+  修复后 B 拿到新 id、`mine(B)` 有值、首页标题跟着换人。探针留在
+  `tests/probes/live-probe-two-users.js`（**必须用 `PROXY_QUERIES_DB` 指临时库**）。
+
+**仍然存在、但不是代码 bug（用户需知情）**
+- `current-user.js` 按**工号**查人时后端会忽略查询参数、返回 token 对应的登录人；前端核对后**拒绝**
+  （宁可拒绝也不认错人）。离线回放的「宽松匹配」同样会命中同 path 的最近一条。
+  **在内网真环境里，用工号基本只能设成「你自己」**；要换别人（如自测两个身份）请用**姓名**搜索。
+- `proxy.js` 的 **JSON 兜底分支**（Node < 22.5 才走）合并键仍是 `page+name`，同一类问题还在。
+  它和墓碑 key 耦合、本机走不到，**本轮故意没改**；哪天要在老 Node 上跑，先补它的用例再改。
+
+**下一步**：无锁定。
+
 ### [2026-09-20 01:50] 主会话（分支改制）
 
 **当前分支**：`dev`（`main` 已对齐到同一个提交 `8e9d88d`，两条线现在等价，分叉从下一次改动开始）。
