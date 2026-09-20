@@ -89,11 +89,12 @@ function loadEnv() {
 loadEnv();   // ← 关键一行：让下面这几个常量读得到 .env
 
 const PORT = process.env.PROXY_PORT || 3000;
-// 默认只绑回环。以前 listen(PORT) 不传 host → 绑 `::`（所有网卡），而
-// /local/saved-queries、/local/batch-times 默认不鉴权、CORS 又是 *，
-// 实测同网段任意主机（甚至任意网页）都能读光/改写/删空这份团队库。
-// 「大家连同一份代理」时显式设 PROXY_HOST=0.0.0.0（并强烈建议同时设 PROXY_ADMIN_TOKEN）。
-const HOST = process.env.PROXY_HOST || '127.0.0.1';
+// 默认**绑全网卡**（2026-09-20 用户拍板：内网自用，不做限制，同事直接连这份代理）。
+// 只给本机用就设 PROXY_HOST=127.0.0.1。
+// 事实说清楚（不是拦你）：/local/* 与 /cache/* 在不设 PROXY_ADMIN_TOKEN 时不鉴权，
+// 而 CORS 是 * —— 所以同网段任意主机、以及任意人浏览器里打开的任意网页，
+// 都能读改删这份团队库。要那层锁就设一个 PROXY_ADMIN_TOKEN。
+const HOST = process.env.PROXY_HOST || '0.0.0.0';
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
 const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
 
@@ -1238,9 +1239,10 @@ server.on('error', (err) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`\n✅ 服务器运行在 http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`);
-  console.log(`   🔒 监听地址：${HOST}` + (HOST === '127.0.0.1'
-    ? '（只本机可访问；要让同事连这份代理，设 PROXY_HOST=0.0.0.0 + PROXY_ADMIN_TOKEN）'
-    : '（⚠️ 已对所有网卡开放：必须设 PROXY_ADMIN_TOKEN，否则 /local/* 与 /cache/* 任何人可读写）'));
+  console.log(`   🌐 监听地址：${HOST}` + (HOST === '127.0.0.1' ? '（只本机）' : '（全网卡，同事可直接连这台）')
+    + (process.env.PROXY_ADMIN_TOKEN
+      ? '；/local/* 与 /cache/* 需 ?token='
+      : '；未设 PROXY_ADMIN_TOKEN → /local/* 与 /cache/* 不鉴权（内网自用，见 proxy.js 顶部注释）'));
   console.log(`   📄 静态文件：从 ${__dirname} 提供（HTML/JS/CSS 等）`);
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);

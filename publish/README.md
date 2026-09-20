@@ -112,7 +112,8 @@ POST /local/saved-queries                        → body { items, deletedIds }�
 ## 🚀 快速开始
 
 ```bash
-cd publish && node proxy.js        # 默认只绑 127.0.0.1:3000；注入 token + CORS，并同时提供静态服务
+cd publish && node proxy.js        # 默认绑全网卡 0.0.0.0:3000（内网自用）；注入 token + CORS，并同时提供静态服务
+#                                   只要本机用：PROXY_HOST=127.0.0.1 node proxy.js（改这四项要重启，见 .env.example）
 ```
 
 然后打开 `http://localhost:3000/`（自动跳 `/home`，即首页）；

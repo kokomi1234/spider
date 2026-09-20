@@ -32,9 +32,12 @@ test('proxy.js：.env 必须早于所有读 process.env 的顶层 const 被加�
     + '—— 这行的值会绕过 .env，只有 shell 环境变量生效。把 loadEnv() 及其依赖（FIRST_LOAD）挪到它前面。');
 });
 
-test('proxy.js：PROXY_HOST 的默认仍是只绑回环（放开必须显式设 .env）', () => {
+test('proxy.js：HOST 的默认是全网卡（2026-09-20 用户拍板内网自用），且仍能显式收回回环', () => {
   const m = /const\s+HOST\s*=\s*process\.env\.PROXY_HOST\s*\|\|\s*'([^']*)'/.exec(SRC);
   assert.ok(m, '没找到 HOST 的默认值写法，用例要跟着源码更新');
-  assert.strictEqual(m[1], '127.0.0.1',
-    'HOST 默认放开成全网卡 = /local/* 与 /cache/* 谁都能读写（CORS 是 *，且不鉴权）');
+  // 这条钉的是「默认值 = 用户要的那一档」，别再把它偷偷改回 127.0.0.1（那会让同事连不上）。
+  assert.strictEqual(m[1], '0.0.0.0');
+  // 收回本机仍然只用一个环境变量就够了（默认值必须是 `process.env.PROXY_HOST || '0.0.0.0'` 这个形态，
+  // 上面那个正则本身就在钉它；写死的值一旦被挪成常量，PROXY_HOST 就再也覆盖不了 —— 那正是 .env 的老坑）
+  assert.ok(/process\.env\.PROXY_HOST\s*\|\|/.exec(SRC), 'HOST 必须仍可被 PROXY_HOST 覆盖');
 });
