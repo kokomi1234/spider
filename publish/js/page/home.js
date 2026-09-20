@@ -99,7 +99,8 @@
     main.title = `打开常用查询：${item.name}`;
     // 从首页点开一次就算一次「打开」，这是「高频」的判据（纯本地计数）
     main.addEventListener('click', () => {
-      try { window.SavedQuery.hit(item.id); } catch (_) { /* 计数失败不该挡住跳转 */ }
+      // hit 已 async 化（服务端优先）：失败也绝不挡跳转 —— 同步异常与 Promise 拒绝都要吞掉
+      try { Promise.resolve(window.SavedQuery.hit(item.id)).catch(() => {}); } catch (_) { /* 计数失败不该挡住跳转 */ }
     });
 
     const nameRow = document.createElement('div');

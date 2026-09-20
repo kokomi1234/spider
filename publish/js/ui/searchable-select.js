@@ -192,7 +192,10 @@
     function paintClosed() {
       const lbl = selectedLabel();
       const display = lbl || freeText;
-      input.value = display;
+      // ⚠️ 组合态（IME 组字中）**绝不写 value**：异步搜索回来 repaint 是最常见的触发源
+      // （首页「输入即出」每次 fetch 都会 updateOptions → paintClosed），
+      // 组字期间程序化改 value 会把输入法直接踢出去，拼音变裸英文字母（2026-09-20 晚实测）。
+      if (!isComposing) input.value = display;
       input.placeholder = basePlaceholder;
       // 超长值在窄下拉里只剩省略号（清单 C10）：把完整值写进 title，
       // 鼠标悬停即可看到全文，不必先展开面板再找。
@@ -203,7 +206,7 @@
 
     /** 展开态：输入框变搜索框，已选 label 降级为 placeholder */
     function paintOpen() {
-      input.value = query;
+      if (!isComposing) input.value = query;   // 同上：组合态不动 value
       input.placeholder = selectedLabel() || basePlaceholder;
       input.title = selectedLabel() || query;
       input.classList.remove('has-value');
@@ -576,9 +579,13 @@
     input.addEventListener('compositionend', () => {
       isComposing = false;
       // compositionend 后浏览器会补发 input；这里不主动改值，避免中文被重复渲染。
+      // 但 Safari 的最终 input 在 end **之前**就发过了（各家顺序不一致）——
+      // 所以这里补跑一次 processInput 兜底；Chrome 下多跑一次也无害（渲染是幂等的）。
+      processInput();
     });
 
-    input.addEventListener('input', () => {
+    /** 读输入框 → 展开 → 过滤渲染。组合态（IME 拼音中间态）**绝不调用**，见 input 监听里的注释。 */
+    function processInput() {
       // ⚠️ 顺序很要紧：**先把这次敲进去的文本读下来，再决定要不要展开**。
       // openDropdown() 里会 `query = ''` 并 paintOpen()（= 把 input.value 也置空）——
       // 老写法是「先 openDropdown() 再 query = input.value」，于是第一个字符当场被抹掉，
@@ -588,13 +595,23 @@
       const typed = input.value;
       if (!isOpen) openDropdown();
       query = typed;
-      // paintOpen() 已经按旧 query 渲染过一次，把用户这次输入补回去
+      // paintOpen() 已经按旧 query 渲染过一次，把用户这次输入补回去。
+      // ⚠️ 只在**非组合态**才允许写 value：组合期间程序化改 value 会把输入法
+      // 直接踢出去（拼音变成裸英文字母，2026-09-20 晚用户实测报的）。
       if (input.value !== typed) input.value = typed;
       // 这是用户明确输入的文本；如果随后不选下拉项，也要在收起后保留。
       if (!selectedValue) freeText = query;
       limit = MAX_RENDER;               // 换了关键字，重新从第一批开始
       renderDropdown();
       dropdown.scrollTop = 0;
+    }
+
+    input.addEventListener('input', (e) => {
+      // 中文输入法组合期间，input 事件是拼音的**中间态**（z → zh → 张…）。
+      // 这时既不该过滤、也绝不能改 input.value —— 改了就会打断 IME，把拼音
+      // 直接变成英文字母。组合结束后 compositionend 会补跑 processInput。
+      if (isComposing || e.isComposing || e.keyCode === 229) return;
+      processInput();
     });
 
     dropdown.addEventListener('scroll', maybeLoadMore);

@@ -584,9 +584,11 @@
     if (name == null) return;                 // 用户取消
     name = String(name).trim();
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
-    const res = SQ.save({ page: 'task', name, fields, summary, labels: collectSavedLabels(fields) });
+    // 2026-09-20 架构改版：save 是 async 的（服务端优先）。这里必须 await——
+    // 否则读到的是 Promise，res.ok 恒为 undefined → 弹「保存失败」但东西其实存进去了。
+    const res = await SQ.save({ page: 'task', name, fields, summary, labels: collectSavedLabels(fields) });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
-    toast('已保存到首页'
+    toast('已保存到首页' + (res.localOnly ? '（仅本机，连上共享库后会自动补上去）' : '')
       + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : '')
       + (typeof SQ.ownerSuffix === 'function' ? SQ.ownerSuffix(res) : ''), 3200);
   }
