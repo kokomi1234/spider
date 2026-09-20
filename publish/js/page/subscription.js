@@ -7,16 +7,20 @@
  *   下拉   POST /itamp-tool/publish/getProdSysServeNoList?callerComponent=xx&n=xx
  * 下拉里的提供方系统 / 批次 / 部门沿用首页那套 data/*.js（同源接口，抓包已确认）。
  *
- * ── 两个批次字段：只有列名口径，没有大小关系 ────────────────
- * 行内有 prodBatch 和 prodBatchList 两个批次字段，本页按字段名取值（列名见 COLUMNS）：
- *   调用方投产/变更批次 = prodBatch   （与请求体同名，抓包里过滤的就是它）
- *   提供方最新变更批次 = prodBatchList
- * 这里原来写着一条推断「提供方最新批次 ≥ 调用方批次」，并自设触发器
- * 「出现反例就改这两行」—— **反例已经有了**：同一份 `服务订阅关系查询.har` 全 556 行、
- * 450 行可比中有 72 行 prodBatchList < prodBatch；另一份离线缓存 640 行、532 行可比中
- * 有 74 行反例（另 117 行大于、341 行相等）。推断作废：两个字段**没有大小关系**，
- * 别拿谁大谁小去推排序、推状态或判断数据对不对；列名含义只认后端表头口径。
- * （批次串长度也不齐，6/7/8 位都有，字符串直接比大小本身就不稳。）
+ * ── 两个批次字段：口径 2026-09-20 修正（旧注释的推断已作废）────
+ * 行内有 prodBatch 和 prodBatchList 两个批次字段，绑定为：
+ *   提供方最新变更批次 = prodBatch       （556 行 × 发布接口缓存交叉验证 99.1% 命中）
+ *   调用方投产/变更批次 = prodBatchList  （用户业务确认：2607 是最新调用的批次，
+ *     提供方时间必须早于调用方；另缓存实证：请求筛选 prodBatch='2607批次' 返回的
+ *     3 行里 prodBatchList 全等于 2607、prodBatch 全不是 —— 后端拿请求 prodBatch
+ *     过滤的就是调用方批次）
+ * 旧注释「两字段没有大小关系」作废：语义归属错了才显得没规律。调用方投产批次
+ * 与提供方「最新」变更批次无必然大小关系（先投产、提供方后来又变更很正常）。
+ *
+ * 请求体：prodBatch = 调用方批次筛选（后端认，实证同上）；
+ *         putBatch  = 死字段（实证：putBatch='2609批次' 的查询 total=550 完全未过滤）。
+ *         所以「提供方批次」筛选只能**前端本地过滤**（runSingleQuery 里的
+ *         filterByProviderBatch），buildCond 仍传 putBatch 只是为了模板完整。
  *
  * ── 审核流程状态字段 ────────────────────────────────────────
  * 行内 prodReviewStatus 与 reviewStatus 都是 "00"~"04" 裸值；本页用
@@ -277,9 +281,13 @@
     state.total = first.total;
     state.queried = true;
 
+    // 提供方批次筛选：后端 putBatch 是死字段（见文件头注释），只能拉回后本地过滤。
+    // 需要整批拉回（本地过滤必须看到全部行），上限 BULK_MAX 由 fetchAllPages 内部封顶。
+    const localBatch = String(cond.putBatch || '').trim();
+
     // 排序开启且总量不大时，整批拉回来做「全局」排序 + 前端分页，
     // 这样逾期 / 紧急的才是真的排在最前面，而不是只在当前页里排。
-    if (state.sort && first.total > 0 && first.total <= CLIENT_SORT_MAX) {
+    if ((state.sort || localBatch) && first.total > 0 && first.total <= BULK_MAX) {
       let all = null;
       if (first.total <= first.rows.length) {
         all = decorateRows(first.rows);             // 一页就装得下，不用再请求
@@ -313,19 +321,30 @@
         state.progress = null;
         if (seq !== state.reqSeq) return;
       }
-      if (all && all.length) {
+      if (all) {
+        // 提供方批次本地过滤放在**分支判定之前**：哪怕过滤出 0 条也要如实显示空，
+        // 不能因为「过滤后没数据」就退回去展示未过滤的第一页。
+        if (localBatch) all = SubscriptionModel.filterByProviderBatch(all, localBatch);
         state.allRows = all;
         state.total = all.length;
         state.mode = 'client';
       } else {
+        // 整批拉取失败的退化路径：本地过滤只作用在第一页上（不完整，聊胜于无）
         state.mode = 'server';
         state.allRows = null;
-        state.rows = decorateRows(first.rows);
+        state.rows = decorateRows(localBatch
+          ? SubscriptionModel.filterByProviderBatch(first.rows, localBatch)
+          : first.rows);
       }
     } else {
       state.mode = 'server';
       state.allRows = null;
       state.rows = decorateRows(first.rows);
+      if (localBatch && first.total > BULK_MAX && !state.sortLimited) {
+        state.sortLimited = true;
+        toast(`⚠️ 提供方批次筛选由前端本地过滤，结果共 ${num(first.total)} 条超过 ${num(BULK_MAX)} 条上限，`
+          + '无法完整过滤，请配合其他条件（调用方系统等）缩小范围', 5000);
+      }
       if (state.sort && first.total > CLIENT_SORT_MAX && !state.sortLimited) {
         state.sortLimited = true;
         toast(`⚠️ 结果共 ${num(first.total)} 条，超过 ${CLIENT_SORT_MAX} 条上限，`

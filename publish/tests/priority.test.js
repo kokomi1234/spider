@@ -34,7 +34,7 @@ test('parseYmd：合法 / 非法', () => {
 });
 
 test('evaluate：开发基线 → 批次月 -1 个月的 15 日', () => {
-  const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, NOW);
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, NOW);
   assert.strictEqual(r.next, '功能测试基线');
   assert.strictEqual(r.deadline, '2026-08-15', '2609 → 9-1=8 月 15 日');
   assert.strictEqual(r.days, 75);
@@ -43,13 +43,13 @@ test('evaluate：开发基线 → 批次月 -1 个月的 15 日', () => {
 });
 
 test('evaluate：开发基线的截止日跨年（2601批次 → 上一年 12 月）', () => {
-  const r = P.evaluate({ prodBatch: '2601批次', status: '开发基线' }, NOW);
+  const r = P.evaluate({ prodBatchList: '2601批次', status: '开发基线' }, NOW);
   assert.strictEqual(r.deadline, '2025-12-15', '1-1=0 → 上一年的 12 月');
   assert.strictEqual(r.from, 'rule');
 });
 
 test('evaluate：功能测试基线 → 批次月的 15 日', () => {
-  const r = P.evaluate({ prodBatch: '2609批次', status: '功能测试基线' }, NOW);
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '功能测试基线' }, NOW);
   assert.strictEqual(r.deadline, '2026-09-15');
   assert.strictEqual(r.next, '正式版基线');
   assert.strictEqual(r.days, 106);
@@ -81,26 +81,26 @@ test('defaultDeadlines：跨年与解析不出的批次', () => {
 
 test('defaultDeadlines 与 evaluate 用同一套规则（不会各算一套）', () => {
   const rows = [
-    { prodBatch: '2608批次', status: '开发基线', field: 'testDate' },
-    { prodBatch: '2608批次', status: '功能测试基线', field: 'releaseDate' },
-    { prodBatch: '2611批次', status: '开发基线', field: 'testDate' },
-    { prodBatch: '2701批次', status: '功能测试基线', field: 'releaseDate' },
+    { prodBatchList: '2608批次', status: '开发基线', field: 'testDate' },
+    { prodBatchList: '2608批次', status: '功能测试基线', field: 'releaseDate' },
+    { prodBatchList: '2611批次', status: '开发基线', field: 'testDate' },
+    { prodBatchList: '2701批次', status: '功能测试基线', field: 'releaseDate' },
   ];
-  rows.forEach(({ prodBatch, status, field }) => {
-    const viaRule = P.evaluate({ prodBatch, status }, NOW).deadline;
-    assert.strictEqual(P.defaultDeadlines(prodBatch)[field], viaRule,
-      `${prodBatch}/${status} 两处算出的默认日必须一致`);
+  rows.forEach(({ prodBatchList, status, field }) => {
+    const viaRule = P.evaluate({ prodBatchList, status }, NOW).deadline;
+    assert.strictEqual(P.defaultDeadlines(prodBatchList)[field], viaRule,
+      `${prodBatchList}/${status} 两处算出的默认日必须一致`);
   });
 });
 
 test('evaluate：终点状态（正式版基线 / 下线）不提醒', () => {
-  assert.strictEqual(P.evaluate({ prodBatch: '2609批次', status: '正式版基线' }, NOW).level, 'done');
-  assert.strictEqual(P.evaluate({ prodBatch: '2609批次', status: '下线' }, NOW).level, 'done');
+  assert.strictEqual(P.evaluate({ prodBatchList: '2609批次', status: '正式版基线' }, NOW).level, 'done');
+  assert.strictEqual(P.evaluate({ prodBatchList: '2609批次', status: '下线' }, NOW).level, 'done');
 });
 
 test('evaluate：逾期标红且天数取绝对值', () => {
   const now = new Date(2026, 8, 1); // 2026-09-01，晚于 2026-08-15
-  const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, now);
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, now);
   assert.strictEqual(r.days, -17);
   assert.strictEqual(r.overdue, true);
   assert.strictEqual(r.level, 'overdue');
@@ -109,7 +109,7 @@ test('evaluate：逾期标红且天数取绝对值', () => {
 
 test('evaluate：LEVELS 临界值（-1 / 0 / 7 / 8 / 30 / 31）', () => {
   // 截止日固定 2026-08-15，用 now 反推剩余天数 d
-  const at = (d) => P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 7, 15 - d)).level;
+  const at = (d) => P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, new Date(2026, 7, 15 - d)).level;
   assert.strictEqual(at(-1), 'overdue');
   assert.strictEqual(at(0), 'critical');
   assert.strictEqual(at(7), 'critical');
@@ -119,18 +119,18 @@ test('evaluate：LEVELS 临界值（-1 / 0 / 7 / 8 / 30 / 31）', () => {
 });
 
 test('evaluate：批次解析不出年月 / 基线不在里程碑里', () => {
-  const r1 = P.evaluate({ prodBatch: '技术支持类-2026年批次', status: '开发基线' }, NOW);
+  const r1 = P.evaluate({ prodBatchList: '技术支持类-2026年批次', status: '开发基线' }, NOW);
   assert.strictEqual(r1.level, 'unknown');
   assert.strictEqual(r1.reason, '批次解析不出年月');
 
-  const r2 = P.evaluate({ prodBatch: '2609批次', status: '什么基线' }, NOW);
+  const r2 = P.evaluate({ prodBatchList: '2609批次', status: '什么基线' }, NOW);
   assert.strictEqual(r2.level, 'unknown');
   assert.strictEqual(r2.reason, '基线状态不在里程碑里');
 });
 
 test('setBatchTimes：批次时间覆盖默认截止日（from=config）', () => {
   P.setBatchTimes({ '2609批次': { testDate: '2026-01-20' } });
-  const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, new Date(2026, 0, 1));
   assert.strictEqual(r.deadline, '2026-01-20', '应以配置的 testDate 为准');
   assert.strictEqual(r.from, 'config');
   assert.strictEqual(r.days, 19);
@@ -138,7 +138,7 @@ test('setBatchTimes：批次时间覆盖默认截止日（from=config）', () =>
 });
 
 test('decorate：写回下划线字段', () => {
-  const row = { prodBatch: '2609批次', status: '功能测试基线' };
+  const row = { prodBatchList: '2609批次', status: '功能测试基线' };
   P.decorate(row, NOW);
   assert.strictEqual(row._prioDeadline, '2026-09-15');
   assert.strictEqual(row._prioNext, '正式版基线（2026-09-15 前）');
@@ -147,9 +147,9 @@ test('decorate：写回下划线字段', () => {
 
 test('compare：紧急在前，done 恒在最后', () => {
   const rows = [
-    { prodBatch: '2609批次', status: '正式版基线' },  // done
-    { prodBatch: '2609批次', status: '功能测试基线' }, // 剩 106 天
-    { prodBatch: '2609批次', status: '开发基线' },     // 剩 14 天
+    { prodBatchList: '2609批次', status: '正式版基线' },  // done
+    { prodBatchList: '2609批次', status: '功能测试基线' }, // 剩 106 天
+    { prodBatchList: '2609批次', status: '开发基线' },     // 剩 14 天
   ].map((r) => P.decorate(r, NOW));
 
   const sorted = rows.slice().sort(P.compare);

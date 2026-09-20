@@ -300,7 +300,7 @@ test('✗ decorateRows：rows=null / [] 不崩返回空数组', () => {
 });
 
 test('✓ decorateRows：含 null 元素的数组原样返回脏行，不崩（2026-09-18 已修）', () => {
-  const out = SMP.decorateRows([null, { prodBatch: '2608批次' }]);
+  const out = SMP.decorateRows([null, { prodBatchList: '2608批次' }]);
   assert.strictEqual(out.length, 2, '脏行原样保留在结果里（不静默丢行，交由渲染层滤掉）');
   assert.strictEqual(out[0], null);
 });
@@ -309,7 +309,7 @@ test('✓ Priority.decorate / decorateRow：row=null 原样返回，不抛（202
   const P = winPriority().Priority;
   assert.strictEqual(SMP.decorateRow(null), null, '脏行原样返回，不写 _prio');
   assert.strictEqual(P.decorate(null, new Date(2026, 5, 1)), null);
-  const row = P.decorate({ prodBatch: '2608批次', status: '已订阅' }, new Date(2026, 5, 1));
+  const row = P.decorate({ prodBatchList: '2608批次', status: '已订阅' }, new Date(2026, 5, 1));
   assert.ok(row._prio, '正常行仍要算出优先级');
 });
 
@@ -335,13 +335,13 @@ test('✗ sortRows：非法方向不崩；无 Priority 保持原序，有 Priori
 const P = winPriority().Priority;
 const NOW = new Date(2026, 5, 1); // 固定基准，避免随当天漂移
 
-test('✗ Priority.evaluate：row=null / {} / 缺 prodBatch / 缺 status 均降级 unknown，不崩', () => {
+test('✗ Priority.evaluate：row=null / {} / 缺 prodBatchList / 缺 status 均降级 unknown，不崩', () => {
   assert.strictEqual(P.evaluate(null, NOW).level, 'unknown', 'null 行不崩');
   assert.strictEqual(P.evaluate({}, NOW).level, 'unknown', '空行不崩');
   const noBatch = P.evaluate({ status: '开发基线' }, NOW);
   assert.strictEqual(noBatch.level, 'unknown', '缺批次 → 解析不出年月');
   assert.strictEqual(noBatch.reason, '批次解析不出年月');
-  const noStatus = P.evaluate({ prodBatch: '2609批次' }, NOW);
+  const noStatus = P.evaluate({ prodBatchList: '2609批次' }, NOW);
   assert.strictEqual(noStatus.level, 'unknown', '缺状态 → 不在里程碑');
   assert.strictEqual(noStatus.reason, '基线状态不在里程碑里');
 });
@@ -350,16 +350,16 @@ test('✗ Priority.setBatchTimes：传非对象 / 非法日期值不崩，且无
   assert.doesNotThrow(() => P.setBatchTimes(null), '非对象参数不崩');
   assert.doesNotThrow(() => P.setBatchTimes('2026-13-45'), '字符串参数不崩，退化为 {}');
   // 传非对象后等价于清空覆盖 → 走规则口径
-  assert.strictEqual(P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, NOW).deadline, '2026-08-15');
+  assert.strictEqual(P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, NOW).deadline, '2026-08-15');
   // 非法日期值（月份/日越界）不崩，parseYmd 宽松解析给出一个日期串
   assert.doesNotThrow(() => P.setBatchTimes({ '2609批次': { testDate: '2026-13-45' } }));
-  const r = P.evaluate({ prodBatch: '2609批次', status: '开发基线' }, NOW);
+  const r = P.evaluate({ prodBatchList: '2609批次', status: '开发基线' }, NOW);
   assert.strictEqual(typeof r.deadline, 'string', '非法日期仍给出日期串（不崩）');
   P.setBatchTimes({}); // 复位，避免污染
 });
 
-test('✗ Priority.decorate：缺 prodBatch/status 的行降级 unknown，不崩', () => {
-  const d = P.decorate({ prodBatch: '2609批次' }, NOW);
+test('✗ Priority.decorate：缺 prodBatchList/status 的行降级 unknown，不崩', () => {
+  const d = P.decorate({ prodBatchList: '2609批次' }, NOW);
   assert.strictEqual(d._prio.level, 'unknown');
   assert.strictEqual(typeof d._prioText, 'string');
   const d2 = P.decorate({}, NOW);

@@ -110,7 +110,7 @@ test('reviewStatusTag：裸值 00~04 → 中文 + 色块', () => {
 
 test('prioCell：优先级单元格 = 色块 + 天数 + title 说明', () => {
   const html = V.prioCell({
-    prodBatch: '2609批次',
+    prodBatchList: '2609批次',
     _prio: { level: 'critical', days: 2, text: '剩 2 天', next: '正式版基线', deadline: '2026-09-15' },
   });
   assert.strictEqual(html.indexOf('<td class="col-prio"'), 0);
@@ -119,7 +119,7 @@ test('prioCell：优先级单元格 = 色块 + 天数 + title 说明', () => {
   assert.ok(html.indexOf('title="2609批次：应于 2026-09-15 前转为正式版基线"') > -1);
 
   // 非最后 3 天（4 天）不加 is-near；已完成状态 = done 色块
-  const far = V.prioCell({ prodBatch: 'B', _prio: { level: 'normal', days: 4, text: '剩 4 天', next: '正式版基线', deadline: '2026-09-15' } });
+  const far = V.prioCell({ prodBatchList: 'B', _prio: { level: 'normal', days: 4, text: '剩 4 天', next: '正式版基线', deadline: '2026-09-15' } });
   assert.strictEqual(far.indexOf('is-near'), -1);
   assert.ok(far.indexOf('class="prio-tag is-normal"') > -1);
 
@@ -129,7 +129,7 @@ test('prioCell：优先级单元格 = 色块 + 天数 + title 说明', () => {
   assert.ok(none.indexOf('>—</span>') > -1);
 
   // title 里的引号必须转义，否则会截断属性
-  const risky = V.prioCell({ prodBatch: 'A"B', _prio: { level: 'x', days: 1, text: 't', next: '正式版基线', deadline: '2026-09-15' } });
+  const risky = V.prioCell({ prodBatchList: 'A"B', _prio: { level: 'x', days: 1, text: 't', next: '正式版基线', deadline: '2026-09-15' } });
   assert.ok(risky.indexOf('A&quot;B：应于') > -1);
 });
 
@@ -137,7 +137,7 @@ test('renderTable：每行渲染 COLUMNS + 操作列，逾期整行标红', () =
   const rows = [
     {
       publishSubcriptionId: 'a1', status: '正式版基线', prodReviewStatus: '03',
-      serverCoding: 'S1', sysServeName: '服务名', prodBatch: '2609批次',
+      serverCoding: 'S1', sysServeName: '服务名', prodBatchList: '2609批次',
       _prio: { level: 'done', days: null, text: '已完成', next: '', deadline: '' },
     },
   ];

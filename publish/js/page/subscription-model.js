@@ -36,12 +36,12 @@
     ['assemblyEnName',         '提供方应用系统英文简称',       true],
     ['sysServeNo',             '提供方应用系统服务编号',       true],
     ['sysServeEnName',         '提供方应用系统服务英文名称',   true],
-    ['prodBatchList',          '提供方最新变更批次',           false],
+    ['prodBatch',              '提供方最新变更批次',           false],
     ['deptName',               '提供方部门名称',               false],
     ['callerComponent',        '调用方系统/分行编号',          true],
     ['callerComponentEnName',  '调用方系统英文简称/分行名称',  true],
     ['prodSysServeNo',         '调用方应用系统服务编号',       true],
-    ['prodBatch',              '调用方投产/变更批次',          false],
+    ['prodBatchList',          '调用方投产/变更批次',          false],
     ['prodTaskNo',             '调用方任务编号',               true],
     ['prodImplementationUnit', '订阅方产品实施单元',           false],
     ['subscriberUserName',     '订阅人',                       false],
@@ -426,6 +426,23 @@
     return { ok, rows: mergeBatchRows(batchRows, batches), partial, local, error: ok ? '' : `批次 ${partial.join('、')} 查询失败` };
   }
 
+  /**
+   * 提供方批次的**本地过滤**（纯，无 DOM）。
+   *
+   * 为什么只能本地过滤：后端请求体里的 putBatch 是**死字段**（2026-09-20 缓存实证：
+   * putBatch='2609批次' 的查询 total=550 完全未过滤），而 prodBatch 被后端用作
+   * **调用方**批次筛选（同上实证：prodBatch='2607批次' 返回的 3 行里 prodBatchList
+   * 全等于 2607、prodBatch 全不是）。所以「按提供方批次筛」只能拉回后本地做。
+   *
+   * @param {Array<object>} rows 已拉回的行
+   * @param {string} value 提供方批次（label 口径，如 '2608批次'；空串放行全部）
+   */
+  function filterByProviderBatch(rows, value) {
+    const v = String(value || '').trim();
+    if (!v) return rows;
+    return (rows || []).filter((r) => String((r && r.prodBatch) ?? '').trim() === v);
+  }
+
   // ═══════════════════════════════════════════════════
   // 优先级单元格（数据部分；HTML 拼装在 SubscriptionView）
   // ═══════════════════════════════════════════════════
@@ -439,7 +456,7 @@
     const p = row._prio || { level: 'unknown', text: '—' };
     const src = p.from === 'config' ? '（按批次时间配置）' : '';
     const hint = p.next
-      ? `${row.prodBatch || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}${src}`
+      ? `${row.prodBatchList || '（无批次）'}：应于 ${p.deadline} 前转为${p.next}${src}`
       : (p.level === 'done' ? '已到正式版基线 / 已下线' : '批次或基线状态无法判断');
     // 剩余 ≥0 且 ≤3 天：优先级这一格加粗标红（整行不变红，与「逾期整行标红」区分）。
     // 它**不是独立等级**：等级词只有 LEVELS 那四档（逾期 / 紧急（≤7天）/ 临近（≤30天）/ 正常），
@@ -470,6 +487,7 @@
     isEhrSplit,
     validateQuery,
     hasSpecificFilter,
+    filterByProviderBatch,
     // 分页数学（页码条 HTML 见 js/ui/table-utils.js 的 buildPageNumbers）
     planPageFetches,
     slicePage,
