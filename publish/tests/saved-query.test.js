@@ -833,7 +833,7 @@ test('同步状态：成功且代理报了库文件 → shared，file/storage/pe
   const S = loadSync(fakeStorage(), okJson({
     items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 3,
   }));
-  const r = await S.syncFromServer();
+  const r = await S.pushToServer();
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.file, '/srv/shared/saved-queries.db', '返回值也要带 file，首页角标之外的人要用');
   const st = S.lastSyncState();
@@ -923,7 +923,7 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
   const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
   const seen = [];
   const off = S.onSyncStateChange((st) => seen.push(st.state));
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.deepStrictEqual(seen, ['shared']);
 
   const st = S.lastSyncState();
@@ -931,7 +931,7 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
   assert.strictEqual(S.lastSyncState().state, 'shared', 'lastSyncState 要给副本，改不坏内部状态');
 
   off();
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.deepStrictEqual(seen, ['shared'], '取消订阅后不该再被叫到');
 });
 
@@ -940,7 +940,7 @@ test('同步状态：订阅方自己抛异常，不能把存储层的同步带�
   // 故意保持**同步**回调：这条测的是「同步 throw 也要被 recordSync 接住」，
   // 不能被批量 async 化误伤（async throw 会变成 rejection，try/catch 接不住）
   S.onSyncStateChange(() => { throw new Error('订阅方炸了'); });
-  const r = await S.syncFromServer();
+  const r = await S.pushToServer();
   assert.strictEqual(r.ok, true, '同步本身该成功');
   assert.strictEqual(S.lastSyncState().state, 'shared');
 });
@@ -948,8 +948,39 @@ test('同步状态：订阅方自己抛异常，不能把存储层的同步带�
 test('同步状态：代理没报 file 就不能说「已同步」，要退回 local', async () => {
   // 角标的判据是「代理告诉我们在读写哪个库」；少了这句话，就不该给用户一个共享的结论
   const S = loadSync(fakeStorage(), okJson({ items: [] }));
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.strictEqual(S.lastSyncState().state, 'local', '没 file 就没证据：不能报 shared');
+});
+
+test('同步状态：没设「当前用户」时 syncFromServer → nouser（角标隐藏，不谎报已同步）', async () => {
+  // 2026-09-21 用户拍板：没设当前用户时只探活，没有「我的列表」可同步 —— 不能说「已同步」
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db', storage: 'sqlite', people: 3 }));
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true, '探活本身是成功的');
+  assert.strictEqual(r.file, '/srv/shared/a.db', '端点信息仍如实带回来（排查用）');
+  assert.strictEqual(S.lastSyncState().state, 'nouser', '但要标成 nouser，首页角标对它隐藏');
+});
+
+test('同步状态：设了当前用户 → syncFromServer 走「我的列表」，拿得到 shared', async () => {
+  const me = { userId: '1001', userName: '张三' };
+  const stub = async (url) => {
+    const u = new URL(String(url), 'http://localhost');
+    const isUserQuery = !!u.searchParams.get('user');
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        code: 200,
+        data: isUserQuery
+          ? { mode: 'user', items: [], storage: 'sqlite' }
+          : { items: [], file: '/srv/a.db', storage: 'sqlite', people: 3 },
+      }),
+    };
+  };
+  const S = loadUserSync(fakeStorage(), stub, me);
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(S.lastSyncState().state, 'shared', '有「我的列表」可同步 → 才是真的已同步');
 });
 
 test('同步状态：已经 shared 过之后，一次拿不到 file 的成功不该把它打成 local', async () => {
@@ -1203,7 +1234,7 @@ test('服务端优先：服务端失败时 save 回落本机（localOnly:true）
   assert.strictEqual(S.list().length, 1);
 });
 
-test('服务端优先：exportJsonAsync 连得上代理 → 导出团队库全集', async () => {
+test('服务端优先：exportJsonAsync → 只导当前用户自己的（2026-09-21 改口径）', async () => {
   const proxy = fakeProxy();
   const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
   await S.save({ page: 'publish', name: '张三的', fields: {}, owner: { userId: '1001', userName: '张三', teamName: '开发一部' } });
@@ -1211,8 +1242,44 @@ test('服务端优先：exportJsonAsync 连得上代理 → 导出团队库全�
   proxy.db.set('peerX', { id: 'peerX', page: 'task', name: '李四的', fields: {}, owner: { userId: '1002', userName: '李四', teamName: '开发一部' } });
   const text = await S.exportJsonAsync();
   const parsed = JSON.parse(text);
-  assert.deepStrictEqual(parsed.items.map((x) => x.id).sort(), ['peerX', String(parsed.items.find((x) => x.id !== 'peerX').id)],
-    '导出要含两条（张三的 + 李四的）——导出的是团队库，不是本机镜像');
+  // ⚠️ 这条断言 2026-09-21 反过来了：以前导出主体是**团队库全集**，断言「含张三+李四两条」；
+  // 用户实测导出文件 12 条跨了 6 个人，拍板改成「只导当前用户自己的」。
+  assert.strictEqual(parsed.items.length, 1, '导出只该有当前用户自己那一条，实际 ' + parsed.items.length);
+  assert.strictEqual(parsed.items[0].name, '张三的');
+  assert.ok(!parsed.items.some((x) => x.id === 'peerX'), '别人的记录不得出现在导出里');
+});
+
+test('服务端优先：没设「当前用户」时导出的是本机镜像（不含别人的）', async () => {
+  const proxy = fakeProxy();
+  // loadSync 不注入 CurrentUser —— 与没设用户时的页面一致
+  const S = loadSync(fakeStorage(), proxy);
+  S.clear();
+  const w = await S.save({ page: 'publish', name: '匿名的', fields: {} });   // 无归属人 → 本地兜底
+  assert.strictEqual(w.ok, true);
+  proxy.db.set('peerX', { id: 'peerX', page: 'task', name: '别人的', fields: {}, owner: { userId: '1002', userName: '李四' } });
+  const parsed = JSON.parse(await S.exportJsonAsync());
+  assert.deepStrictEqual(parsed.items.map((x) => x.name), ['匿名的'], '没设用户时导本机镜像，且不得混入别人的记录');
+});
+
+test('服务端优先：导入的记录归当前用户（2026-09-21 改）—— 导同事的文件后自己也能看到', async () => {
+  const proxy = fakeProxy();
+  const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
+  // 李四导出的文件：文件里那条的 owner 是李四
+  const peerFile = JSON.stringify({
+    app: 'spider-saved-queries',
+    v: 2,
+    items: [{
+      id: 'p1', page: 'publish', name: '李四的查询', fields: { f_prodBatch: '2611' },
+      owner: { userId: '1002', userName: '李四', teamName: '开发一部' },
+    }],
+  });
+  const r = await S.importJson(peerFile);
+  assert.strictEqual(r.ok, true);
+  // 镜像只刷「我的」：这条能出现在镜像里，就说明它已经归了张三（否则按人拉不回来）
+  assert.strictEqual(S.list().length, 1, '导入后本机镜像（=我的列表）里应能看到它');
+  assert.strictEqual(S.list()[0].owner.userId, '1001', '归属已改写成当前用户');
+  // 服务端库里那条同样归张三（合并后整份写回的）
+  assert.strictEqual((proxy.db.get('p1') || {}).owner.userId, '1001', '服务端库里也归当前用户');
 });
 
 test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回（深链回填用）', async () => {

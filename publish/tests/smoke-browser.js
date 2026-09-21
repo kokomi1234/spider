@@ -567,8 +567,9 @@ const PAGES = [
           // 存的时候自动带上归属人（current-user.js 在场），且不再报 ownerMissing
           out.mineOwnerSaved = !!(S.list()[0] && S.list()[0].owner);
           out.ownerMissingFlag = (await S.save({ page: 'publish', name: '第二条', fields: {} })).ownerMissing === false;
-          // 2026-09-20 改版：exportJsonAsync 连得上代理导团队库、连不上退本机镜像 ——
-          // 冒烟环境没有 /local/saved-queries 端点，两条路都该能出合法的 JSON
+          // 2026-09-21 改口径：exportJsonAsync 只导**当前用户自己的**（此前误取团队库全集）；
+          // 冒烟环境没有 /local/saved-queries 端点，会退回本机镜像 —— 两条路都该出合法 JSON，
+          // 而且都只含「我的」（镜像是按人维护的，不会混进别人的记录）。
           const text = await S.exportJsonAsync();
           out.exportHasApp = /"app":\s*"spider-saved-queries"/.test(text);
           out.exportCount = (JSON.parse(text).items || []).length;
@@ -622,13 +623,14 @@ const PAGES = [
           && ioCheck.firstImport && ioCheck.firstImport.ok && ioCheck.firstImport.added === 1
           && ioCheck.firstImport.total === 3
           && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 3
-          // 我的两条 + 同事的那条不该出现
-          && ioCheck.renderedCount === 2
-          && ioCheck.renderedNames && !ioCheck.renderedNames.some((n) => /同事的查询/.test(n))
+          // 2026-09-21 用户拍板：导入进来的记录**归当前用户** —— 所以「同事发来的那条」
+          // 现在也出现在冒烟甲的列表里（以前保留原 owner，它归 1001、在自己列表里看不见）
+          && ioCheck.renderedCount === 3
+          && ioCheck.renderedNames && ioCheck.renderedNames.some((n) => /同事的查询/.test(n))
           && ioCheck.titleSaysMine === true
-          // 换人之后只剩同事那一条
-          && ioCheck.afterSwitchCount === 1
-          && ioCheck.afterSwitchNames && ioCheck.afterSwitchNames.some((n) => /同事的查询/.test(n))
+          // 换人之后同事名下什么都没有：那条已经归冒烟甲了（旧口径下这里会是 1 条）
+          && ioCheck.afterSwitchCount === 0
+          && ioCheck.afterSwitchNames && !ioCheck.afterSwitchNames.some((n) => /同事的查询/.test(n))
           // 没身份 → 0 条 + 指引（关键防线：不许静默退回"显示全部"）
           && ioCheck.noUserCount === 0 && /当前用户/.test(ioCheck.noUserHint || '')
           && ioCheck.hasSyncApi === true && ioCheck.pushWithoutEndpoint === true;
@@ -679,7 +681,7 @@ const PAGES = [
         });
         process.stdout.write(`  导出按钮: ${JSON.stringify(exportBtn)}\n`);
         {
-          const hit = (exportBtn.toasts || []).some((m) => /^已导出\s*1\s*条/.test(m));
+          const hit = (exportBtn.toasts || []).some((m) => /^已导出你的\s*1\s*条/.test(m));
           if (!hit || exportBtn.uncaught !== 0 || exportBtn.savedOk !== true) {
             process.stdout.write('    [FAIL] 点「导 出」没给出带条数的成功提示 / 抛了未捕获异常：'
               + JSON.stringify(exportBtn) + '\n');

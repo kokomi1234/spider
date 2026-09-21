@@ -662,23 +662,27 @@
    * 而团队库本来就该是导出的主体（换电脑对齐用的）。
    */
   async function exportJsonAsync() {
-    if (canSync()) {
-      try {
-        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-        if (r.ok) {
-          const json = await r.json();
-          const data = json && json.data;
-          if (data && Array.isArray(data.items)) {
-            return JSON.stringify({
-              app: 'spider-saved-queries',
-              v: SCHEMA_VERSION,
-              exportedAt: new Date().toISOString(),
-              items: data.items.map(sanitize).filter(Boolean),
-            }, null, 2);
-          }
-        }
-      } catch (_) { /* 退本机镜像 */ }
+    // 2026-09-21 用户拍板：导出**只导当前用户自己的**。
+    // 以前这里直接拉 SERVER_URL（团队库全集）—— 实测导出文件里 12 条跨了 6 个人
+    // （郑梓辉/李胜华/吴树海/贾星玥…），用户报「怎么导出了这么多人的」。
+    // 跨机器搬运的实际场景是「我（或同事）导出 → 再导入」，本来就用不到别人的记录；
+    // 要看别人的有首页的「部门常用查询」。所以这里改用按人查询的口径。
+    const cu = window.CurrentUser && window.CurrentUser.get();
+    if (cu) {
+      const mine = await mineFromServer(cu);
+      if (mine.ok) {
+        return JSON.stringify({
+          app: 'spider-saved-queries',
+          v: SCHEMA_VERSION,
+          exportedAt: new Date().toISOString(),
+          items: mine.items,
+        }, null, 2);
+      }
+      // 按人拉失败（存储后端不支持 ?user= 等）→ 退本机镜像。镜像本来就只含「我的」，
+      // 退它不会把别人的记录混进来，正是这里想要的。
     }
+    // 没设「当前用户」：没有归属人就没有服务端记录，导出本机镜像里那几份
+    // （用户拍板：没设用户时的常用查询就存在 localStorage，不进库）
     return exportJson();
   }
 
@@ -741,6 +745,14 @@
 
     const valid = incoming.map(sanitize).filter(Boolean);
     if (!valid.length) return fail('文件里没有可用的常用查询');
+
+    // 2026-09-21 用户拍板：导入进来的记录**归当前用户**（有当前用户时）。
+    // 以前保留文件里的原 owner —— 后果是把同事导出的文件导入后，那些记录归同事，
+    // 自己在「我的常用查询」里根本看不见（用户实测报的）。
+    // 判重口径（同页面 + 同名 + 同一个人）随之按「我」来算：与我已有的同名记录会合并。
+    // 没设当前用户时不动 owner —— 那种记录只落本机镜像（与 save 的本地兜底路径同理）。
+    const me = cleanOwner(window.CurrentUser && window.CurrentUser.get());
+    if (me) valid.forEach((it) => { it.owner = me; });
 
     if (canSync()) {
       try {
@@ -810,6 +822,8 @@
   //
   // state：'shared' 连上了共享库 / 'local' 没有端点（静态部署、离线）
   //        / 'fail' 端点在但这次失败 / 'pending' 还没同步过
+  //        / 'nouser' 没设「当前用户」—— 没有「我的列表」可同步，首页角标对它隐藏
+  //          （2026-09-21 加：以前这种情况也报 'shared'，等于说了一句空话）
   const syncState = { state: 'pending', total: 0, file: '', storage: '', people: 0, error: '', at: 0 };
   const syncListeners = new Set();
 
@@ -847,7 +861,10 @@
     if (!r || r.beacon) return r;
     syncState.at = Date.now();
     if (r.ok) {
-      syncState.state = r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local');
+      // 'nouser'：没设当前用户时只是探活，没有「我的列表」可同步 —— 不许谎报「已同步」
+      syncState.state = r.noUser
+        ? 'nouser'
+        : (r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local'));
       syncState.total = Number(r.total) || 0;
       // 只留文件名，不把代理机器的绝对路径摆到页面上（代理默认监听所有网卡，
       // 角标是每个打开首页的人都会看的；真要看全路径，title 里的文件名足够定位）
@@ -949,12 +966,14 @@
     const cu = window.CurrentUser && window.CurrentUser.get();
     try {
       if (!cu) {
-        // 没有归属人：拉全集没有意义（也不会被写进镜像），只探一下端点活着没
+        // 没有归属人：没有「我的列表」可同步（也不会被写进镜像），只探一下端点活着没。
+        // ⚠️ 但要标 noUser —— 那时**什么都没同步**，不能把角标说成「已同步」
+        //（2026-09-21 用户报：「没设用户时那个已同步的角标是不是也在乱说」）。
         const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
         if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
         const json = await r.json();
         const data = (json && json.data) || {};
-        return recordSync({ ok: true, total: list().length, file: data.file, storage: data.storage, people: data.people });
+        return recordSync({ ok: true, noUser: true, total: list().length, file: data.file, storage: data.storage, people: data.people });
       }
       const mine = await mineFromServer(cu);
       if (!mine.ok) return recordSync(fail(mine.error));

@@ -339,8 +339,10 @@
     if (!savedSyncEl) return;
     const S = window.SavedQuery;
     const st = (S && typeof S.lastSyncState === 'function') ? S.lastSyncState() : null;
-    // 还没同步过：不显示，免得首屏闪一个「仅本机」的假信号
-    if (!st || st.state === 'pending') {
+    // 还没同步过：不显示，免得首屏闪一个「仅本机」的假信号。
+    // 'nouser'（没设「当前用户」）同样隐藏 —— 那次只是探了个端点活着没，
+    // 根本没有「我的列表」可同步，显示「已同步」是空话（2026-09-21 用户拍板）。
+    if (!st || st.state === 'pending' || st.state === 'nouser') {
       savedSyncEl.hidden = true;
       savedSyncEl.textContent = '';
       savedSyncEl.title = '';
@@ -719,14 +721,18 @@
   // 2026-09-21 更正：以前这里写的是「记录在本机 localStorage，同一台机器才自然共享」——
   // 那是**架构改版前**的口径，现在团队的记录都在代理的共享库（SQLite）里，
   // 同一份代理下大家本来就互相看得到，导出/导入不再是「唯一通路」。
-  // 它现在的用途是**搬运/备份**：换一台机器、或者把某人的一批查询挪到别处。
-  // 导出导的仍是**本机镜像里那几份 JSON 文件**（不按人切），导入是合并（id 去重）。
+  // 它现在的用途是**搬运/备份**：换一台机器、或者把自己的一批查询挪到别处。
+  // **范围（2026-09-21 用户拍板）**：导出导的是**当前用户自己的**记录
+  // （此前误取团队库全集，实测 12 条跨了 6 个人）；导入进来的记录**归当前用户**
+  // （按 id / 同页面同名合并）。没设「当前用户」时，两侧都只走本机镜像 ——
+  // 那时常用查询本来就保存在 localStorage、不进共享库。
 
   async function exportQueries() {
     const S = window.SavedQuery;
     if (!S) { showToast('常用查询模块未加载', 2600, 'error'); return; }
-    // 2026-09-20 架构改版：镜像只含「我的」，导出主体应该是**服务端团队库**
-    // （exportJsonAsync 连不上代理才退本机镜像）。所以这里不再用本机条数拦人。
+    // 2026-09-21 用户拍板：导出**只导当前用户自己的**（此前 exportJsonAsync 拉的是
+    // 团队库全集）。它内部已按「当前用户」问服务端，连不上/没设用户才退本机镜像。
+    // 所以这里不再用本机条数拦人 —— 本机镜像只有「我的」，条数少不代表服务端没有。
     const text = await S.exportJsonAsync();
     const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -738,7 +744,8 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    // 条数从**导出内容**里读（导出主体是服务端团队库，这里没有现成的 items 变量）。
+    // 条数从**导出内容**里读（导出的是「我的」那份，可能来自服务端、也可能来自本机镜像，
+    // 这一层没有现成的 items 变量）。
     // 2026-09-21 修：原先写的是 `${items.length}` —— `items` 是 renderSaved/deptRender 里的
     // **函数局部变量**，这一层根本取不到，点导出必抛 ReferenceError。表现很隐蔽：
     // 文件照常下载，但成功提示永不出现，反被全局兜底弹一句「⚠️ 页面出现异常」，看着像导出失败。
@@ -748,7 +755,7 @@
       const parsed = JSON.parse(text);
       n = Array.isArray(parsed && parsed.items) ? parsed.items.length : 0;
     } catch (_) { /* 解析不了就只说「已导出」，不编一个数 */ }
-    showToast((n ? `已导出 ${n} 条` : '已导出')
+    showToast((n ? `已导出你的 ${n} 条常用查询` : '已导出你的常用查询')
       + '，发给同团队的人让他「导 入」即可合并', 3600, 'success');
   }
 
