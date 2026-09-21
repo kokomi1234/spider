@@ -734,11 +734,17 @@
    * 至少能一键导出、对方一键导入合并。
    */
   function exportJson() {
+    // ⚠️ 口径必须与列表一致（listForUser），**不能**直接导 `list()`：
+    // 镜像是「我的」离线镜像，**清除登录态并不会清掉它** —— 里面还残留着上一个登录的人
+    // 的记录。直接导 list() 的话，没设用户的人导出文件里就会混进别人的查询
+    //（2026-09-22 用户实测：清了登录态导出，文件里带着吴树海的两条）。
+    // 有身份 = 导 ta 的；没身份 = 只导本机匿名的 —— 「导出的就是你看到的」。
+    const items = listForUser(window.CurrentUser && window.CurrentUser.get());
     return JSON.stringify({
       app: 'spider-saved-queries',
       v: SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      items: list(),
+      items,
     }, null, 2);
   }
 

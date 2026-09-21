@@ -631,6 +631,10 @@
     if (CU) CU.clear();
     resetUserSearch();
     renderUser();
+    // 清掉登录态后「常用查询」列表必须跟着重渲染：镜像里还残留着上一个人的记录
+    //（清除登录态不清镜像），不重渲染的话屏幕上会一直挂着别人的列表。
+    // renderSaved 在没身份的分支里会把镜像收敛成只剩本机匿名的、并列出它们。
+    renderSaved();
     const box = userSearchBox();
     if (box) box.focus();   // 焦点回到组件内部那个真正的输入框（宿主 <select> 是隐藏的）
   }

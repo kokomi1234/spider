@@ -570,14 +570,18 @@ test('saved-query：新增的保存排在最前（首页按最近使用展示）
 // ══════════════════════════════════════════════════════════
 
 test('saved-query：导出 → 导入 往返，记录与归属都在', async () => {
-  const a = load(fakeStorage());
+  // 2026-09-22 起 exportJson 的口径与列表一致（listForUser）：有身份导 ta 的、
+  // 没身份只导本机匿名的。所以这条往返用例必须**带着「当前用户」**跑（与真实页面一致），
+  // 否则显式传的 owner 会被"没身份只导匿名的"过滤掉。
+  const noNet = async () => { throw new Error('离线'); };
+  const a = loadUserSync(fakeStorage(), noNet, OWNER_A);
   (await a.save({ page: 'publish', name: '甲', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611批次', owner: OWNER_A, labels: { f_prodBatch: '2611批次' } }));
   const text = a.exportJson();
   const parsed = JSON.parse(text);
   assert.strictEqual(parsed.app, 'spider-saved-queries', '要带标识，导入方好判断文件来源');
   assert.strictEqual(parsed.items.length, 1);
 
-  const b = load(fakeStorage());
+  const b = loadUserSync(fakeStorage(), noNet, OWNER_A);
   const r = (await b.importJson(text));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.added, 1);
@@ -586,6 +590,25 @@ test('saved-query：导出 → 导入 往返，记录与归属都在', async () 
   assert.strictEqual(got.name, '甲');
   assert.strictEqual(got.owner.userName, '张三', '归属要跟着走，否则导入后不进部门排行');
   assert.deepStrictEqual(got.labels, { f_prodBatch: '2611批次' });
+});
+
+test('saved-query：清了登录态再导出，不得把上一个登录的人的记录混进去', async () => {
+  // 2026-09-22 用户实测：吴树海登录存过记录 → 清了登录态（**镜像不会清**）→ 匿名又存了几条
+  // → 导出 → 文件里混着吴树海的记录。导出口径必须与列表一致（listForUser）：
+  // 没身份时只导「无人认领」的本机记录，别人的（有归属人的）一条都不能混入。
+  const noNet = async () => { throw new Error('离线'); };
+  const st = fakeStorage();
+  const WU = { userId: '6464402', userName: '吴树海', teamId: 'K4229', teamName: '开发三部' };
+  const S1 = loadUserSync(st, noNet, WU);
+  (await S1.save({ page: 'publish', name: '吴树海的', fields: {} }));
+
+  // 同一份 localStorage 换到「没设用户」的环境（模拟清除登录态后镜像未清）
+  const S2 = loadSync(st, noNet);
+  (await S2.save({ page: 'publish', name: '匿名存的', fields: {} }));
+
+  const parsed = JSON.parse(S2.exportJson());
+  assert.deepStrictEqual(parsed.items.map((x) => x.name), ['匿名存的'],
+    '只导本机匿名的，上一个登录的人的记录不得混入导出文件');
 });
 
 test('saved-query：同 id → 视为同一条合并，不重复堆积', async () => {
