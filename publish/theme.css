@@ -2047,6 +2047,138 @@ th:hover > .col-resizer::after { background: var(--outline); }
 body.is-resizing,
 body.is-resizing * { cursor: col-resize !important; user-select: none !important; }
 
+/* ══════════════════════════════════════════════════════
+   发布查询页：结果行的「接口明细」/「操作记录」弹窗
+   ──────────────────────────────────────────────────────
+   外壳直接复用订阅弹窗那一套（.sub-overlay/.sub-dialog/.sub-head/
+   .sub-body/.sub-foot），表格复用弹窗表 .sub-tbl（与「关联文档」
+   子弹窗同一套线型与表头），所以这里只补三块：
+   ① 页签条（接口明细的 5 个 tab）② 表格区的高度分配 ③ 操作记录筛选行。
+
+   ── 高度分配为什么必须显式接管（2026-09-21）──────────
+   .sub-body 默认 overflow:auto，而表格自己也要能滚（表头吸顶只在
+   本表自己的滚动视口里生效，见本文件 `.tbl-scroll > table > thead th`）。
+   两层都滚 = 双滚动条，且表头钉在表格区顶部却被整体推走。
+   做法与订阅页批次时间弹窗一致：弹窗主体改成「不滚」，
+   富余高度全部给表格区，弹窗里只有一条滚动条。
+
+   ── 选择器为什么带 .sub-dialog 前缀 ──────────────────
+   各页面 <style> 在 theme.css 之后加载，同权重下会盖掉这里；
+   带上父级限定后权重高于页面里的单类选择器（与本文件末尾
+   「台账纸」层同一个手法），不必给页面加 !important。
+   ══════════════════════════════════════════════════════ */
+
+/* ── 弹窗宽度（与 .doc-dialog 同一个手法：同权重、靠本文件更靠后生效）──
+   接口明细一次要横排 10 列（序号 + 参数/名称/字典项/长度/类型/必填 + 备注1~3），
+   1080px 下三个备注列会被挤成竖条；操作记录只有 6 列，反而不用那么宽。 */
+.intf-dialog { max-width: min(1320px, 96vw); }
+.op-record-dialog { max-width: min(1080px, 96vw); }
+
+/* .detail-status 自带 -16px 上边距（那是给「详情弹窗」里紧跟标题栏的用法调的对齐），
+   这里的主体是 flex + gap，负边距会让状态行贴死页签条，所以在弹窗内收回。 */
+.sub-dialog .detail-status { margin: 0; }
+
+/* ── 页签条（接口明细的 5 个 tab）───────────────────────
+   交互契约在 js/ui/intf-detail-dialog.js：← → 切页签、Home/End 跳首尾，
+   且只有当前页签 tabindex=0（roving tabindex），所以必须有可见焦点环，
+   否则键盘用户看不出焦点落在哪一格。 */
+.dlg-tabs {
+  display: flex;
+  align-items: stretch;
+  padding: 0 var(--sp1);
+  background: var(--surface-1);
+  border: 1px solid var(--outline-soft);
+  border-bottom: none;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  scrollbar-width: thin;
+}
+.dlg-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  /* 2px 下边框当选中指示器：用负 margin 把它压进页签条底边之内，
+     否则选中项下方会多出一条悬空横线（页签条自身吃掉 1px 边框）。 */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 10px 16px;
+  font-family: inherit;
+  font-size: var(--fs-md);
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.dlg-tab:hover { color: var(--on-surface); background: var(--surface); }
+.dlg-tab.is-active {
+  color: var(--primary);
+  background: var(--surface);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+.dlg-tab:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* ── 主体：不滚，富余高度全给表格区 ───────────────────── */
+.sub-dialog .intf-body,
+.sub-dialog .op-record-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp2);
+  overflow: hidden;
+}
+.intf-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp2);
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 表格区 = 它自己的滚动视口；表头吸顶由本文件的
+   `.tbl-scroll > table > thead th` 提供，这里只负责把高度让出来。
+   max-height:none 是必须的：页面的 .tbl-scroll 有个 clamp(320px,68vh,820px)
+   的限高（给页面主表用的），权重低但页面 <style> 后加载，得在这里显式收回，
+   否则弹窗里会「表格区被限高、下方还空一大块」。 */
+.sub-dialog .dlg-tbl-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+/* 弹窗里的分页条紧贴表格，不要页面那种 16px 上边距 */
+.sub-dialog .dlg-pager { margin-top: 0; flex: 0 0 auto; }
+
+/* ── 操作记录：筛选行（操作类型在左、查询/重置在右）──────
+   宽度固定：选项文案长短差很远（「删除」vs「接口批量更新」），
+   随内容伸缩会让右侧两个按钮每次打开都挪位置，肌肉记忆作废。 */
+.op-record-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+}
+.op-record-filter > label {
+  color: var(--on-variant);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  white-space: nowrap;
+}
+/* 下拉走 createSearchableSelect（组件会给宿主包一层 .searchable-select，
+   且它默认 width:100%），所以宽度要给包装容器而不是那个被隐藏的 <select>。 */
+.op-record-filter .searchable-select { width: 220px; flex: 0 0 auto; }
+/* .result-count 自带 margin-right:auto，把「查 询 / 重 置」顶到最右 */
+.op-record-filter .op-record-count { flex: 0 0 auto; }
+
+/* ── 弹窗表格的单元格辅助类（与列定义 publish-dialog-model.js 一一对应）──
+   一律限定在 .sub-tbl 内，别让它们影响页面主结果表。
+   注意：这些类同时挂在 <col> 上（列宽靠它），字体/对齐只能在 th/td 上生效，
+   所以选择器要能盖住 `.sub-tbl th`（0,1,1）—— 双类 (0,2,0) 正好。 */
+.sub-tbl .c-mono { font-family: monospace; font-size: var(--fs-xs); }
+.sub-tbl .c-center { text-align: center; }
+/* 长文本列：允许折行（.sub-tbl th 默认 nowrap，这些列的表头也常是长句），
+   并给最小宽度，免得被挤成每行一个字的竖条。 */
+.sub-tbl .c-long { white-space: normal; word-break: break-word; min-width: 140px; }
+
 /* ═══════════════════════════════════════════════════════════
    全站视觉基线「台账纸」（2026-09-10 起，三个页面统一）
    ───────────────────────────────────────────────────────────

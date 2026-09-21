@@ -22,14 +22,17 @@
       /* 列宽集中成变量，窄屏统一压缩，避免整表被挤出横向滚动条 */
       --c-index: 40px;
       --c-code: 270px;
-      --c-name: 240px;
+      --c-name: 186px;
       --c-comp: 105px;
       --c-batch: 80px;
       --c-status: 115px;
       --c-check: 82px;
-      --c-dept: 175px;
+      --c-dept: 152px;
       --c-sub: 100px;
-      --c-op: 145px;
+      /* 操作列 2026-09-21 从 145px 加宽到 268px：新增「接口明细」「操作记录」
+         后是四个按钮（详情/接口明细/操作记录/订阅），窄列会折成四行、行高翻倍。
+         宽度从服务名称 / 所属部门两列各匀一部分（那两列有 2 行截断，最不缺宽度）。 */
+      --c-op: 268px;
       table-layout: fixed;
       width: 100%;
       min-width: calc(var(--c-index) + var(--c-code) + var(--c-name) + var(--c-comp)
@@ -99,19 +102,19 @@
     .result-table .col-sub    { width: var(--c-sub); }
     .result-table .col-op     { width: var(--c-op); }
 
-    /* 窄屏（≤1460px）：按信息密度等比压缩列宽，总宽 1160px，
+    /* 窄屏（≤1460px）：按信息密度等比压缩列宽，总宽 1220px，
        1280 / 1366 / 1440 这些常见分辨率下都不再出现横向滚动条 */
     @media (max-width: 1460px) {
       .result-table {
-        --c-code: 224px;
-        --c-name: 196px;
+        --c-code: 200px;
+        --c-name: 168px;
         --c-comp: 90px;
         --c-batch: 76px;
         --c-status: 100px;
         --c-check: 78px;
-        --c-dept: 134px;
+        --c-dept: 122px;
         --c-sub: 92px;
-        --c-op: 136px;
+        --c-op: 254px;
       }
     }
 
@@ -172,8 +175,10 @@
     .result-table thead th.col-op {
       text-align: center;
     }
-    /* 操作列是每行最高频的两个操作（详情 / 订阅）。原来 25px 高、间距 2px，
-       鼠标从「详情」滑到「订阅」很容易点错，点错就得关掉再重来。 */
+    /* 操作列是每行最高频的操作（详情 / 接口明细 / 操作记录 / 订阅）。原来 25px 高、间距 2px，
+       鼠标从「详情」滑到「订阅」很容易点错，点错就得关掉再重来。
+       2026-09-21 加了两个新入口后按钮变多，间距统一到 8px、居中排布，
+       窄列时换行而不是溢出（列宽已同步加宽，见上面的 --c-op）。 */
     .result-table .col-op .text-btn {
       padding: 5px 10px;
       min-height: 32px;
@@ -570,6 +575,93 @@
     </div>
   </div>
 
+  <!-- ═══ 接口明细弹窗（结果行 →「接口明细」）═══
+       5 个 tab 的数据由**一次请求**返回（/itamp-tool/intfcMgmt/serviceChildList），
+       所以 tab 切换只是换表，不再发请求。
+       tab 条 / 表头 / 表格正文 / 分页条都由 js/ui/intf-detail-dialog.js 渲染，
+       列定义、排序（按 sort）、分页口径在 js/ui/publish-dialog-model.js（纯逻辑，有单测）。 -->
+  <div class="overlay sub-overlay" id="intfDetailOverlay" role="presentation">
+    <div class="dialog sub-dialog intf-dialog" id="intfDetailDialog" role="dialog" aria-modal="true"
+         aria-labelledby="intfDetailTitle" tabindex="-1">
+      <div class="sub-head" id="intfDetailHead">
+        <h2 id="intfDetailTitle">接口明细</h2>
+        <button type="button" class="sub-close" id="btnIntfDetailCloseX" aria-label="关闭">✕</button>
+      </div>
+      <div class="sub-body intf-body">
+        <!-- tab 条由 JS 按模型里的 5 个 tab 生成（标签只有一处定义）；
+             键盘 ← → 切页签、Home/End 跳首尾，见 intf-detail-dialog.js -->
+        <div class="dlg-tabs" role="tablist" id="intfDetailTabs" aria-label="接口明细分类"></div>
+        <div class="intf-panel" id="intfDetailPanel" role="tabpanel" tabindex="0">
+          <div class="detail-status" id="intfDetailStatus" role="status" aria-live="polite" hidden></div>
+          <div class="tbl-scroll dlg-tbl-scroll">
+            <table class="sub-tbl">
+              <colgroup id="intfDetailCols"></colgroup>
+              <thead id="intfDetailThead"></thead>
+              <tbody id="intfDetailTbody"></tbody>
+            </table>
+          </div>
+          <nav class="pagination dlg-pager" id="intfDetailPager" aria-label="分页" style="display:none;">
+            <button class="outlined btn-xs" id="intfBtnFirst" type="button">« 首页</button>
+            <button class="outlined btn-xs" id="intfBtnPrev" type="button">‹ 上一页</button>
+            <ul class="page-numbers" id="intfPageNumbers"></ul>
+            <button class="outlined btn-xs" id="intfBtnNext" type="button">下一页 ›</button>
+            <button class="outlined btn-xs" id="intfBtnLast" type="button">末页 »</button>
+            <span class="page-info" id="intfPageInfo" role="status" aria-live="polite"></span>
+            <span class="page-jump">跳至
+              <input type="number" id="intfPageJump" min="1" value="1" aria-label="跳转到页码"> 页</span>
+          </nav>
+        </div>
+      </div>
+      <div class="sub-foot">
+        <button class="outlined btn-sm" id="btnIntfDetailClose" type="button">关 闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 操作记录弹窗（结果行 →「操作记录」）═══
+       服务端分页：body { operationType, pageNum, pageSize, publishId }，
+       筛选 / 翻页都要重新请求（js/ui/op-record-dialog.js）。 -->
+  <div class="overlay sub-overlay" id="opRecordOverlay" role="presentation">
+    <div class="dialog sub-dialog op-record-dialog" id="opRecordDialog" role="dialog" aria-modal="true"
+         aria-labelledby="opRecordTitle" tabindex="-1">
+      <div class="sub-head" id="opRecordHead">
+        <h2 id="opRecordTitle">操作记录</h2>
+        <button type="button" class="sub-close" id="btnOpRecordCloseX" aria-label="关闭">✕</button>
+      </div>
+      <div class="sub-body op-record-body">
+        <!-- 筛选行：操作类型在左、查询/重置在右（与结果页筛选卡的按钮顺序一致）；
+             选项来自模型里唯一一份编码映射表 -->
+        <div class="op-record-filter">
+          <label for="opTypeFilter">操作类型</label>
+          <select id="opTypeFilter" class="sub-ctl" placeholder="请选择操作类型"></select>
+          <span class="result-count op-record-count" id="opRecordCount" aria-live="polite"></span>
+          <button class="filled btn-sm" id="btnOpQuery" type="button">查 询</button>
+          <button class="outlined btn-sm" id="btnOpReset" type="button">重 置</button>
+        </div>
+        <div class="tbl-scroll dlg-tbl-scroll">
+          <table class="sub-tbl">
+            <colgroup id="opRecordCols"></colgroup>
+            <thead id="opRecordThead"></thead>
+            <tbody id="opRecordTbody"></tbody>
+          </table>
+        </div>
+        <nav class="pagination dlg-pager" id="opRecordPager" aria-label="分页" style="display:none;">
+          <button class="outlined btn-xs" id="opBtnFirst" type="button">« 首页</button>
+          <button class="outlined btn-xs" id="opBtnPrev" type="button">‹ 上一页</button>
+          <ul class="page-numbers" id="opRecordPageNumbers"></ul>
+          <button class="outlined btn-xs" id="opBtnNext" type="button">下一页 ›</button>
+          <button class="outlined btn-xs" id="opBtnLast" type="button">末页 »</button>
+          <span class="page-info" id="opRecordPageInfo" role="status" aria-live="polite"></span>
+          <span class="page-jump">跳至
+            <input type="number" id="opRecordPageJump" min="1" value="1" aria-label="跳转到页码"> 页</span>
+        </nav>
+      </div>
+      <div class="sub-foot">
+        <button class="outlined btn-sm" id="btnOpRecordClose" type="button">关 闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ═══ 订阅弹窗 ═══ -->
   <div class="overlay sub-overlay" id="subscribeOverlay" role="presentation">
     <div class="dialog sub-dialog" id="subscribeDialog" role="dialog" aria-modal="true" aria-labelledby="subDialogTitle" tabindex="-1">
@@ -913,6 +1005,12 @@
   <script src="js/ui/detail-dialog.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/ui/query-feedback.js"></script>
+  <!-- 结果行两个弹窗（2026-09-21）：模型在前、两个弹窗在后。
+       依赖 PublishDialogModel / TableUtils / QueryFeedback / DialogUtils / ToolApi /
+       createSearchableSelect（都排在它们之前），页面脚本 publish.js 只负责把行对象递进去。 -->
+  <script src="js/ui/publish-dialog-model.js"></script>
+  <script src="js/ui/intf-detail-dialog.js"></script>
+  <script src="js/ui/op-record-dialog.js"></script>
   <!-- current-user.js 看着像首页专用，其实不能省：SavedQuery.save() 的归属人兜底读它，
        本页少了这一行，从本页保存的查询就会 owner 为空，永远进不了「我的」和部门排行（且不报错）。 -->
   <script src="js/ui/current-user.js"></script>

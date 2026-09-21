@@ -118,6 +118,8 @@
         <td class="col-op">
           <div class="action-row">
             <button class="text-btn btn-xs" data-detail="${absIdx}">详情</button>
+            <button class="text-btn btn-xs" data-intf="${absIdx}">接口明细</button>
+            <button class="text-btn btn-xs" data-oprecord="${absIdx}">操作记录</button>
             ${checkSubscribe && checkSubscribe(serverCoding) === 'unsubscribed'
               ? `<button class="text-btn btn-xs btn-subscribe" data-sub="${absIdx}">订阅</button>`
               : ''}

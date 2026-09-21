@@ -6,11 +6,11 @@
  * `output/openapi.json`（由 har2doc.py 从抓包生成）。基础域名
  * http://itamp.bocsys.cn，本地由 proxy.js 转发（前端发完整后端路径）。
  *
- * 抓包确认的接口（19 个，**0 个留空**）：
- *   计数口径 = 下面 ENDPOINTS 对象的键数（19 个键 = 19 条路径，全部已配置；
+ * 抓包确认的接口（20 个，**0 个留空**）：
+ *   计数口径 = 下面 ENDPOINTS 对象的键数（20 个键 = 20 条路径，全部已配置；
  *   留空 = 关闭该能力，当前一条都没有）。标题原来写「16 个」是陈旧计数——
  *   订阅页那两条接口补进 ENDPOINTS 时没同步，下面的清单也一直漏列
- *   getPublishDataList（现在补齐，逐条对上 19 个键）。
+ *   getPublishDataList（现在补齐，逐条对上 20 个键）。
  *   评委信息            → POST /itamp-tool/publish/getJudgeInfo?n=xx
  *                         body { compNum, principal, callerComponent }
  *   订阅评委信息        → POST /itamp-tool/publish/subscriptionReview
@@ -32,6 +32,9 @@
  *   发布列表            → POST /itamp-tool/publish/getPublishList body { callerComponent, operationType, pageNum, pageSize, status, publishId }
  *   操作记录            → POST /itamp-tool/operation/getOperationRecordList body { operationType, pageNum, pageSize, publishId }
  *   子操作记录          → POST /itamp-tool/operation/getSubOperationRecordList body { operationType, pageNum, pageSize, subscriptionId }
+ *   接口明细            → POST /itamp-tool/intfcMgmt/serviceChildList body { dataId, sysServeNo }
+ *                         一次返回 5 个 tab：childReqList / childRespList /
+ *                         revisionList / interfaceModifyList / deployList
  *   性能数据            → POST /itamp-tool/performanceCapacity/getData body { subscriptionId }
  *   性能操作数据        → POST /itamp-tool/performanceCapacity/getPerformanceOperationData
  *                         body { pageNum, pageSize, subscriptionId }
@@ -69,6 +72,11 @@
       publishList:      '/itamp-tool/publish/getPublishList',
       operationRecordList: '/itamp-tool/operation/getOperationRecordList',
       subOperationRecordList: '/itamp-tool/operation/getSubOperationRecordList',
+      // ── 接口明细弹窗（操作记录和接口明细.har，2026-09-21）──
+      // 一次返回 5 个 tab 的全部数据：
+      //   data.childReqList(请求报文) / childRespList(响应报文) /
+      //   revisionList(文档级修订) / interfaceModifyList(接口级修订) / deployList(应用系统服务部署)
+      serviceChildList: '/itamp-tool/intfcMgmt/serviceChildList',
       perfData:         '/itamp-tool/performanceCapacity/getData',
       perfOperationData: '/itamp-tool/performanceCapacity/getPerformanceOperationData',
       // ── 服务订阅关系查询页（服务订阅关系查询.har，2026-09-10）──
@@ -95,6 +103,7 @@
       publishList:      'POST',
       operationRecordList: 'POST',
       subOperationRecordList: 'POST',
+      serviceChildList: 'POST',
       perfData:         'POST',
       perfOperationData: 'POST',
       subscriptionHistory: 'POST',
@@ -456,6 +465,61 @@
     }
   }
 
+  /**
+   * 接口明细（发布查询页结果行的「接口明细」弹窗）。
+   * body 与抓包一致：{ dataId, sysServeNo }
+   *   dataId    = 发布行的 publishId（抓包里两个接口传的是同一个 UUID）
+   *   sysServeNo = 发布行的 sysServeNo 原值
+   *
+   * ⚠️⚠️ **sysServeNo 的形态没有证实，这条最该先验**（2026-09-21 复核时发现的）：
+   *   抓包里 serviceChildList 收到的是 **`E00306MG0001-queryPreviousTransaction`** ——
+   *   **带短横线、后半段是个方法名**；而发布列表 35 行真实数据的 `sysServeNo` **全部是纯编号**
+   *   （`E00301TO1200` 这种，无短横线）。两边**不是同一种形态**，而这份 HAR 里**没有发布列表那次
+   *   请求**，无法把「某一行」与「随后的 body」对上，所以**判定不了该传什么**。
+   *   两种可能都成立：①后端要「编号-接口编码」拼接（那行该拼 `E00301TO1200-ObsSDTotalTransQuotaQry`）；
+   *   ②那个服务的 sysServeNo 本身就带后缀（那原值就是对的）。
+   *   当前实现按「原值」传 —— **若形态错了，表现是打开弹窗后整表为空或拿到别的服务的数据，
+   *   且不会报错**（离线回放还会被宽松匹配掩盖成"看起来对了"）。
+   *   定案只差一次抓包：**同一次会话里先查发布列表、再点开那一行的「接口明细」**，
+   *   两个请求一起抓，看 body 里的值与行里的哪个字段相等。
+   *
+   * 一次返回 5 个 tab 的数据，键名来自 `操作记录和接口明细.har`：
+   *   data.childReqList       → 请求报文（messageType '1'）
+   *   data.childRespList      → 响应报文（messageType '2'）
+   *   data.revisionList       → 文档级修订记录（该次抓包里是空数组）
+   *   data.interfaceModifyList → 接口级修订记录
+   *   data.deployList         → 应用系统服务部署
+   * 五个键一律补成数组：调用方不必再判 undefined，也能区分「确实没有」与「没拿到」。
+   */
+  async function fetchServiceChildList(p) {
+    if (!isEnabled('serviceChildList')) return { ok: true, local: true, lists: null };
+    if (!window.API || typeof window.API.call !== 'function') {
+      return { ok: false, lists: null, error: 'API 客户端未就绪' };
+    }
+    try {
+      const q = p || {};
+      const json = await request('serviceChildList', {
+        dataId:     q.dataId || '',
+        sysServeNo: q.sysServeNo || '',
+      });
+      const data = (json && json.data) || {};
+      const arr = (v) => (Array.isArray(v) ? v : []);
+      return {
+        ok: true,
+        local: false,
+        lists: {
+          childReqList:        arr(data.childReqList),
+          childRespList:       arr(data.childRespList),
+          revisionList:        arr(data.revisionList),
+          interfaceModifyList: arr(data.interfaceModifyList),
+          deployList:          arr(data.deployList),
+        },
+      };
+    } catch (e) {
+      return { ok: false, lists: null, error: e.message || String(e) };
+    }
+  }
+
   /** 子操作记录：body { operationType, pageNum, pageSize, subscriptionId } */
   async function fetchSubOperationRecordList(p) {
     if (!isEnabled('subOperationRecordList')) return { ok: true, local: true, total: 0, rows: [] };
@@ -614,6 +678,7 @@
       fetchPublishList,
       fetchOperationRecordList,
       fetchSubOperationRecordList,
+      fetchServiceChildList,
       fetchPerformanceData,
       fetchPerformanceOperationData,
       fetchSubscriptionPublishHistory,
