@@ -60,7 +60,7 @@ const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition', 'createSearchableSelect'] },
-  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser'] },
+  { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser', 'PublishDialogModel', 'IntfDetailDialog', 'OpRecordDialog'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
   { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
   { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
@@ -1051,6 +1051,324 @@ const PAGES = [
           }
           nFails.forEach((f) => process.stdout.write('    [FAIL] ' + f + '\n'));
           if (nFails.length) anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
+        // 结果行两个弹窗（2026-09-21）：接口明细（5 个 tab，一次请求拿全）+ 操作记录（服务端分页）。
+        // 冒烟不依赖后端：只把 window.ToolApi 的两个取数函数换成桩（形态照抄
+        // `操作记录和接口明细.har`，字段名一个不差），弹窗与页面脚本仍走真实代码路径 ——
+        // 这样「模块没引 / 事件没接」这种点了没反应的毛病才拦得住。
+        const rowDlg = await page.evaluate(async () => {
+          const out = {};
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          const api = window.ToolApi;
+          if (!api) return { err: 'ToolApi 未加载' };
+          if (typeof window.IntfDetailDialog !== 'object' || typeof window.IntfDetailDialog.open !== 'function'
+            || typeof window.OpRecordDialog !== 'object' || typeof window.OpRecordDialog.open !== 'function') {
+            return { err: '两个弹窗模块未加载（PublishDialogModel / intf-detail-dialog / op-record-dialog）' };
+          }
+          const origChild = api.fetchServiceChildList;
+          const origOp = api.fetchOperationRecordList;
+          const opCalls = [];
+          // 抓包里 operationType 出现过的编码：12/17/18/43/45/47/50/52。
+          // 桩里刻意带上 17（**没有确认过显示名**）——守「未覆盖的编码原样显示数字，不猜中文」。
+          const TYPE_CYCLE = ['12', '43', '52', '17', '50'];
+          const mkParam = (i, messageType) => ({
+            parameter: 'p' + i, parameterName: '参数' + i, dictNo: 'D' + i, length: '16',
+            type: 'String', isMust: i % 2 ? '是' : '否', remark1: '', remark2: '', remark3: '',
+            messageType: messageType, sort: i,
+          });
+          try {
+            api.fetchServiceChildList = async () => ({
+              ok: true,
+              local: false,
+              lists: {
+                childReqList: [mkParam(0, '1'), mkParam(1, '1')],
+                childRespList: [mkParam(0, '2'), mkParam(1, '2'), mkParam(2, '2')],
+                revisionList: [],
+                interfaceModifyList: [{
+                  vsn: 'V1.0', modifyDetail: '新增接口', modifyDate: '2026-07-17',
+                  modifier: '崔丹', remark: '', prodBatch: null, serverNo: null, sort: null,
+                }],
+                deployList: [{ gatewayCode: 'E00306GWG001', context: 'E00306CTX', sort: 0 }],
+              },
+            });
+            api.fetchOperationRecordList = async (p) => {
+              opCalls.push({ pageNum: p.pageNum, pageSize: p.pageSize, operationType: p.operationType, publishId: p.publishId });
+              const all = [];
+              for (let i = 0; i < 21; i++) {
+                all.push({
+                  operationerName: '操作人' + i,
+                  createTime: '2026-09-09 16:29:0' + (i % 10),
+                  operationType: TYPE_CYCLE[i % TYPE_CYCLE.length],
+                  subscribeName: 'E00301-互联网金融服务平台-BOCNET-G-IFS',
+                  prodSysServeNo: 'E00301TPC' + i,
+                });
+              }
+              const start = (p.pageNum - 1) * p.pageSize;
+              return { ok: true, total: 21, rows: all.slice(start, start + p.pageSize) };
+            };
+
+            const ROW = {
+              publishId: '70e1f913-8450-4fed-9977-930cd849f6c0',
+              sysServeNo: 'E00306MG0001-queryPreviousTransaction',
+            };
+            const txt = (sel) => { const el = document.querySelector(sel); return el ? el.textContent.trim() : null; };
+            const clickTab = (key) => {
+              const b = document.querySelector('#intfDetailTabs [data-tab="' + key + '"]');
+              if (b) b.click();
+            };
+
+            // ══ 接口明细 ══
+            window.IntfDetailDialog.open(ROW);
+            await wait(100);
+            const tabs = Array.from(document.querySelectorAll('#intfDetailTabs .dlg-tab'));
+            out.intfTabCount = tabs.length;
+            out.intfTabLabels = tabs.map((t) => t.textContent.trim()).join('|');
+            out.intfFirstActive = !!(tabs[0] && tabs[0].classList.contains('is-active'));
+            out.intfReqRows = document.querySelectorAll('#intfDetailTbody tr').length;
+            out.intfMsgCols = document.querySelectorAll('#intfDetailThead th').length;
+            // colgroup 的 <col> 个数必须等于表头 <th> 个数（本项目踩过：差一个会静默错位）
+            out.intfColMatch = document.querySelectorAll('#intfDetailCols col').length === out.intfMsgCols;
+            // 加载成功后状态行必须收起来（拿桩数据还挂着 loading 文案就是骗人）
+            out.intfStatusHidden = document.getElementById('intfDetailStatus').hidden;
+            // 表头吸顶：吸顶规则绑在「本表自己的滚动视口」上
+            out.intfThSticky = getComputedStyle(document.querySelector('#intfDetailThead th')).position;
+            // 高度分配：弹窗主体不滚，富余高度给表格区（否则双滚动条）
+            out.intfBodyOverflow = getComputedStyle(document.querySelector('#intfDetailDialog .intf-body')).overflowY;
+            out.intfTblH = Math.round(document.querySelector('#intfDetailDialog .dlg-tbl-scroll')
+              .getBoundingClientRect().height);
+            // 只有 2 行 → 不该出现分页条（弹窗里一条「第 1 / 1 页」纯属噪音）
+            out.intfPagerHidden = getComputedStyle(document.getElementById('intfDetailPager')).display === 'none';
+
+            clickTab('resp');
+            await wait(40);
+            out.intfRespRows = document.querySelectorAll('#intfDetailTbody tr').length;
+            out.intfRespCols = document.querySelectorAll('#intfDetailThead th').length;
+            out.intfRespActive = !!document.querySelector('#intfDetailTabs [data-tab="resp"].is-active');
+            clickTab('intfRev');
+            await wait(40);
+            out.intfRevRows = document.querySelectorAll('#intfDetailTbody tr').length;
+            out.intfRevCols = document.querySelectorAll('#intfDetailThead th').length;
+            out.intfRevFirst = txt('#intfDetailTbody tr td:nth-child(2)');   // 版本号 V1.0
+            clickTab('deploy');
+            await wait(40);
+            out.intfDeployRows = document.querySelectorAll('#intfDetailTbody tr').length;
+            out.intfDeployCols = document.querySelectorAll('#intfDetailThead th').length;
+            out.intfDeployFirst = txt('#intfDetailTbody tr td:nth-child(2)'); // 网关服务编码
+            clickTab('docRev');
+            await wait(40);
+            out.intfDocRevEmpty = !!document.querySelector('#intfDetailTbody .empty-hint');
+            // 键盘：← → 切页签（焦点要跟着选中项走）
+            const tabsEl = document.getElementById('intfDetailTabs');
+            tabsEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+            await wait(40);
+            out.intfAfterArrow = !!document.querySelector('#intfDetailTabs [data-tab="intfRev"].is-active');
+
+            window.IntfDetailDialog.close();
+            out.intfClosed = !document.getElementById('intfDetailOverlay').classList.contains('show');
+
+            // ══ 操作记录 ══
+            window.OpRecordDialog.open(ROW);
+            await wait(100);
+            out.opRows = document.querySelectorAll('#opRecordTbody tr').length;
+            out.opCols = document.querySelectorAll('#opRecordThead th').length;
+            out.opColMatch = document.querySelectorAll('#opRecordCols col').length === out.opCols;
+            out.opCall = JSON.stringify(opCalls[0] || null);
+            // 编码 → 显示名：已确认的映射走中文/英文名，未确认的（17）原样显示数字
+            out.opTypeLabels = Array.from(document.querySelectorAll('#opRecordTbody tr'))
+              .map((tr) => tr.children[3].textContent.trim()).slice(0, 5).join(',');
+            // 操作类型下拉必须被 createSearchableSelect 接管（原生 <select> 会被组件隐藏）
+            const host = document.getElementById('opTypeFilter');
+            out.opHostHidden = host ? getComputedStyle(host).display === 'none' : null;
+            out.opPickedInput = !!document.querySelector('.op-record-filter .searchable-select-input');
+            out.opPagerVisible = getComputedStyle(document.getElementById('opRecordPager')).display !== 'none';
+            out.opPageInfo = txt('#opRecordPageInfo');
+
+            // 翻页 → 服务端重新请求（pageNum=2），序号接着上一页数
+            document.getElementById('opBtnNext').click();
+            await wait(100);
+            out.opPage2Call = opCalls[1] ? opCalls[1].pageNum : null;
+            out.opPage2FirstIdx = txt('#opRecordTbody tr td.c-idx');
+
+            // 筛选 → 请求里要真的带上 operationType（编码，不是显示名）
+            const si = document.querySelector('.op-record-filter .searchable-select-input');
+            if (si) {
+              const inst = null;   // 走真实交互：点开面板选「修改」(43)
+              si.click();
+              await wait(60);
+              const opt = Array.from(document.querySelectorAll('.searchable-select-option'))
+                .find((o) => o.textContent.trim() === '修改');
+              out.opPanelHasOption = !!opt;
+              if (opt) opt.click();
+              await wait(40);
+              document.getElementById('btnOpQuery').click();
+              await wait(100);
+              const last = opCalls[opCalls.length - 1];
+              out.opFilteredCall = last ? (last.operationType + '/' + last.pageNum) : null;
+              void inst;
+            }
+
+            window.OpRecordDialog.close();
+            out.opClosed = !document.getElementById('opRecordOverlay').classList.contains('show');
+            return out;
+          } finally {
+            api.fetchServiceChildList = origChild;
+            api.fetchOperationRecordList = origOp;
+          }
+        });
+        process.stdout.write(`  结果行弹窗: ${JSON.stringify(rowDlg)}\n`);
+        {
+          const f = [];
+          if (rowDlg.err) f.push(rowDlg.err);
+          // 接口明细：5 个 tab + 每张表的列数（序号 + 列定义）
+          if (rowDlg.intfTabCount !== 5) f.push('接口明细 tab 数不是 5：' + rowDlg.intfTabCount);
+          if (rowDlg.intfTabLabels !== '请求报文|响应报文|文档级修订记录|接口级修订记录|应用系统服务部署') {
+            f.push('接口明细 tab 文案/顺序不对：' + rowDlg.intfTabLabels);
+          }
+          if (!rowDlg.intfFirstActive) f.push('默认没有选中「请求报文」');
+          if (rowDlg.intfReqRows !== 2 || rowDlg.intfMsgCols !== 10) {
+            f.push(`请求报文表不对：rows=${rowDlg.intfReqRows} cols=${rowDlg.intfMsgCols}`);
+          }
+          if (!rowDlg.intfColMatch) f.push('接口明细 colgroup 的 col 数与表头 th 数不一致');
+          if (!rowDlg.intfStatusHidden) f.push('接口明细加载成功后状态行没收起');
+          if (rowDlg.intfThSticky !== 'sticky') f.push('接口明细表头没吸顶：' + rowDlg.intfThSticky);
+          if (rowDlg.intfBodyOverflow !== 'hidden') {
+            f.push('接口明细弹窗主体还在滚（会与表格区双滚动条）：' + rowDlg.intfBodyOverflow);
+          }
+          if (!(rowDlg.intfTblH > 100)) f.push('接口明细表格区没拿到高度：' + rowDlg.intfTblH);
+          if (!rowDlg.intfPagerHidden) f.push('只有 2 行却显示了分页条');
+          // 切 tab = 换表不换请求：响应报文 3 行、接口级修订 1 行、部署 1 行、文档级空态
+          if (rowDlg.intfRespRows !== 3 || rowDlg.intfRespCols !== 10) {
+            f.push(`响应报文表不对：rows=${rowDlg.intfRespRows} cols=${rowDlg.intfRespCols}`);
+          }
+          if (!rowDlg.intfRespActive) f.push('切到响应报文后选中态没跟上');
+          if (rowDlg.intfRevRows !== 1 || rowDlg.intfRevCols !== 8 || rowDlg.intfRevFirst !== 'V1.0') {
+            f.push(`接口级修订记录不对：rows=${rowDlg.intfRevRows} cols=${rowDlg.intfRevCols} vsn=${rowDlg.intfRevFirst}`);
+          }
+          if (rowDlg.intfDeployRows !== 1 || rowDlg.intfDeployCols !== 3
+            || rowDlg.intfDeployFirst !== 'E00306GWG001') {
+            f.push(`应用系统服务部署不对：rows=${rowDlg.intfDeployRows} cols=${rowDlg.intfDeployCols} gw=${rowDlg.intfDeployFirst}`);
+          }
+          if (!rowDlg.intfDocRevEmpty) f.push('文档级修订记录为空时没显示空态');
+          if (!rowDlg.intfAfterArrow) f.push('接口明细页签不支持 ← → 键切换');
+          if (!rowDlg.intfClosed) f.push('接口明细关了遮罩还带 .show');
+          // 操作记录：6 列 + 服务端分页 + 编码映射 + 下拉被组件接管
+          if (rowDlg.opRows !== 10 || rowDlg.opCols !== 6) {
+            f.push(`操作记录表不对：rows=${rowDlg.opRows} cols=${rowDlg.opCols}`);
+          }
+          if (!rowDlg.opColMatch) f.push('操作记录 colgroup 的 col 数与表头 th 数不一致');
+          if (rowDlg.opTypeLabels !== '删除,修改,CHECKOUT,17,CHECKIN') {
+            f.push('操作类型编码映射不对（未确认的编码要原样显示数字）：' + rowDlg.opTypeLabels);
+          }
+          if (rowDlg.opHostHidden !== true || !rowDlg.opPickedInput) {
+            f.push('操作类型下拉没被 createSearchableSelect 接管（原生下拉展开面板样式不可控）');
+          }
+          if (!rowDlg.opPagerVisible || rowDlg.opPageInfo !== '第 1 / 3 页') {
+            f.push(`操作记录分页条不对：visible=${rowDlg.opPagerVisible} info=${rowDlg.opPageInfo}`);
+          }
+          if (rowDlg.opPage2Call !== 2) f.push('翻页没重新请求（pageNum 不是 2）：' + rowDlg.opPage2Call);
+          if (rowDlg.opPage2FirstIdx !== '11') f.push('第 2 页序号没接着数：' + rowDlg.opPage2FirstIdx);
+          if (!rowDlg.opPanelHasOption) f.push('操作类型面板里没有「修改」这一项');
+          if (rowDlg.opFilteredCall !== '43/1') {
+            f.push('按操作类型筛选没把编码传下去 / 没回到第 1 页：' + rowDlg.opFilteredCall);
+          }
+          if (!rowDlg.opClosed) f.push('操作记录关了遮罩还带 .show');
+          f.forEach((m) => process.stdout.write('    [FAIL] ' + m + '\n'));
+          if (f.length) anyFail = true;
+        }
+      }
+
+      if (pg.file === 'publish.html') {
+        // 接口明细的**分页 / 每 tab 记住页码 / 表格区自己滚**（2026-09-21）。
+        // 真实抓包每个 tab 只有 1~8 行，压根走不到第 2 页 —— 这条只能靠桩数据守：
+        // 23 行 → 10 条/页 → 3 页；翻到第 2 页序号要接着数；切走再切回来页码不能丢。
+        const intfPager = await page.evaluate(async () => {
+          const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+          const api = window.ToolApi;
+          const orig = api.fetchServiceChildList;
+          const idxOf = (sel) => {
+            const t = document.querySelector(sel);
+            return t ? t.textContent.trim() : null;
+          };
+          const idxList = () => Array.from(document.querySelectorAll('#intfDetailTbody tr td.c-idx'))
+            .map((t) => t.textContent.trim());
+          try {
+            const mk = (i) => ({
+              parameter: 'p' + i, parameterName: '参数' + i, dictNo: '', length: '16',
+              type: 'String', isMust: '是', remark1: '', remark2: '备注' + i, remark3: '', sort: i,
+            });
+            api.fetchServiceChildList = async () => ({
+              ok: true,
+              local: false,
+              lists: {
+                childReqList: Array.from({ length: 23 }, (_, i) => mk(i)),
+                childRespList: [], revisionList: [], interfaceModifyList: [], deployList: [],
+              },
+            });
+            window.IntfDetailDialog.open({ publishId: 'p1', sysServeNo: 'E1' });
+            await wait(120);
+            const out = {};
+            const rows = idxList();
+            out.rowCount = rows.length;
+            out.firstIdx = rows[0];
+            out.lastIdx = rows[rows.length - 1];
+            out.pagerVisible = getComputedStyle(document.getElementById('intfDetailPager')).display !== 'none';
+            out.pageInfo = document.getElementById('intfPageInfo').textContent;
+            // 翻到第 2 页（点页码条，走真实事件委托）
+            const b2 = document.querySelector('#intfPageNumbers button[data-page="2"]');
+            out.hasPage2 = !!b2;
+            if (b2) b2.click();
+            await wait(60);
+            out.page2Info = document.getElementById('intfPageInfo').textContent;
+            out.page2FirstIdx = idxOf('#intfDetailTbody tr td.c-idx');
+            out.page2LastIdx = idxList().pop();
+            // 10 行可能超过弹窗可用高度：表格区要自己成为滚动视口，且不能被弹窗裁掉
+            const dlg = document.getElementById('intfDetailDialog').getBoundingClientRect();
+            const sc = document.querySelector('#intfDetailDialog .dlg-tbl-scroll');
+            out.tableInside = sc.getBoundingClientRect().bottom <= dlg.bottom + 1;
+            out.pagerInside = document.getElementById('intfDetailPager').getBoundingClientRect().bottom
+              <= dlg.bottom + 1;
+            out.pagerBelowTable = document.getElementById('intfDetailPager').getBoundingClientRect().top
+              >= sc.getBoundingClientRect().bottom - 1;
+            // 切到别的 tab 再切回来：页码要记着（每个 tab 各自一份，不是全局一个）
+            document.querySelector('#intfDetailTabs [data-tab="resp"]').click();
+            await wait(50);
+            out.emptyTabPagerHidden = getComputedStyle(document.getElementById('intfDetailPager')).display === 'none';
+            document.querySelector('#intfDetailTabs [data-tab="req"]').click();
+            await wait(50);
+            out.afterSwitchBackInfo = document.getElementById('intfPageInfo').textContent;
+            out.afterSwitchBackFirst = idxOf('#intfDetailTbody tr td.c-idx');
+            window.IntfDetailDialog.close();
+            return out;
+          } finally { api.fetchServiceChildList = orig; }
+        });
+        process.stdout.write(`  接口明细分页: ${JSON.stringify(intfPager)}\n`);
+        {
+          const f = [];
+          if (intfPager.rowCount !== 10) f.push('第 1 页不是 10 行：' + intfPager.rowCount);
+          if (intfPager.firstIdx !== '1' || intfPager.lastIdx !== '10') {
+            f.push(`第 1 页序号不对：${intfPager.firstIdx}~${intfPager.lastIdx}`);
+          }
+          if (!intfPager.pagerVisible || intfPager.pageInfo !== '第 1 / 3 页') {
+            f.push(`分页条不对：visible=${intfPager.pagerVisible} info=${intfPager.pageInfo}`);
+          }
+          if (!intfPager.hasPage2) f.push('23 行没有生成第 2 页的页码按钮');
+          if (intfPager.page2FirstIdx !== '11' || intfPager.page2LastIdx !== '20') {
+            f.push(`第 2 页序号不对：${intfPager.page2FirstIdx}~${intfPager.page2LastIdx}`);
+          }
+          if (intfPager.page2Info !== '第 2 / 3 页') f.push('第 2 页页码文案不对：' + intfPager.page2Info);
+          if (!intfPager.tableInside) f.push('表格区被弹窗裁掉了（下边超出弹窗）');
+          if (!intfPager.pagerInside) f.push('分页条被弹窗裁掉了');
+          if (!intfPager.pagerBelowTable) f.push('分页条没有排在表格下方');
+          if (!intfPager.emptyTabPagerHidden) f.push('空表那个 tab 还显示着分页条');
+          if (intfPager.afterSwitchBackInfo !== '第 2 / 3 页'
+            || intfPager.afterSwitchBackFirst !== '11') {
+            f.push(`切走再切回来页码没记住：${intfPager.afterSwitchBackInfo} / ${intfPager.afterSwitchBackFirst}`);
+          }
+          f.forEach((m) => process.stdout.write('    [FAIL] ' + m + '\n'));
+          if (f.length) anyFail = true;
         }
       }
 

@@ -49,6 +49,13 @@
       ['PublishModel', () => has(window.PublishModel, 'normalizeRow')],
       ['PublishView', () => has(window.PublishView, 'renderRows')],
       ['PublishQuery', () => has(window.PublishQuery, 'doQuery')],
+      // 结果行的两个弹窗（2026-09-21）。少了它们页面不会白屏 —— 点「接口明细」「操作记录」
+      // 会**毫无反应**（publish.js 里的 `if (row && window.Xxx) open(row)` 静默跳过），
+      // 所以必须点名登记，别让这种「点了没反应」只能靠人肉发现。
+      ['PublishDialogModel', () => has(window.PublishDialogModel, 'parseIntfDetail')
+        && has(window.PublishDialogModel, 'opTypeLabel') && has(window.PublishDialogModel, 'pageSlice')],
+      ['IntfDetailDialog', () => has(window.IntfDetailDialog, 'open')],
+      ['OpRecordDialog', () => has(window.OpRecordDialog, 'open')],
       ['SubscribeModel', () => has(window.SubscribeModel, 'displayBatch')],
       ['SubscribeDryRun', () => has(window.SubscribeDryRun, 'run')],
       ['DocPicker', () => has(window.DocPicker, 'open')],

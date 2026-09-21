@@ -780,6 +780,22 @@
       if (row) window.SubscribeDialog.open(row);
       return;
     }
+    // 「接口明细」「操作记录」两个弹窗与「详情」同口径：都用 filteredRows 的绝对下标，
+    // 且都把整个行对象交给弹窗（弹窗自己取 publishId / sysServeNo，页面不预加工）。
+    const intfBtn = e.target.closest('button[data-intf]');
+    if (intfBtn) {
+      const idx = Number(intfBtn.dataset.intf);
+      const row = state.filteredRows[idx] || state.rawRows[idx];
+      if (row && window.IntfDetailDialog) window.IntfDetailDialog.open(row);
+      return;
+    }
+    const opBtn = e.target.closest('button[data-oprecord]');
+    if (opBtn) {
+      const idx = Number(opBtn.dataset.oprecord);
+      const row = state.filteredRows[idx] || state.rawRows[idx];
+      if (row && window.OpRecordDialog) window.OpRecordDialog.open(row);
+      return;
+    }
   });
 
   // 订阅弹窗已抽到 subscribe-dialog.js（window.SubscribeDialog.open(row)）
