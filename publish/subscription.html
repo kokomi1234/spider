@@ -267,18 +267,17 @@
        滚到底也不随内容走（用户报的 bug）。这里改成：主体不滚（overflow:hidden），
        由内部 .batch-time-table-wrap 单独滚动 —— 表头只在表格区顶部吸顶，
        弹窗里也只有这一条滚动条。 */
+    /* 主体高度（2026-09-21 改）：原来 60vh，上面压着两段提示文字（实测占 108px + 16px 间距）。
+       提示文字按界面铁律删掉后，这块高度直接让给表格 ——
+       `60vh + 110px` 就是「原高度 + 刚腾出来的那 108px」，但不得超过弹窗外框的上限
+       （88vh 减去标题栏 65 + 底栏 69 ≈ 140px，留 6px 余量，免得撑破 .sub-dialog 的 88vh）。
+       小视口取后者（如 768 高时 60vh+110 反而会溢出），所以用 min() 取安全值。 */
     .batch-time-body {
       display: flex;
       flex-direction: column;
-      max-height: 60vh;
+      max-height: min(calc(60vh + 110px), calc(88vh - 140px));
       overflow: hidden;
       padding: 16px 20px;
-    }
-    .batch-time-hint {
-      font-size: var(--fs-sm);
-      color: var(--muted);
-      margin: 0 0 16px;
-      line-height: 1.6;
     }
     .batch-time-table-wrap {
       flex: 1 1 auto;
@@ -572,13 +571,6 @@
         <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
       </div>
       <div class="sub-body batch-time-body" id="batchTimeBody">
-        <p class="batch-time-hint">就地给批次填日期，保存到本地配置文件（config/batch-times.json，不调后端），
-           并<strong>覆盖</strong>「优先级」的里程碑截止日。日期<strong>精确到日</strong>，按你填的日期算；
-           保存时只写你改过的行，没填的行不影响优先级（按规则推算）。</p>
-        <p class="batch-time-hint">
-           打开日历会直接定位到该批次对应的月份：<strong>功能测试 = 批次月 −1</strong>、
-           <strong>上线 = 批次月</strong>。例：<strong>2608批次 → 功能测试落在 2026年7月、上线落在 2026年8月</strong>。
-           状态对应：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
         <!-- 表格的滚动只发生在这里（.batch-time-table-wrap）：表头在本区域内吸顶 -->
         <div class="batch-time-table-wrap">
           <table class="batch-time-table">
