@@ -211,14 +211,26 @@
     if (savedTitleEl) savedTitleEl.textContent = u ? `我的常用查询（${u.userName || u.userId}）` : '常用查询';
 
     if (!u) {
-      // 没有身份就宁可空着：显示全部会把同事的查询说成"我的"，那比空列表更误导人
-      clear(savedListEl);
-      if (savedCountEl) savedCountEl.textContent = '';
-      if (savedEmptyEl) {
-        savedEmptyEl.hidden = false;
-        savedEmptyEl.textContent = '先在上方「当前用户」里填工号或姓名，这里才会显示你保存的查询。';
+      // 没设「当前用户」也**不再空着**：把本机那些「无人认领」的记录列出来 ——
+      // 也就是没登录时保存的查询。以前这里直接清空、只留一句"先设当前用户"，
+      // 用户看到的是"我明明存了却什么都没有"（2026-09-22 报）。
+      // 别人的记录依然不会出现：过滤口径见 SavedQuery.listForUser 的注释。
+      let anon = [];
+      try {
+        anon = S.listForUser(null);
+      } catch (e) {
+        console.error('[home] 读取本机常用查询失败：', e);
       }
+      paintSaved(anon, null);
       return;
+    }
+
+    // 有身份：先把本机那些无人认领的记录**认领给 ta**（以前是让用户"去查询页重新保存一次"，
+    // 等于白存），再读列表。认领是幂等的，没有匿名记录时就是一步空操作。
+    try {
+      if (typeof S.claimAnonymous === 'function') S.claimAnonymous(u);
+    } catch (e) {
+      console.error('[home] 认领本机常用查询失败：', e);
     }
 
     let items = [];
@@ -263,13 +275,17 @@
     if (!total) {
       return '你还没有保存过常用查询：到任一查询页填好筛选条件后，点「⭐ 保存到首页」，这里就会出现一键直达的入口。';
     }
+    // ⚠️ 这两条分支现在只在**认领失败**时才会走到（正常情况下 renderSaved 会先把
+    // 无人认领的记录认领给当前用户，见 SavedQuery.claimAnonymous）。
+    // 2026-09-22 之前它们说的是"再去查询页重新保存一次" —— 那等于承认用户白存了一次，
+    // 现在改成指向"认领"，别再写回旧口径。
     if (orphan === total) {
-      return `有 ${total} 条常用查询没有归属人（保存的时候还没设置当前用户），`
-        + '所以谁的「我的常用查询」里都不会出现。请先在上面设好当前用户，再去查询页重新保存一次。';
+      return `这 ${total} 条是本机保存的、还没有归属人（存的时候还没设「当前用户」）。`
+        + '在上面填好工号或姓名它们就会归到你名下（没归上时刷新一次页面即可）。';
     }
     if (orphan > 0) {
-      return `属于「${who}」的还没有；另有 ${orphan} 条没有归属人（不会出现在这里）。`
-        + '到任一查询页点「⭐ 保存到首页」即可。';
+      return `属于「${who}」的还没有；另有 ${orphan} 条是本机保存的、还没有归属人`
+        + '（填好当前用户后会自动归到你名下）。';
     }
     return `你还没有保存过常用查询（「${who}」名下一条都没有）：`
       + '到任一查询页填好条件后点「⭐ 保存到首页」就会出现。';

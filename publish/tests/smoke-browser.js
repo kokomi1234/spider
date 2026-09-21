@@ -176,8 +176,10 @@ const PAGES = [
         const homeOk = !homeCheck.err
           && JSON.stringify(homeCheck.entries) === JSON.stringify(['/publish', '/task', '/subscription'])
           && homeCheck.emptyShown === true && homeCheck.items0 === 0
-          // 没设身份时空列表必须给"去设置当前用户"的指引，而不是显示别人的/全部的
-          && /当前用户/.test(homeCheck.emptyHintNoUser || '')
+          // 空列表要给「怎么开始」的指引。2026-09-22 起：没设身份也能保存、也能在首页看到
+          // （本机匿名记录会列出来），所以"先去设置当前用户"不再是必要步骤，
+          // 只要告诉用户去哪保存即可；别人的记录依然一条都不会露出来。
+          && /保存到首页/.test(homeCheck.emptyHintNoUser || '')
           && homeCheck.saved === true && homeCheck.items1 === 1
           && /冒烟甲/.test(homeCheck.titleAfterRender || '')
           && homeCheck.badge === '服务发布数据查询'

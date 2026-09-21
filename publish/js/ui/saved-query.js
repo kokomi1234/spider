@@ -318,14 +318,64 @@
    */
   function listForUser(user, limit) {
     const key = userKeyOf(user);
-    if (!key) return [];
     const mine = list()
       // 用 saverKeysOf 而不是 owner：owner 只是「最早保存的那个人」，
       // 经服务端往返后可能不是我（见 saverKeysOf 的注释）。
-      .filter((it) => saverKeysOf(it).includes(key))
+      .filter((it) => (key
+        ? saverKeysOf(it).includes(key)          // 有身份：按人过滤
+        // 2026-09-22 用户报「没登录时保存的也应该显示在常用查询里」：
+        // 那时保存的记录 owner 为空，旧写法直接 return [] → 存下来了却看不到，
+        // 空态还让用户"设好用户再去查询页重新保存一次"（等于白存）。
+        // 现在没身份就把这些**无人认领的本机记录**列出来。
+        // ⚠️ 这不等于"没设用户就显示全部"：有归属人的（同事的）一条都不会露出来，
+        //    「宁可不显示，也不把同事的查询说成我的」这条旧口径依然成立。
+        : saverKeysOf(it).length === 0))
       .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || (b.at - a.at));
     const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
     return n ? mine.slice(0, n) : mine;
+  }
+
+  /**
+   * 把本机「无人认领」的记录认领给某个人（owner 为空 → owner = 当前用户）。
+   *
+   * 为什么需要：用户在**没设「当前用户」**时保存的查询，owner 是空的。
+   * 等 ta 后来填了工号，那些记录既进不了「我的」（按人过滤不匹配），也不会自己消失 ——
+   * 以前的做法是空态里让用户"去查询页重新保存一次"，等于白存。
+   * 这里直接认领：改本机镜像 + 推给服务端，用户感知上就是「登录之后东西还在」。
+   *
+   * 幂等：没有匿名记录时什么都不做（返回 claimed: 0），反复调用安全。
+   *
+   * @param {object} user 当前用户 {userId,userName,teamId,...}
+   * @returns {{ok:boolean, claimed:number, error?:string}}
+   */
+  function claimAnonymous(user) {
+    const key = userKeyOf(user);
+    if (!key) return fail('未设置当前用户');
+    const items = list();
+    const orphanIds = items.filter((it) => saverKeysOf(it).length === 0).map((it) => it.id);
+    if (!orphanIds.length) return { ok: true, claimed: 0 };
+
+    const owner = cleanOwner(user);
+    const next = items.map((it) => (orphanIds.includes(it.id)
+      ? { ...it, owner, saverKeys: [key], saverNames: [String(user.userName || key)] }
+      : it));
+    const w = writeRaw(next);
+    if (!w.ok) return w;
+
+    // 推服务端（fire-and-forget）：失败就只留本机，下一次同步/写操作会再带上它
+    if (canSync()) {
+      const claimed = orphanIds.map((id) => next.find((x) => x.id === id)).filter(Boolean);
+      try {
+        window.fetch(SERVER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: claimed, deletedIds: readPendingDeletes() }),
+        }).then(() => {
+          if (readPendingDeletes().length) writePendingDeletes([]);
+        }).catch(() => { /* 离线：本机已经认领了，够渲染 */ });
+      } catch (_) { /* 同上 */ }
+    }
+    return { ok: true, claimed: orphanIds.length };
   }
 
   /** 从首页点开一次 → 计一次打开（「高频」的依据）。async：镜像里没有就去服务端找 */
@@ -1167,6 +1217,7 @@
     importJson,
     getAsync,
     markUsed,
+    claimAnonymous,
     syncFromServer,
     pushToServer,
     lastSyncState,
