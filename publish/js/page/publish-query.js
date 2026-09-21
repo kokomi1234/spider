@@ -234,6 +234,8 @@
     // 新查询开始：清掉上一次可能残留的失败分页重试上下文
     queryState = null;
     refreshRetryBar();
+    // 同时收起上一次的失败常驻条 —— 否则成功后它还挂着，看着像这次也失败了
+    if (ctx.hideFail) ctx.hideFail();
 
     const currentQuery = ++querySeq;
     if (activeQueryController) activeQueryController.abort();
@@ -376,6 +378,10 @@
       // 失败时表格、分页条、统计面板、结果计数要一起复位：
       // 只清表格的话，屏幕上会是「错误提示 + 上一次的统计数字」，看起来像数据没变。
       V().renderQueryError(err);
+      // 常驻失败条：toast 5 秒就没了，原因必须留在页面上（另两页早就有，本页 2026-09-21 补）。
+      // 传 errorMsg（parseApiError 已翻译的话）而不是原始 err：发布页这条链路抛出的
+      // 对象里没有后端 msg，shortError 只能压出「HTTP 500」这种没人看得懂的东西。
+      if (ctx.showQueryFail) ctx.showQueryFail(errorMsg);
     } finally {
       if (currentQuery === querySeq) {
         activeQueryController = null;

@@ -30,18 +30,64 @@ test('PublishDialogModel：暴露预期接口且已冻结', () => {
 });
 
 // ── 操作类型编码 ────────────────────────────────────────
-test('opTypeLabel：只认已确认的 5 个编码，其余原样返回数字（不猜中文）', () => {
-  assert.strictEqual(M.opTypeLabel('52'), 'CHECKOUT');
-  assert.strictEqual(M.opTypeLabel('50'), 'CHECKIN');
-  assert.strictEqual(M.opTypeLabel('45'), '新增');
-  assert.strictEqual(M.opTypeLabel('43'), '修改');
-  assert.strictEqual(M.opTypeLabel('12'), '删除');
+// 映射来自用户 2026-09-21 抓包分析的编码表（见 publish-dialog-model.js 的 OP_TYPES 注释）。
+// 这一版**推翻了**上一版那 5 条猜测映射，所以断言要盯住「推翻后的值」——
+// 旧值（12 删除 / 43 修改 / 45 新增 / 50 CHECKIN / 52 CHECKOUT）一条都不许再回来。
+test('opTypeLabel：按抓包编码表映射，未覆盖的编码原样返回数字（不猜中文）', () => {
+  // 被推翻的 5 条，真名如下
+  assert.strictEqual(M.opTypeLabel('12'), '正式版基线');
+  assert.strictEqual(M.opTypeLabel('43'), '服务发布-审核人审核通过');
+  assert.strictEqual(M.opTypeLabel('45'), '服务发布-归档');
+  assert.strictEqual(M.opTypeLabel('50'), '服务订阅-审核人审核通过');
+  assert.strictEqual(M.opTypeLabel('52'), '服务订阅-归档');
+  // 旧值必须彻底消失（显示成旧动作 = 用户按错误的理解去核对流水）
+  [['12', '删除'], ['43', '修改'], ['45', '新增'], ['50', 'CHECKIN'], ['52', 'CHECKOUT']]
+    .forEach(([c, old]) => {
+      assert.notStrictEqual(M.opTypeLabel(c), old, '编码 ' + c + ' 不该再映射成旧值 ' + old);
+    });
+  // 真正叫 CHECKOUT / CHECKIN 的是 14 / 15
+  assert.strictEqual(M.opTypeLabel('14'), 'CHECKOUT');
+  assert.strictEqual(M.opTypeLabel('15'), 'CHECKIN');
+  // 抓包那 21 条里出现过的 8 个编码，现在全部有名字
+  assert.strictEqual(M.opTypeLabel('17'), '订阅功能测试基线');
+  assert.strictEqual(M.opTypeLabel('18'), '订阅正式版基线');
+  assert.strictEqual(M.opTypeLabel('47'), '服务订阅-申请人处理');
+  // 基线族的两个三元组（映射的结构性证据：错一个编码这里就会露馅）
+  assert.deepStrictEqual([10, 11, 12].map(M.opTypeLabel),
+    ['开发基线', '功能测试基线', '正式版基线']);
+  assert.deepStrictEqual([16, 17, 18].map(M.opTypeLabel),
+    ['订阅开发基线', '订阅功能测试基线', '订阅正式版基线']);
+  assert.strictEqual(M.opTypeLabel('2'), '订阅');
+  assert.strictEqual(M.opTypeLabel('75'), 'CHECKIN作废-流程关闭');
   // 数字入参（后端有时给 number）与带空格的字符串同口径
-  assert.strictEqual(M.opTypeLabel(52), 'CHECKOUT');
-  assert.strictEqual(M.opTypeLabel(' 43 '), '修改');
-  // 抓包里出现过、但没有确认过名称的编码：原样显示，**不许猜**
-  ['17', '18', '47'].forEach((c) => {
+  assert.strictEqual(M.opTypeLabel(52), '服务订阅-归档');
+  assert.strictEqual(M.opTypeLabel(' 43 '), '服务发布-审核人审核通过');
+  // 反推的 13 条（名字来自 59 项总表、编码按位置唯一确定）。它们**不是实证**，
+  // 但既然写进来了就要守住值 —— 免得以后有人当"猜的"随手改掉或删掉
+  assert.strictEqual(M.opTypeLabel('13'), '下线');
+  assert.strictEqual(M.opTypeLabel('19'), '订阅下线');
+  assert.strictEqual(M.opTypeLabel('29'), '删除接口与文档关系');
+  assert.strictEqual(M.opTypeLabel('35'), '订阅基线作废');
+  assert.strictEqual(M.opTypeLabel('36'), '订阅基线取消作废');
+  assert.deepStrictEqual([41, 44].map(M.opTypeLabel),
+    ['服务发布-审核人审核', '服务发布-手动归档']);
+  assert.deepStrictEqual([48, 49, 51].map(M.opTypeLabel),
+    ['服务订阅-审核人审核', '服务订阅-审核人审核退回', '服务订阅-手动归档']);
+  assert.deepStrictEqual([56, 59, 61].map(M.opTypeLabel),
+    ['取消订阅-审核人审核', '取消订阅-手动归档', '取消订阅-关闭']);
+  // 编码表没覆盖的：原样显示，**不许猜**。22 / 25 特别点名 —— 它们的候选值只以注释
+  // 形式躺在 OP_TYPES 里（等用户确认），谁手滑把注释符去掉，这条会先炸
+  ['1', '9', '22', '25', '32', '999'].forEach((c) => {
     assert.strictEqual(M.opTypeLabel(c), c, '编码 ' + c + ' 没有映射依据，必须原样显示');
+  });
+  // 反推不出来的名字一律**不许**填编码：它们挤在 22~25 / 64~74 里定不了，
+  // 硬填会静默查错数据（看着像真的，比留个数字更坏）。
+  // 用户哪天确认了 → 激活 OP_TYPES 里那段注释，并同步改掉这条断言。
+  ['删除', '接口批量更新', '发布', '取消发布', 'UNCHECK', '服务订阅-删除',
+    '性能容量-修改', '批量授权',
+    '取消订阅时上一批量新增订阅关系审批流程接口材料移除'].forEach((name) => {
+    assert.ok(!Object.keys(M.OP_TYPES).some((c) => M.OP_TYPES[c] === name),
+      '「' + name + '」的编码没有证据，不该出现在映射表里');
   });
   // 空值
   assert.strictEqual(M.opTypeLabel(null), '—');
@@ -49,16 +95,20 @@ test('opTypeLabel：只认已确认的 5 个编码，其余原样返回数字（
   assert.strictEqual(M.opTypeLabel(undefined), '—');
 });
 
-test('opTypeOptions：首项是「全部」，其余只列已确认编码、按编码升序', () => {
+test('opTypeOptions：首项是「全部」，其余与编码表一一对应、按编码升序', () => {
   const opts = M.opTypeOptions();
   assert.strictEqual(opts[0].value, '', '必须有一个空值项表示「全部」');
   const codes = opts.slice(1).map((o) => o.value);
-  assert.deepStrictEqual(codes, ['12', '43', '45', '50', '52'], '顺序应按编码升序');
-  // 每个 value 都能查到显示名；且**没有**把未确认的编码塞进来
+  const expect = Object.keys(M.OP_TYPES).sort((a, b) => Number(a) - Number(b));
+  assert.deepStrictEqual(codes, expect, '下拉项应与 OP_TYPES 的编码集合完全一致且升序');
+  assert.strictEqual(new Set(codes).size, codes.length, '编码不能重复');
   codes.forEach((c) => assert.ok(M.OP_TYPES[c], '下拉项 ' + c + ' 没有对应显示名'));
-  ['17', '18', '47'].forEach((c) => {
-    assert.strictEqual(codes.indexOf(c), -1, '未确认映射的编码 ' + c + ' 不该出现在筛选下拉里');
+  // 表里没有的编码不许混进下拉（筛选填错编码会静默查出别的数据）
+  ['1', '9', '22', '25', '32', '999'].forEach((c) => {
+    assert.strictEqual(codes.indexOf(c), -1, '未映射的编码 ' + c + ' 不该出现在筛选下拉里');
   });
+  // 来源表里编码 32 是占位符「-」，不写进映射
+  assert.strictEqual(M.OP_TYPES['32'], undefined);
 });
 
 // ── 列定义必须与抓包字段一一对应 ────────────────────────
@@ -203,5 +253,5 @@ test('真实样本：抓包的 4 类行按各自列定义都能取到值（不�
     ['—', '新增接口', '2026-07-17', '崔丹', '—', '—', '—']);
   assert.deepStrictEqual(cell(M.DEPLOY_COLS, deploy), ['E00306GWG001', 'E00306CTX']);
   assert.deepStrictEqual(cell(M.OP_COLS, op),
-    ['杨彤', '2026-09-09 16:29:37', 'CHECKOUT', 'E00301-互联网金融服务平台-BOCNET-G-IFS', 'E00301TPC303']);
+    ['杨彤', '2026-09-09 16:29:37', '服务订阅-归档', 'E00301-互联网金融服务平台-BOCNET-G-IFS', 'E00301TPC303']);
 });

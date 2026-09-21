@@ -341,7 +341,7 @@
     <div class="page-header" data-page-node-id="FPYoXuuCWbBl5BcZuPWDmq">
       <h1 data-page-node-id="Vs6PSQHztyrq1Pz3b1FCGl">服务发布数据查询</h1>
       <div class="toolbar" data-page-node-id="1i97TQGjWUfhcJ3s98xG11">
-        <a class="outlined btn-sm" href="/" id="navHome">← 首页</a>
+        <a class="outlined btn-sm" href="/home" id="navHome">← 首页</a>
         <button class="outlined btn-sm" id="btnSubscribePanel" data-page-node-id="SOtRYG9cXoPuN2nWwAS4BD">已订阅 (0)</button>
         <a class="outlined btn-sm" href="/task" data-page-node-id="navTaskPage">任务单查询</a>
         <a class="outlined btn-sm" href="/subscription">服务订阅关系查询</a>
@@ -372,7 +372,10 @@
           </div>
           <div class="form-group" data-page-node-id="BqgS8Nm8P0HoCqXfiIQb6V">
             <label for="f_checkoutInStatus" data-page-node-id="Z2gM6Eile36yvwzhzidat8">CHECKOUT/IN状态</label>
-            <select id="f_checkoutInStatus" disabled data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
+            <!-- 2026-09-21：去掉 disabled —— 该字段已改成可选（选项在 js/ui/dict-selects.js 里给，
+                 选中后由 collectApiBody 条件下发 checkOutInStatus）。
+                 这里不再写 disabled，否则组件加载失败降级到原生下拉时这一栏还是不可用。 -->
+            <select id="f_checkoutInStatus" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
               <option value="" data-page-node-id="eDnxbLswcJilBSqNufn4uh">全部</option>
             </select>
           </div>
@@ -421,6 +424,10 @@
               <option value="功能测试基线" data-page-node-id="Qnfrx9Tk7m30GaCaytAkHD">功能测试基线</option>
               <option value="开发基线" data-page-node-id="0gfIh9CDfWAu51ABoGEZ0A">开发基线</option>
               <option value="正式版基线" data-page-node-id="RtPSgZkkTblzv19HEXCWXd">正式版基线</option>
+              <!-- 2026-09-21 用户要求补：服务下线后 offerServerState 会取到「下线」，
+                   而筛选下拉里没有这一项就没法按它筛。
+                   取值以用户告知的后端口径「下线」为准（原有的「已下线」映射保留作兼容）。 -->
+              <option value="下线">下线</option>
             </select>
           </div>
           <div class="form-group" data-page-node-id="xA2UdQynvm7BrEQCJfnOcM">
@@ -501,6 +508,13 @@
       <!-- 缓存回放告警：本地代理用旧录制数据顶替当前查询时出现，避免把回放数据当成真实结果 -->
       <div class="cache-replay-bar" id="cacheReplayBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="cacheReplayBar">
         <span id="cacheReplayText"></span>
+      </div>
+      <!-- 查询失败常驻条：toast 几秒就消失，失败原因必须留在页面上。
+           2026-09-21 补：此前只有 task / subscription 两页有它，发布页查询失败
+           只剩一句 5 秒 toast，错过就分不清「失败」和「没数据」。
+           结构、class、id 与另两页一致，直接复用 QueryFeedback.showQueryFail。 -->
+      <div class="retry-bar fail-bar" id="failBar" role="status" aria-live="polite" style="display:none;">
+        <span class="retry-text" id="failText"></span>
       </div>
       <!-- 失败分页重试条：仅部分后端分页拉取失败时出现。
            放在**表格上方**（原来在分页条下面，几乎没人注意到，失败了也不知道可以重试） -->
@@ -965,9 +979,6 @@
 
   <!-- Toast -->
   <div class="toast" id="toast" data-page-node-id="UEBkrSRybBSuS6gMq4gIBY"></div>
-
-  <!-- 隐藏的文件上传 input（批量导入用） -->
-  <input type="file" id="fileImport" accept=".txt,.csv,.json" style="display:none;">
 
   <!--
     脚本顺序不能随意调整：各模块是 IIFE，加载时就把 window.X 取进闭包，

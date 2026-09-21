@@ -258,7 +258,9 @@
     }
 
     /* ── 批量修改批次时间弹窗 ─────────────────────────────────────── */
-    .batch-time-dialog { max-width: 720px; min-width: 600px; }
+    /* min-width 原来写死 600px：390px 手机上弹窗右溢出 98px（2026-09-21 实测）。
+       改成「不超过视口宽度」—— 内容区本身可横向滚动，窄屏下不会切掉右侧。 */
+    .batch-time-dialog { max-width: 720px; min-width: min(600px, 92vw); }
     /* 表头吸顶只发生在「表格自己的滚动区」里。
        theme.css 有一条全局 `thead th { position: sticky; top: 0 }`，原先表格的直接滚动
        祖先是 .batch-time-body（overflow-y:auto）→ 表头被吸到弹窗顶部、说明文字被它盖住、

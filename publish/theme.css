@@ -2074,6 +2074,20 @@ body.is-resizing * { cursor: col-resize !important; user-select: none !important
 .intf-dialog { max-width: min(1320px, 96vw); }
 .op-record-dialog { max-width: min(1080px, 96vw); }
 
+/* ── 弹窗最小高度（2026-09-21 用户要求）─────────────────
+   问题：内容少时弹窗高度完全跟内容走。实测「操作记录」空结果时弹窗只有 322px、
+   内容区 188px，而里面的下拉面板 max-height 是 288px 且 `position:absolute`（未升到 body），
+   于是面板底部有 101px 被弹窗的 `overflow:hidden` 裁掉 —— 51 个选项只露出 7 个，
+   用户看不到后面的选项（原话「弹窗会自然缩到最小导致下拉栏显示不全」）。
+   460px 是按下拉面板能完整展开倒推的：288(面板) + 42(输入框) + 4(间距) + 标题栏与内边距。
+   排除 .dlg-util-dialog（Token 管理 / 确认框 / 命名框）：纯文本工具框、里面没有下拉，
+   强行拉高只会显得空。 */
+.dialog:not(.dlg-util-dialog),
+.sub-dialog:not(.dlg-util-dialog),
+.doc-dialog:not(.dlg-util-dialog) {
+  min-height: min(460px, 88vh);
+}
+
 /* .detail-status 自带 -16px 上边距（那是给「详情弹窗」里紧跟标题栏的用法调的对齐），
    这里的主体是 flex + gap，负边距会让状态行贴死页签条，所以在弹窗内收回。 */
 .sub-dialog .detail-status { margin: 0; }
@@ -2318,13 +2332,13 @@ body {
 .tbl-scroll { border-color: var(--ledger); }
 .result-count { font-variant-numeric: tabular-nums; }
 
-/* 订阅关系页的左侧固定表头列（优先级 / 基线状态 / 审核流程状态 / 服务中文名 / 接口编码）
-   有自己的背景规则，这里同步成与其余表头一致的极浅底色，避免三页表头出现两种灰。 */
+/* 订阅关系页的左侧固定表头列（优先级 / 基线状态 / 审核流程状态）
+   有自己的背景规则，这里同步成与其余表头一致的极浅底色，避免三页表头出现两种灰。
+   2026-09-21：删掉 th.col-name / th.col-coding —— 固定列从 5 列收成 3 列后，
+   这两个 class 在 thead 里已不存在（只留在 colgroup 的 <col> 上），是死规则。 */
 .tbl-scroll .subq-table thead th.col-prio,
 .tbl-scroll .subq-table thead th.col-st,
-.tbl-scroll .subq-table thead th.col-review,
-.tbl-scroll .subq-table thead th.col-name,
-.tbl-scroll .subq-table thead th.col-coding {
+.tbl-scroll .subq-table thead th.col-review {
   background: var(--ledger-head-bg);
 }
 

@@ -21,8 +21,15 @@
 - **`main` = 稳定线**：只放验收过的代码，**HEAD 永远是可以直接跑的状态**。同事 `git clone` 下来默认就在 `main`，
   所以任何"做了一半"的东西都不许出现在这里。
 - **`dev` = 开发线**：**所有 Agent 的日常改动一律在 `dev` 上提交。**
-- 发布动作（只有主会话/用户做）：dev 上跑全门禁 → `git checkout main && git merge --ff-only dev`
-  → `git tag stable-YYYYMMDD -m "门禁原话 + 这一版包含什么"` → 两条线各自 push。
+- 发布动作（只有主会话/用户做）：dev 上跑全门禁 → `git checkout main && git merge dev`
+  → `git tag stable-YYYYMMDD -m "门禁原话 + 这一版包含什么"` → 两条线 + 标签各自 push。
+  ⚠️ **别写 `--ff-only`**（2026-09-21 更正）：`main` 上每次发布都会留下一个 merge commit，
+  那些 commit 不在 `dev` 里，所以 `main` 永远**不是** `dev` 的祖先，`--ff-only` 必然失败。
+  实测依据：`git merge-base --is-ancestor main dev` 返回非 0，而 `git log main --not dev`
+  列出的全是 `Merge dev → main…` 这类合并提交（**没有一行是内容改动**），
+  `main^{tree}` 与上一版 `dev` 的树**逐字节相同**。
+  要恢复"快进"形状就得 force-push `main` —— 同事 clone 的正是这条线，**不许**。
+  （所以 release 后的 CHANGELOG 发版记录会先落在 `dev` 上，下一次发布时才带进 `main`。）
 - ⚠️ **不许在 `main` 上直接改代码**；⚠️ **不许把 `dev` rebase/force-push**（同事的 clone 会废掉）。
 - 动手前先 `git branch --show-current` 确认自己在 `dev`；在 `main` 上就先切回去再改，
   并把当前分支写进 `CHANGELOG.md` 的交接记录里。

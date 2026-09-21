@@ -33,10 +33,31 @@
    * 整段塞进提示条会把真正有用的说明挤没，所以优先抽 msg 字段；超长截断。
    */
   function shortError(err) {
-    const s = String(err == null ? '未知错误' : err);
+    if (err == null) return '未知错误';
+    // 2026-09-21：发布页 catch 到的是 { response, ... } 这类**普通对象**，
+    // 直接 String(err) 会得到 "[object Object]"，常驻条上一句有用的话都没有。
+    // 这里按「人能读的字段」优先取值，再退回原来的做法。
+    const pick = (v) => (typeof v === 'string' && v.trim()) ? v.trim() : '';
+    let s = typeof err === 'string' ? err
+      : (pick(err.message) || pick(err.msg) || pick(err.error) || pick(err.statusText) || '');
+    if (!s && err && typeof err === 'object' && err.response) {
+      const r = err.response;
+      s = pick(r.statusText) || pick(r.msg) || pick(r.message) || (r.status ? `HTTP ${r.status}` : '');
+    }
+    if (!s) s = String(err);
     const m = /"msg"\s*:\s*"([^"]+)"/.exec(s);
     if (m) return m[1];
+    if (/^\[object\s+\w+\]$/.test(s)) return '未知错误';
     return s.length > 90 ? s.slice(0, 90) + '…' : s;
+  }
+
+  /** 是不是「认证失败/未授权」—— 401 要额外给一句「去点 Token」的引导 */
+  function isAuthError(reason, msg) {
+    const code = reason && (reason.status ?? reason.statusCode ?? (reason.response && reason.response.status));
+    if (Number(code) === 401) return true;
+    const s = String(reason == null ? '' : reason);
+    if (/(^|[^0-9])401([^0-9]|$)/.test(s)) return true;
+    return /认证失败|未授权|未登录|unauthorized/i.test(String(msg || ''));
   }
 
   /**
@@ -51,9 +72,17 @@
     const msg = shortError(reason);
     const txt = $(o.text);
     if (txt) {
+      // 401 单独加一句引导：后端 token 约 12 小时过期，过期后每个接口都返回 401。
+      // 不加这句的话用户只看到「认证失败」，不知道该去点右上角的「🔑 Token」。
+      // 这属于「操作失败必须说清楚怎么办」的例外，不是冗余提示。
+      // 文案里已经提到 Token 的（如 publish-response 的「认证失败，请检查 Token 是否有效」）
+      // 就不重复追加，免得同一句话说两遍。
+      const tail = (isAuthError(reason, msg) && !/Token|令牌/i.test(msg))
+        ? '（Token 可能已过期，请点右上角「🔑 Token」更新）'
+        : '';
       txt.textContent = hasPrev
-        ? `⚠️ 本次查询失败，下面仍是上一次成功查询的结果（${msg}）`
-        : `⚠️ 查询失败：${msg}`;
+        ? `⚠️ 本次查询失败，下面仍是上一次成功查询的结果（${msg}${tail}）`
+        : `⚠️ 查询失败：${msg}${tail}`;
     }
     bar.style.display = '';
   }
@@ -73,5 +102,5 @@
     if (bar) bar.style.display = 'none';
   }
 
-  window.QueryFeedback = Object.freeze({ setLoading, showQueryFail, showFailText, hideFail, shortError });
+  window.QueryFeedback = Object.freeze({ setLoading, showQueryFail, showFailText, hideFail, shortError, isAuthError });
 })();

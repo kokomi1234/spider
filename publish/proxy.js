@@ -732,10 +732,15 @@ function handleQueriesSqlite(req, res, store) {
         const incoming = Array.isArray(parsed) ? parsed : (parsed && parsed.items);
         if (!Array.isArray(incoming)) { sendJson(res, 400, { code: 400, msg: 'body 需要 { items: [...] }' }); return; }
         const delIds = Array.isArray(parsed.deletedIds) ? parsed.deletedIds : [];
-        const r = store.upsert(incoming.slice(0, 2000), delIds);
+        // 上限保护：一次最多收 2000 条。**截断要如实回传**（2026-09-21 补）：
+        // 以前是静默丢弃，前端拿着「我提交了多少」去报数，用户以为全存进去了。
+        const keptArr = incoming.slice(0, 2000);
+        const truncated = incoming.length - keptArr.length;
+        const r = store.upsert(keptArr, delIds);
         sendJson(res, 200, {
-          code: 200, msg: '已合并保存',
-          data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite', people: store.peopleCount(), mode: 'all' },
+          code: 200, msg: truncated ? `已合并保存（超出 2000 条上限，丢弃 ${truncated} 条）` : '已合并保存',
+          data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite',
+            people: store.peopleCount(), mode: 'all', truncated },
         });
       } catch (e) {
         sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
