@@ -1121,9 +1121,10 @@ const PAGES = [
           const origChild = api.fetchServiceChildList;
           const origOp = api.fetchOperationRecordList;
           const opCalls = [];
-          // 抓包里 operationType 出现过的编码：12/17/18/43/45/47/50/52。
-          // 桩里刻意带上 17（**没有确认过显示名**）——守「未覆盖的编码原样显示数字，不猜中文」。
-          const TYPE_CYCLE = ['12', '43', '52', '17', '50'];
+          // 抓包里 operationType 出现过的编码：12/17/18/43/45/47/50/52（现已全部有显示名）。
+          // 桩里刻意带上 999（映射表里根本没有的编码）——
+          // 守「未覆盖的编码原样显示数字，不猜中文」这条铁律。
+          const TYPE_CYCLE = ['12', '43', '52', '999', '50'];
           const mkParam = (i, messageType) => ({
             parameter: 'p' + i, parameterName: '参数' + i, dictNo: 'D' + i, length: '16',
             type: 'String', isMust: i % 2 ? '是' : '否', remark1: '', remark2: '', remark3: '',
@@ -1226,7 +1227,7 @@ const PAGES = [
             out.opCols = document.querySelectorAll('#opRecordThead th').length;
             out.opColMatch = document.querySelectorAll('#opRecordCols col').length === out.opCols;
             out.opCall = JSON.stringify(opCalls[0] || null);
-            // 编码 → 显示名：已确认的映射走中文/英文名，未确认的（17）原样显示数字
+            // 编码 → 显示名：映射表命中的走中文/英文名，没命中的（999）原样显示数字
             out.opTypeLabels = Array.from(document.querySelectorAll('#opRecordTbody tr'))
               .map((tr) => tr.children[3].textContent.trim()).slice(0, 5).join(',');
             // 操作类型下拉必须被 createSearchableSelect 接管（原生 <select> 会被组件隐藏）
@@ -1245,11 +1246,11 @@ const PAGES = [
             // 筛选 → 请求里要真的带上 operationType（编码，不是显示名）
             const si = document.querySelector('.op-record-filter .searchable-select-input');
             if (si) {
-              const inst = null;   // 走真实交互：点开面板选「修改」(43)
+              const inst = null;   // 走真实交互：点开面板选「服务订阅-归档」(52)
               si.click();
               await wait(60);
               const opt = Array.from(document.querySelectorAll('.searchable-select-option'))
-                .find((o) => o.textContent.trim() === '修改');
+                .find((o) => o.textContent.trim() === '服务订阅-归档');
               out.opPanelHasOption = !!opt;
               if (opt) opt.click();
               await wait(40);
@@ -1309,8 +1310,9 @@ const PAGES = [
             f.push(`操作记录表不对：rows=${rowDlg.opRows} cols=${rowDlg.opCols}`);
           }
           if (!rowDlg.opColMatch) f.push('操作记录 colgroup 的 col 数与表头 th 数不一致');
-          if (rowDlg.opTypeLabels !== '删除,修改,CHECKOUT,17,CHECKIN') {
-            f.push('操作类型编码映射不对（未确认的编码要原样显示数字）：' + rowDlg.opTypeLabels);
+          if (rowDlg.opTypeLabels !==
+            '正式版基线,服务发布-审核人审核通过,服务订阅-归档,999,服务订阅-审核人审核通过') {
+            f.push('操作类型编码映射不对（没覆盖的编码要原样显示数字）：' + rowDlg.opTypeLabels);
           }
           if (rowDlg.opHostHidden !== true || !rowDlg.opPickedInput) {
             f.push('操作类型下拉没被 createSearchableSelect 接管（原生下拉展开面板样式不可控）');
@@ -1320,8 +1322,8 @@ const PAGES = [
           }
           if (rowDlg.opPage2Call !== 2) f.push('翻页没重新请求（pageNum 不是 2）：' + rowDlg.opPage2Call);
           if (rowDlg.opPage2FirstIdx !== '11') f.push('第 2 页序号没接着数：' + rowDlg.opPage2FirstIdx);
-          if (!rowDlg.opPanelHasOption) f.push('操作类型面板里没有「修改」这一项');
-          if (rowDlg.opFilteredCall !== '43/1') {
+          if (!rowDlg.opPanelHasOption) f.push('操作类型面板里没有「服务订阅-归档」这一项');
+          if (rowDlg.opFilteredCall !== '52/1') {
             f.push('按操作类型筛选没把编码传下去 / 没回到第 1 页：' + rowDlg.opFilteredCall);
           }
           if (!rowDlg.opClosed) f.push('操作记录关了遮罩还带 .show');
