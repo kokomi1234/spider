@@ -3,7 +3,7 @@
  * 跨时区稳定性探针（子进程用，不是用例）。
  *
  * 用法：TZ=<时区> PROBE_AT=<毫秒> node tests/probes/tz-probe.js
- * 打印「业务时区的今天」与「近 12 个月窗口」，由 tests/date-rules.test.js 在多个时区下
+ * 打印「业务时区的今天」与「批次窗口（当月 −2 ~ +3）」，由 tests/date-rules.test.js 在多个时区下
  * 分别跑一遍，断言结果完全一致。放在子进程里跑是因为 Node 的时区在进程启动后不易改。
  */
 const { loadScript } = require('../harness');

@@ -4,7 +4,7 @@
  * 起因：有人问「批次时间的计算结果会不会随月份变化而变动」。结论是**截止日推算本身是安全的**
  * （Date 的月份进位能正确处理跨年），真正的月份相关风险在**取"今天"用的时区**上：
  * 机器时区不是 UTC+8 时，北京时间每月 1 日 00:00~08:00 会被算成上个月，
- * "近 12 个月窗口"整体偏一个月。这里把两边都钉住。
+ * "批次窗口（当月 −2 ~ +3）"整体偏一个月。这里把两边都钉住。
  */
 'use strict';
 
@@ -93,9 +93,9 @@ test('剩余天数：月末、跨月、闰年 2 月都按日历日算，不做 3
   Priority.setBatchTimes({});   // 还原，别污染后续用例
 });
 
-// ── 3. 「近 12 个月窗口」：月末 / 跨年 / 不跳月 ──────────
+// ── 3. 批次窗口（当月 −2 ~ +3）：月末 / 跨年 / 不跳月 ──────────
 
-test('窗口：任意基准月都是连续的 12 个月，不重不跳（含跨年与月末）', () => {
+test('窗口：任意基准月都是连续的 6 个月，不重不跳（含跨年与月末）', () => {
   // 每月 1 号 + 每月最后一天都测：月末基准最容易踩 setMonth 的 day 溢出
   const bases = [];
   for (let m = 0; m < 24; m += 1) {
@@ -107,17 +107,17 @@ test('窗口：任意基准月都是连续的 12 个月，不重不跳（含跨�
 
   bases.forEach((base) => {
     const labels = batchWindowLabels(base);
-    assert.strictEqual(labels.length, 12, `${ymdOf(base)} 的窗口应有 12 个批次，实际 ${labels.length}`);
+    assert.strictEqual(labels.length, 6, `${ymdOf(base)} 的窗口应有 6 个批次，实际 ${labels.length}`);
 
     const idx = labels.map(monthIndex);
     for (let i = 1; i < idx.length; i += 1) {
       assert.strictEqual(idx[i] - idx[i - 1], 1,
         `${ymdOf(base)}：${labels[i - 1]} → ${labels[i]} 之间跳月了`);
     }
-    // 首尾 = 基准月 -2 / +9
+    // 首尾 = 基准月 -2 / +3
     const baseIdx = absMonth(base.getFullYear(), base.getMonth() + 1);
     assert.strictEqual(idx[0], baseIdx - 2, `${ymdOf(base)}：窗口起点应为基准月 -2`);
-    assert.strictEqual(idx[11], baseIdx + 9, `${ymdOf(base)}：窗口终点应为基准月 +9`);
+    assert.strictEqual(idx[5], baseIdx + 3, `${ymdOf(base)}：窗口终点应为基准月 +3`);
   });
 });
 

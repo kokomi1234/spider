@@ -233,7 +233,7 @@
   // ═══════════════════════════════════════════════════
 
   /**
-   * 入口：没指定调用方批次时，按「近 12 个月窗口」把每个批次并行拉回来合并
+   * 入口：没指定调用方批次时，按「批次窗口（当月 −2 ~ +3，共 6 个）」把每个批次并行拉回来合并
    * （避免一次查出 years 历史导致响应慢）；指定了批次就走原来的单批次查询。
    */
   async function query(pageNum) {
@@ -358,12 +358,12 @@
   }
 
   /**
-   * 没指定调用方批次：默认只看「当月 −2 个月 → 当月 +9 个月」这 12 个批次
-   * （如 26年9月 ⇒ 2607批次 ~ 2706批次），把窗口内每个批次并行拉回、合并、
+   * 没指定调用方批次：默认只看批次窗口「当月 −2 个月 → 当月 +3 个月」这 6 个批次
+   * （如 26年9月 ⇒ 2607批次 ~ 2612批次），把窗口内每个批次并行拉回、合并、
    * 去重后统一前端分页 + 优先级排序。相比一次查出全部历史，响应更快也更聚焦。
    */
   async function runWindowQuery(seq, cond) {
-    // 增量渲染：每有一个批次返回就先画一版（onProgress），不再等 12 个批次全部完成。
+    // 增量渲染：每有一个批次返回就先画一版（onProgress），不再等 6 个批次全部完成。
     const res = await SubscriptionModel.fetchWindowAll(cond, () => seq !== state.reqSeq, (rows, done, total) => {
       if (seq !== state.reqSeq) return;
       hideQueryFail();
@@ -402,12 +402,12 @@
     }
 
     render();
-    if (!state.total) toast('查询完成，窗口内（近 12 个月）没有匹配的订阅关系', 2400);
+    if (!state.total) toast('查询完成，窗口内（6 个批次）没有匹配的订阅关系', 2400);
     if (res.local) toast('⚠️ 该查询暂未开放，无法返回结果', 3000);
   }
 
   /**
-   * 生成「近 12 个月」批次 label 列表。
+   * 生成批次窗口 label 列表（当月 −2 ~ +3，共 6 个）。
    * 算法（含月份安全的两个约束）在 js/data/batch-data.js 的 batchWindowLabels()，
    * 这里只负责取基准日 —— 必须是业务时区（UTC+8）的今天，
    * 否则机器时区不是 +8 时，每月 1 日前后窗口会整体偏一个月。
@@ -731,7 +731,7 @@
   function initBatchTimes() {
     if (batchTimesInited || !window.SubscriptionBatchTimes) return;
     batchTimesInited = true;
-    // 弹窗的行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立，见 subscription-batch-times.js）
+    // 弹窗的行 = 批次字典里落在批次窗口（当月 −2 ~ +3）内的批次（月度 + 独立，见 subscription-batch-times.js）
     window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
   }
   initBatchTimes();
