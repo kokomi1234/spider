@@ -548,7 +548,7 @@ const PAGES = [
           return out;
         });
 
-        // 导出 / 导入：跨浏览器、跨电脑交换常用查询的唯一通路（本机 localStorage 不共享）
+        // 导出 / 导入：搬运与备份用（主存是共享库；本机 localStorage 只是「我的」离线镜像）
         const ioCheck = await page.evaluate(async () => {
           const out = {};
           const S = window.SavedQuery;
@@ -635,6 +635,56 @@ const PAGES = [
         if (!ioOk) {
           process.stdout.write(`    [FAIL] 导出/导入 / 按人过滤异常：${JSON.stringify(ioCheck)}\n`);
           anyFail = true;
+        }
+
+        // 导出按钮整条链路（2026-09-21 补）：以前只验了 S.exportJsonAsync() 出的 JSON 合法，
+        // **从没点过这个按钮** —— 于是 toast 里那行 `${items.length}`（`items` 是别的函数里的局部
+        // 变量，这一层取不到）一直没被发现：文件照常下载，随后抛 ReferenceError，
+        // 成功提示永不出现，反被全局兜底弹一句「⚠️ 页面出现异常」，用户看着像导出失败。
+        // 这里用「未捕获异常计数不涨 + 提示文案对」钉住它；不真落文件（下载链路换桩）。
+        // 不读 #toast 的文本：toast 是**串行队列**（js/ui/toast.js 的 QUEUE），
+        // 此时前面还压着几条没播完，固定 sleep 只会读到旧文案，把断言变成假警报。
+        // 直接给 window.toast 挂探针 —— home.js 的 showToast 是**调用时**才取 window.toast。
+        const exportBtn = await page.evaluate(async () => {
+          const o = { toasts: [] };
+          const c0 = window.AppRuntime.uncaughtCount();
+          const origCreate = URL.createObjectURL;
+          const origRevoke = URL.revokeObjectURL;
+          const origClick = HTMLAnchorElement.prototype.click;
+          const origToast = window.toast;
+          URL.createObjectURL = () => 'blob:smoke-stub';   // 不真落文件
+          URL.revokeObjectURL = () => {};
+          HTMLAnchorElement.prototype.click = function () {};
+          window.toast = (msg) => { o.toasts.push(String(msg)); };
+          try {
+            // 上一段结尾有 S.clear()（清理现场），镜像此时是空的 → 先存一条，
+            // 条数才是确定的 1（也顺便验「导出的确实是刚存进去的那份」）。
+            const saved = await window.SavedQuery.save({ page: 'publish', name: '导出探针', fields: {} });
+            o.savedOk = !!(saved && saved.ok);
+            document.getElementById('btnExportQueries').click();
+            const t0 = Date.now();
+            while (Date.now() - t0 < 5000 && !o.toasts.length) {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+            o.uncaught = window.AppRuntime.uncaughtCount() - c0;
+          } finally {
+            URL.createObjectURL = origCreate;
+            URL.revokeObjectURL = origRevoke;
+            HTMLAnchorElement.prototype.click = origClick;
+            window.toast = origToast;
+            // 复原上一段留下的「镜像为空」这个现场，别影响后面 task / subscription 两页的断言
+            window.SavedQuery.clear();
+          }
+          return o;
+        });
+        process.stdout.write(`  导出按钮: ${JSON.stringify(exportBtn)}\n`);
+        {
+          const hit = (exportBtn.toasts || []).some((m) => /^已导出\s*1\s*条/.test(m));
+          if (!hit || exportBtn.uncaught !== 0 || exportBtn.savedOk !== true) {
+            process.stdout.write('    [FAIL] 点「导 出」没给出带条数的成功提示 / 抛了未捕获异常：'
+              + JSON.stringify(exportBtn) + '\n');
+            anyFail = true;
+          }
         }
 
         process.stdout.write(`  当前用户/部门排行: ${JSON.stringify(deptCheck)}\n`);

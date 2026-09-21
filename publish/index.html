@@ -360,8 +360,8 @@
           <!-- 同步是静默的（失败就退回本机），所以把这个状态显式摆出来。
                数据来自 SavedQuery.lastSyncState()，代理响应里的 file 就是它实际读写的库文件 -->
           <span class="sync-state is-local" id="savedSync" aria-live="polite" hidden></span>
-          <!-- 列表按「当前用户」过滤（服务端 ?user=<工号>，回落本机），所以换人就会换列表；
-               导出/导入导的是**本机全部记录**，不只当前用户这几条 -->
+          <!-- 列表按「当前用户」过滤（服务端 ?user=<工号>，回落本机镜像），所以换人就会换列表；
+               导出/导入走的是**共享库**（连不上代理才退本机镜像），不按人切 -->
           <button type="button" class="outlined btn-xs" id="btnExportQueries">导 出</button>
           <button type="button" class="outlined btn-xs" id="btnImportQueries">导 入</button>
         </div>
@@ -375,7 +375,7 @@
       </div>
     </div>
 
-    <!-- ═══ 部门常用查询（本机口径的排行）═══ -->
+    <!-- ═══ 部门常用查询（排行：同一份条件被本部门几个人保存过，数据来自共享库）═══ -->
     <div class="card" id="deptCard">
       <div class="card-head">
         <h2 id="deptTitle">部门常用查询</h2>
@@ -402,7 +402,7 @@
 
   <!--
     首页依赖很轻，但顺序仍按项目约定：
-      debug.js 早于其它；saved-query.js 只依赖 localStorage；
+      debug.js 早于其它；saved-query.js 主存是代理的共享库（本机 localStorage 只是离线镜像）；
       bootstrap.js 做依赖检查与全局异常兜底；home.js 最后装配。
   -->
   <script src="js/core/runtime-config.js"></script>
