@@ -360,6 +360,16 @@
       body[key] = array ? [val] : val;
     });
 
+    // CHECKOUT/IN 状态（2026-09-21 起可用）：**只在用户选了具体值时才下发**。
+    // 为什么不写进 FIELDS / API_BODY_DEFAULTS：那两个地方是「17 个字段一个不少」的契约，
+    // 而本地代理的缓存 key = sha1(method + path + query + body) —— 多一个字段会让
+    // publish/cache/ 里**所有已录制条目失效**（离线回放直接查不到数据）。
+    // 选「全部」（空串）时保持不下发，默认路径的请求体与改动前逐字节一致。
+    // ⚠️ 参数名 checkOutInStatus 是按字段名直译的，**没有抓包实证**（用户知情拍板）。
+    const cosEl = $('#f_checkoutInStatus');
+    const cosVal = cosEl ? String(cosEl.value || '').trim() : '';
+    if (cosVal) body.checkOutInStatus = cosVal;
+
     body.pageNum  = state.pageNum;
     body.pageSize = state.pageSize;
 
@@ -512,6 +522,23 @@
   if (providerNativeEl) {
     providerNativeEl.addEventListener('change',
       () => loadSysServeNos(String(providerNativeEl.value || '').trim()));
+  }
+
+  /**
+   * 按当前「提供方系统」同步一次服务编号候选。
+   *
+   * 为什么需要它：上面那条 change 只在**值真的变了**时才触发，而本页有两种常见情形
+   * 值本来就带着、组件不会派发 change ——
+   *   ① 页面初始就带默认提供方系统（实测原生 select 的 value 就是 E00301）；
+   *   ② 从首页回填常用查询 —— 回填走 inst.setValue()，是**静默**的。
+   * 这两种情况下列表一直停在「没有匹配项」，用户会以为这一栏坏了
+   * （2026-09-21 用户实测报的：订阅页同一栏有选项，发布页永远是空的）。
+   *
+   * 所以初始化 + 回填之后各补一次同步，别只依赖 change。
+   */
+  function syncSysServeNoOptions() {
+    const el = document.getElementById('f_provideSystemNumber');
+    return loadSysServeNos(el ? String(el.value || '').trim() : '');
   }
 
   // ── 常用查询：保存到首页 / 从首页回填并查询 ─────────
@@ -934,12 +961,13 @@
 
   // 页面 DOM 就绪后异步加载各字典下拉；
   // 下拉建好之后才回填「常用查询」—— 选项来自接口，早了会静默失效。
+  // 最后再同步一次「服务编号」候选：初始默认值 / 回填都不会触发 change（见 syncSysServeNoOptions）。
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-      initDictSelects().then(restoreSavedQuery);
+      initDictSelects().then(restoreSavedQuery).then(syncSysServeNoOptions);
     }, { once: true });
   } else {
-    initDictSelects().then(restoreSavedQuery);
+    initDictSelects().then(restoreSavedQuery).then(syncSysServeNoOptions);
   }
 
   // ── 初始化页面状态（网络检测等） ────────────────

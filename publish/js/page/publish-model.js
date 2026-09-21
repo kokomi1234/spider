@@ -183,7 +183,8 @@
       '运行中':           ['b-run',        '运行中'],
       '已暂停':           ['b-pause',      '已暂停'],
       '已停止':           ['b-off',        '已停止'],
-      '已下线':           ['b-off',        '已下线'],
+      '下线':             ['b-off',        '下线'],   // 2026-09-21 用户告知的后端口径
+      '已下线':           ['b-off',        '已下线'], // 兼容旧口径
     };
     const entry = map[val] || ['b-off', val];
     return { cls: entry[0], text: entry[1] };
@@ -205,7 +206,8 @@
       counts,
       published: counts['正式版基线'] || counts['运行中'] || 0,
       pending: (counts['功能测试基线'] || 0) + (counts['开发基线'] || 0) + (counts['编辑中'] || 0),
-      failed: counts['已下线'] || 0,
+      // 2026-09-21：后端口径是「下线」，旧的「已下线」保留兼容（两边都算失败）
+      failed: (counts['下线'] || 0) + (counts['已下线'] || 0),
     };
   }
 

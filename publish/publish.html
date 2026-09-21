@@ -372,7 +372,10 @@
           </div>
           <div class="form-group" data-page-node-id="BqgS8Nm8P0HoCqXfiIQb6V">
             <label for="f_checkoutInStatus" data-page-node-id="Z2gM6Eile36yvwzhzidat8">CHECKOUT/IN状态</label>
-            <select id="f_checkoutInStatus" disabled data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
+            <!-- 2026-09-21：去掉 disabled —— 该字段已改成可选（选项在 js/ui/dict-selects.js 里给，
+                 选中后由 collectApiBody 条件下发 checkOutInStatus）。
+                 这里不再写 disabled，否则组件加载失败降级到原生下拉时这一栏还是不可用。 -->
+            <select id="f_checkoutInStatus" data-page-node-id="ClUJBWbQLAiQ8Sm1G5vXdJ">
               <option value="" data-page-node-id="eDnxbLswcJilBSqNufn4uh">全部</option>
             </select>
           </div>
@@ -421,6 +424,10 @@
               <option value="功能测试基线" data-page-node-id="Qnfrx9Tk7m30GaCaytAkHD">功能测试基线</option>
               <option value="开发基线" data-page-node-id="0gfIh9CDfWAu51ABoGEZ0A">开发基线</option>
               <option value="正式版基线" data-page-node-id="RtPSgZkkTblzv19HEXCWXd">正式版基线</option>
+              <!-- 2026-09-21 用户要求补：服务下线后 offerServerState 会取到「下线」，
+                   而筛选下拉里没有这一项就没法按它筛。
+                   取值以用户告知的后端口径「下线」为准（原有的「已下线」映射保留作兼容）。 -->
+              <option value="下线">下线</option>
             </select>
           </div>
           <div class="form-group" data-page-node-id="xA2UdQynvm7BrEQCJfnOcM">

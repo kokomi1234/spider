@@ -149,12 +149,21 @@
   function initStaticSelects(makeSelect) {
     const out = { checkout: null, changeTime: null };
 
-    // 后端无对应筛选字段，故禁用；只为和其它下拉保持同一套 input 风格
+    // 2026-09-21 用户要求：改成**可选**（原先「后端无对应筛选字段」所以禁用）。
+    // 取值按字段名直译 CHECKOUT / IN —— ⚠️ **这两个值没有抓包实证**，
+    // 是用户拍板先按此上线；「全部」= 空串 = 不下发（见 publish.js 的 collectApiBody）。
+    // 「选具体值才下发」是为了不动 API_BODY_DEFAULTS 那 17 个字段的契约：
+    // 本地代理的缓存 key = sha1(method+path+query+body)，多一个字段会让
+    // publish/cache/ 里已录制的条目全部失效。
     const checkoutEl = $('#f_checkoutInStatus');
     if (checkoutEl && makeSelect) {
-      out.checkout = makeSelect(checkoutEl, [{ value: '', label: '全部' }], { disabled: true });
-      if (out.checkout) out.checkout.setValue('');   // 禁用态也展示「全部」
-      log('✅ CHECKOUT/IN 状态下拉已统一为 input 风格（禁用）');
+      out.checkout = makeSelect(checkoutEl, [
+        { value: '', label: '全部' },
+        { value: 'CHECKOUT', label: 'CHECKOUT' },
+        { value: 'IN', label: 'IN' },
+      ], { disabled: false });
+      if (out.checkout) out.checkout.setValue('');   // 默认「全部」
+      log('✅ CHECKOUT/IN 状态下拉已初始化（全部 / CHECKOUT / IN）');
     }
 
     ['#f_sendOutSide', '#f_serviceStatus'].forEach((sel) => {
