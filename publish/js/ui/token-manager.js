@@ -48,6 +48,8 @@
         if (!data || data.code !== 200) return false;
         currentPreview = data.tokenPreview || NOT_SET;
         currentHasToken = !!data.hasToken;
+        // envPath 照旧接住（它是接口契约的一部分），但**刻意不往界面上渲染** ——
+        // 那是本机绝对路径、属于实现细节，原因见 renderStatus 里的注释。
         currentEnvPath = data.envPath || '';
         return true;
       })
@@ -79,12 +81,9 @@
     el.appendChild(code);
     el.appendChild(state);
 
-    if (currentEnvPath) {
-      var path = document.createElement('div');
-      path.style.cssText = 'margin-top:6px;font-size:var(--fs-xs);opacity:.75;';
-      path.textContent = '写入位置：' + currentEnvPath;
-      el.appendChild(path);
-    }
+    // 2026-09-21 用户拍板：这里原来还会渲染一行「写入位置：<本机绝对路径>」。
+    // 那暴露的是后端实现（token 落在哪个文件、本机的目录结构），对使用者没用 —— 删掉。
+    // 需要知道落盘位置的场景是排查故障，看 proxy.js 的启动日志就行。
   }
 
   /** 提交新 token；返回 Promise<boolean> 便于调用方决定后续动作 */
@@ -177,12 +176,12 @@
         optDiv.appendChild(checkbox);
         body.appendChild(optDiv);
 
-        // 说明
-        var tip = document.createElement('div');
-        tip.style.cssText = 'font-size:var(--fs-xs);color:var(--muted);line-height:1.6;';
-        tip.innerHTML = '不勾选则只在当前代理进程里生效，重启后回到 .env 里的值。<br>'
-          + '改完立即生效，无需重启代理（.env 由代理监听 mtime 自动重载）。';
-        body.appendChild(tip);
+        // 2026-09-21 用户拍板：这里原本还有两行说明 ——
+        //   「不勾选则只在当前代理进程里生效，重启后回到 .env 里的值。」
+        //   「改完立即生效，无需重启代理（.env 由代理监听 mtime 自动重载）。」
+        // 那是在把后端实现（代理进程、.env 落盘、文件监听）讲给使用者听，界面上没必要，
+        // 记在这里就够了。勾选框自己的 label「覆盖 .env 文件（持久生效）」已经表达了
+        // 用户需要知道的那点区别：勾上 = 写文件、重启后还在。
       },
       footButtons: [
         { text: '取 消', cls: 'outlined btn-sm', value: null },

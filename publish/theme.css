@@ -731,7 +731,12 @@ a.outlined, a.filled, a.text-btn {
 /* ── DialogUtils 的通用输入 / 确认弹窗（替代 window.prompt / confirm）──
    z-index 取在「子弹窗 1050」之上：这类提示可能由弹窗内部触发。 */
 .dlg-util-overlay { z-index: 1060; }
-.dlg-util-dialog { max-width: 460px; min-width: 320px; }
+/* ⚠️ 这里必须带 `.sub-dialog`（提高特异性），不能只写 `.dlg-util-dialog`：
+   `.sub-dialog { max-width: min(1080px, 96vw) }` 定义在本文件**更靠后**，
+   同特异性下会盖掉这条 —— 后果是确认框被撑到 1080px 宽、一句提示拖成一条长带
+   （2026-09-21 用户报「弹窗有点太宽了」的根因）。别依赖规则先后顺序来定宽度。
+   min-width 也跟着收一下：原来写死 320px，比窄屏视口还宽时会溢出。 */
+.sub-dialog.dlg-util-dialog { max-width: 460px; min-width: min(320px, 92vw); }
 .dlg-util-body { font-size: var(--fs-sm); color: var(--on-surface); }
 .dlg-util-body p { margin: 0 0 var(--sp1); line-height: 1.6; }
 .dlg-util-body .form-group { margin: 0; }
