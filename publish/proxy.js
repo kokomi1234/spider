@@ -737,10 +737,18 @@ function handleQueriesSqlite(req, res, store) {
         const keptArr = incoming.slice(0, 2000);
         const truncated = incoming.length - keptArr.length;
         const r = store.upsert(keptArr, delIds);
+        // 「谁用过这份查询」（部门高频的时间衰减排序要用，见 docs/部门高频查询排序方案.md）。
+        // 与 items 分开传：它是**使用关系**，不是保存关系，混进 upsert 会把 savers 口径搞乱。
+        // 失败不当成保存失败 —— 使用上报丢了最多让热度算得粗一点，不该让用户以为保存没成功。
+        let used = 0; let useErr = '';
+        const uses = Array.isArray(parsed.uses) ? parsed.uses.slice(0, 2000) : [];
+        if (uses.length) {
+          try { used = store.markUsed(uses); } catch (e) { useErr = String((e && e.message) || e); }
+        }
         sendJson(res, 200, {
           code: 200, msg: truncated ? `已合并保存（超出 2000 条上限，丢弃 ${truncated} 条）` : '已合并保存',
           data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite',
-            people: store.peopleCount(), mode: 'all', truncated },
+            people: store.peopleCount(), mode: 'all', truncated, used, ...(useErr ? { useError: useErr } : {}) },
         });
       } catch (e) {
         sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });

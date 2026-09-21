@@ -197,3 +197,45 @@ testOrSkip('queries-db：库文件可复用（重开后数据还在，WAL 模式
   s2.close();
   [file, file + '-wal', file + '-shm'].forEach((f) => { try { fs.unlinkSync(f); } catch (_) { /* 已删 */ } });
 });
+
+testOrSkip('queries-db：markUsed 记「谁用过」—— 与「谁保存过」分开，且幂等（时间取 MAX）', () => {
+  const s = freshStore();
+  s.upsert([{ id: 'q1', page: 'publish', name: '一份条件', fields: { ...COND }, owner: A, at: 1000 }], []);
+  // 李四没保存过，只是打开用了一次 —— 这正是单独建 uses 表的理由
+  s.markUsed([{ queryId: 'q1', userKey: '1002', deptKey: 'T01', at: 5000 }]);
+  s.markUsed([{ queryId: 'q1', userKey: '1002', deptKey: 'T01', at: 3000 }]);   // 更旧的时间
+  const uses = s.db.prepare('SELECT * FROM saved_query_uses').all();
+  assert.strictEqual(uses.length, 1, '同一个人只占一行（幂等）');
+  assert.strictEqual(Number(uses[0].at), 5000, '重复上报取 MAX，不会被更旧的时间往回拨');
+  assert.strictEqual(uses[0].user_key, '1002');
+  // 「用过」不等于「保存过」：部门人数不能被刷上去（现在榜单还按人数兜底排序）
+  assert.strictEqual(s.deptTop('T01', 10)[0].savers, 1, 'markUsed 不该把保存人数刷成 2');
+  s.close();
+});
+
+testOrSkip('queries-db：部门排行按衰减分数 —— 1 人刚用的压过 3 人 200 天没用的', () => {
+  const s = freshStore();
+  const now = Date.now();
+  const DAY = 86400000;
+  // 老查询：同 fingerprint，3 个人都在 200 天前保存过
+  [A, B, { ...A, userId: '1003', userName: '王五' }].forEach((u, i) => {
+    s.upsert([{ id: 'old' + i, page: 'publish', name: '老查询', fields: { ...COND }, owner: u, at: now - 200 * DAY }], []);
+  });
+  // 新查询：1 个人刚保存（条件不同 → 另一组）
+  const COND2 = { callerSystem: 'E00499', provideSystem: 'E00399' };
+  s.upsert([{ id: 'new', page: 'publish', name: '新查询', fields: { ...COND2 }, owner: A, at: now }], []);
+
+  const top = s.deptTop('T01', 10);
+  assert.strictEqual(top.length, 2, '两组各一行');
+  assert.strictEqual(top[0].name, '新查询', `1 人刚用的应排第一，实际第一是「${top[0].name}」`);
+  assert.ok(top[0].score > top[1].score, '新查询分数要更高');
+  // 200 天 ≈ 6.7 个半衰期 → 3 × 2^(-6.67) ≈ 0.03
+  assert.ok(top[1].score < 0.05, `3 人但 200 天没用的分数应趋近 0，实际 ${top[1].score}`);
+
+  // 关键回归：老查询只要有人重新用一次，就该重新浮上来（衰减是「降权」不是「判死」）
+  s.markUsed([{ queryId: 'old0', userKey: '1009', deptKey: 'T01', at: now }]);
+  const top2 = s.deptTop('T01', 10);
+  assert.strictEqual(top2[0].name, '老查询', '有人再用一次就该回到第一（半衰期内恢复）');
+  assert.ok(top2[0].score > 1, `用了一次应有约 1 票的加分，实际 ${top2[0].score}`);
+  s.close();
+});

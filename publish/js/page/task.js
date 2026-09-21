@@ -617,6 +617,9 @@
     // 会静默拿不到 → 不回填 → 页面照常跑默认查询（有概率 = 点到自己的查询则成功）。
     const item = await SQ.getAsync(id);
     if (!item || !item.fields) return;
+    // 「我用了这份查询」上报（部门高频的时间衰减排序要用）。
+    // 放在落地页而不是首页点卡片时：那一刻 <a> 在跳转，在途 fetch 会被中断。失败不影响回填。
+    if (typeof SQ.markUsed === 'function') Promise.resolve(SQ.markUsed(id)).catch(() => {});
     const f = item.fields;
     // 1) 原生文本输入
     ['t_taskNo', 't_taskName', 't_demandNo', 't_leadProduct', 't_relationProducts',

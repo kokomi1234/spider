@@ -718,6 +718,11 @@
     const item = await S.getAsync(id);
     if (!item || item.page !== 'publish') return null;
 
+    // 「我用了这份查询」上报给共享库（部门高频的时间衰减排序要用）。
+    // 放在**落地页**而不是首页点卡片时：那一刻 <a> 正在跳转，在途 fetch 会被浏览器中断。
+    // 失败无所谓（最多热度算粗一点），不挡回填、也不弹提示。
+    if (typeof S.markUsed === 'function') Promise.resolve(S.markUsed(id)).catch(() => {});
+
     Object.keys(item.fields || {}).forEach((fid) => {
       const val = item.fields[fid];
       // 先看有没有组件实例（多选 / 下拉 / 日期都走实例，能同步显示文本）；

@@ -69,6 +69,23 @@ CREATE TABLE IF NOT EXISTS saved_query_tombstones (
 CREATE INDEX IF NOT EXISTS idx_savers_user  ON saved_query_savers (user_key);
 CREATE INDEX IF NOT EXISTS idx_savers_dept  ON saved_query_savers (dept_key);
 CREATE INDEX IF NOT EXISTS idx_savers_query ON saved_query_savers (query_id);
+
+-- ── 「谁**用过**这份查询」（与「谁保存过」分开）──────────────────────
+-- 2026-09-21 加，为「部门高频查询」的时间衰减排序攒数据（见 publish/docs/部门高频查询排序方案.md）。
+-- 为什么要单独一张表：
+--   · 打开别人分享的查询也算「在用」，但那个人没有保存关系 —— 塞进 savers 表会把
+--     「几个人保存过」这个现有口径搞乱（现在榜单就是按它排的，方案第 1 步不动排序）；
+--   · 将来算分数时按 user_key 与 savers 取并集、时间取 MAX 即可，两边语义互不污染。
+-- 只存「最后时间」不存每次访问的明细：衰减是时间的函数，明细既没必要又会无限膨胀。
+CREATE TABLE IF NOT EXISTS saved_query_uses (
+  query_id TEXT NOT NULL,
+  user_key TEXT NOT NULL,
+  dept_key TEXT NOT NULL DEFAULT '',
+  at       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (query_id, user_key)
+);
+CREATE INDEX IF NOT EXISTS idx_uses_dept  ON saved_query_uses (dept_key);
+CREATE INDEX IF NOT EXISTS idx_uses_query ON saved_query_uses (query_id);
 `;
 
 /** 部门的归并键，口径与前端 SavedQuery.deptKeyOf 一致：team 优先，org 兜底 */
@@ -104,6 +121,13 @@ function userKeyOf(owner) {
 }
 
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : (d || 0));
+
+/**
+ * 部门高频查询的分数**半衰期**：30 天。
+ * 想让榜单更恋旧就调大（45~60 天），想更快换血就调小（14~21 天）—— 只改这一个常量。
+ * 30 天与业务节奏一致：批次是月度的（2607~2612），30 天 ≈ 一个批次周期。
+ */
+const DEPT_SCORE_HALFLIFE_MS = 30 * 24 * 3600 * 1000;
 
 /**
  * 打开（或新建）数据库。
@@ -152,6 +176,15 @@ function open(file) {
   const delTomb = db.prepare('DELETE FROM saved_query_tombstones WHERE at < ?');
   const delSavers = db.prepare('DELETE FROM saved_query_savers WHERE query_id = ?');
   const delQuery = db.prepare('DELETE FROM saved_queries WHERE id = ?');
+  // 「用过」的记录：同一人重复上报只更新最后时间（幂等，反复提交同一个文件/重试不会刷时间）
+  const insUse = db.prepare(`
+    INSERT INTO saved_query_uses (query_id, user_key, dept_key, at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(query_id, user_key) DO UPDATE SET
+      dept_key=excluded.dept_key, at=MAX(saved_query_uses.at, excluded.at)
+  `);
+  const delUses = db.prepare('DELETE FROM saved_query_uses WHERE query_id = ?');
+  const selUsesOf = db.prepare('SELECT * FROM saved_query_uses WHERE query_id = ?');
   const selAll = db.prepare('SELECT * FROM saved_queries WHERE id NOT IN (SELECT query_id FROM saved_query_tombstones)');
   const selSaversOf = db.prepare('SELECT * FROM saved_query_savers WHERE query_id = ? ORDER BY saved_at ASC');
   const deptTotal = db.prepare('SELECT COUNT(DISTINCT user_key) AS c FROM saved_query_savers');
@@ -251,6 +284,7 @@ function open(file) {
           if (!key) return;
           insTomb.run(key, now);
           delSavers.run(key);
+          delUses.run(key);      // 「用过」的记录一起清，否则墓碑之外的残留会一直留在表里
           delQuery.run(key);
         });
         delTomb.run(now - TOMB_KEEP_MS);
@@ -260,6 +294,38 @@ function open(file) {
         throw e;   // 如实抛给调用方 → 代理回 400/500，前端角标显示失败，而不是"成功但数据不全"
       }
       return { items: this.all(), deleted: this.tombstones() };
+    },
+
+    /**
+     * 记一次「这个人用了这份查询」（部门高频的时间衰减排序要用）。
+     *
+     * 为什么单独一个入口而不是塞进 upsert：upsert 写的是**保存关系**（savers 表），
+     * 而「用过但没保存」的人没有保存关系 —— 混进去会把「几个人保存过」这个现有口径搞乱。
+     *
+     * 幂等：同一人重复上报只把时间往后推（MAX），反复重试/重复提交不会刷时间。
+     *
+     * @param {Array<{queryId:string, userKey:string, deptKey?:string, at?:number}>} uses
+     * @returns {number} 实际写入/更新的条数
+     */
+    markUsed(uses) {
+      const arr = Array.isArray(uses) ? uses : [];
+      let n = 0;
+      try {
+        db.exec('BEGIN');
+        arr.forEach((u) => {
+          if (!u || typeof u !== 'object') return;
+          const qid = String(u.queryId || u.id || '').trim();
+          const uk = String(u.userKey || '').trim();
+          if (!qid || !uk) return;
+          insUse.run(qid, uk, String(u.deptKey || '').trim(), num(u.at, Date.now()));
+          n += 1;
+        });
+        db.exec('COMMIT');
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch (_) { /* 已回滚 */ }
+        throw e;
+      }
+      return n;
     },
 
     /**
@@ -292,14 +358,42 @@ function open(file) {
       const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 10;
       // 聚合口径：同一份条件（fingerprint 相同）算同一个查询；没填条件的各自成组。
       // 代表行取「最近有人保存的那条」，名字/摘要用它 —— 也就是当前大家在用的那份。
+      // ── 排序：指数时间衰减的「按人贡献求和」（2026-09-21 改，方案见 docs/部门高频查询排序方案.md）──
+      //   分数 = Σ（本部门每个人） 2 ^ ( −(现在 − 这个人最后活跃时间) / 半衰期 )
+      //   其中「最后活跃时间」= MAX(这个人保存它的时间, 这个人最近一次使用它的时间)。
+      //   老查询没人用 → 每个人的贡献都趋近 0 → 自然下沉，不需要额外的过期/淘汰规则。
+      const nowMs = Date.now();
       const rows = db.prepare(`
+        -- rn = 组内第几行（按保存时间倒序）。用来挑「代表行」——
+        -- ⚠️ 原来靠 agg.last_saved = scoped.saved_at 挑，组内若有两人 saved_at 相同
+        --    （批量导入 / 同一毫秒保存）会同时匹配上，榜单里同一条查询出现两行。
+        --    （注意：SQL 注释里别用反引号 —— 这一段是 JS 模板字符串，反引号会提前截断它。）
         WITH scoped AS (
-          SELECT q.*, s.user_key, s.user_name, s.saved_at,
-                 CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid
-          FROM saved_queries q
-          JOIN saved_query_savers s ON s.query_id = q.id
-          WHERE s.dept_key = ?
-            AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY gid ORDER BY saved_at DESC, id ASC) AS rn
+          FROM (
+            SELECT q.*, s.user_key, s.user_name, s.saved_at,
+                   CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid
+            FROM saved_queries q
+            JOIN saved_query_savers s ON s.query_id = q.id
+            WHERE s.dept_key = ?
+              AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          )
+        ),
+        -- 每个人的最后活跃时间：保存过的人（scoped）与用过的人（uses）取并集，时间取 MAX。
+        -- 分成两段再 UNION ALL 是因为「用过但没保存」的人根本不在 savers 表里。
+        activity AS (
+          SELECT gid, user_key, MAX(t) AS t
+          FROM (
+            SELECT gid, user_key, saved_at AS t FROM scoped
+            UNION ALL
+            SELECT CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid,
+                   u.user_key AS user_key, u.at AS t
+            FROM saved_query_uses u
+            JOIN saved_queries q ON q.id = u.query_id
+            WHERE u.dept_key = ?
+              AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          )
+          GROUP BY gid, user_key
         ),
         agg AS (
           SELECT gid,
@@ -308,17 +402,30 @@ function open(file) {
                  GROUP_CONCAT(user_name, '"|;"') AS people
           FROM scoped
           GROUP BY gid
+        ),
+        score AS (
+          SELECT gid,
+                 -- ⚠️ 必须 * 1.0 转 REAL：SQLite 的 / 是整数除法，否则指数被截断成 0、
+                 -- 不足一个半衰期的时间差全算成「就在今天」，衰减会静默失效（实测确认）。
+                 SUM(POW(2.0, -(? - t) * 1.0 / ?)) AS score
+          FROM activity
+          GROUP BY gid
         )
         SELECT scoped.id, scoped.page, scoped.name, scoped.summary, scoped.fields,
                scoped.labels, scoped.hits, scoped.saves, scoped.created_at,
                scoped.updated_at, scoped.last_opened_at, scoped.user_key,
                scoped.user_name, scoped.saved_at,
-               agg.savers AS savers, agg.last_saved AS last_saved, agg.people AS people
+               agg.savers AS savers, agg.last_saved AS last_saved, agg.people AS people,
+               COALESCE(score.score, 0) AS score
         FROM scoped
-        JOIN agg ON agg.gid = scoped.gid AND agg.last_saved = scoped.saved_at
-        ORDER BY agg.savers DESC, agg.last_saved DESC
+        JOIN agg ON agg.gid = scoped.gid
+        LEFT JOIN score ON score.gid = scoped.gid
+        WHERE scoped.rn = 1          -- 每组只出一行（组内 saved_at 相同也不会重复）
+        -- 主排序改成分数；分数相同时再按「保存人数 → 最近保存时间」，
+        -- 保证任何情况下顺序都是确定的（不会因为并列而每次查询抖一下）。
+        ORDER BY score DESC, agg.savers DESC, agg.last_saved DESC
         LIMIT ?
-      `).all(key, n);
+      `).all(key, key, nowMs, DEPT_SCORE_HALFLIFE_MS, n);
       // people 已经是**整个组**（同一份条件）的本部门人员名单：
       // 只取代表行那一条的话，会把同组其它人的名字埋掉。
       // 不用 GROUP_CONCAT 的默认逗号：姓名里带逗号会被拆成两个人（实测「王,五」→ 两人）。
@@ -332,6 +439,9 @@ function open(file) {
           savers: Number(r.savers) || rec.savers,
           saverNames: names.length ? names : rec.saverNames,
           recentUser: r.user_name || rec.recentUser,
+          // 衰减后的分数（诊断用：业务问「它凭什么排第一」时能当场给出数字）。
+          // 前端不拿它排序 —— 排序在 SQL 里已经做完了。
+          score: Number(r.score) || 0,
         };
       });
     },

@@ -889,6 +889,9 @@
     // 「点了部门卡却没填条件就查询了」（有概率 = 点到自己的查询则成功）。
     const item = await SQ.getAsync(id);
     if (!item || !item.fields) return;
+    // 「我用了这份查询」上报（部门高频的时间衰减排序要用）。
+    // 放在落地页而不是首页点卡片时：那一刻 <a> 在跳转，在途 fetch 会被中断。失败不影响回填。
+    if (typeof SQ.markUsed === 'function') Promise.resolve(SQ.markUsed(id)).catch(() => {});
     const f = item.fields;
 
     // 1) 无联动依赖的单选下拉 + 文本输入先回填

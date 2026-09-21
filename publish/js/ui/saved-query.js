@@ -382,6 +382,42 @@
   }
 
   /**
+   * 记一次「**我**用了这份查询」—— 部门高频查询的**时间衰减排序**要用
+   * （方案见 publish/docs/部门高频查询排序方案.md；服务端落在 saved_query_uses 表）。
+   *
+   * ⚠️ **只在落地页调用，别在首页点卡片时调**：那一刻 `<a>` 已经开始跳转，
+   * 浏览器会中断在途 fetch —— 实测点一次卡片，`hits` 和 `lastAt` 都没变，上报基本没成功过。
+   * 落地页上报时跳转已经完成，而且语义更准：记的是「真打开并加载了」，不是「手滑点了一下」。
+   *
+   * 与 `hit()` 的分工：`hit()` 维护的是**整条记录**的打开次数（hits / lastAt）；
+   * `markUsed()` 记的是**「这个人在这个部门」**用过它 —— 后者才是部门排行要的按人数据。
+   *
+   * @param {string} id 常用查询 id（URL 上 `?saved=` 的那个）
+   * @returns {Promise<{ok:boolean, error?:string}>}
+   */
+  async function markUsed(id) {
+    if (!id) return fail('缺少 id');
+    const cu = window.CurrentUser && window.CurrentUser.get();
+    const key = userKeyOf(cu);
+    if (!key) return fail('未设置当前用户（不知道是谁用的，记了没意义）');
+    if (!canSync()) return fail('当前环境没有同步端点');
+    try {
+      const r = await window.fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [],
+          uses: [{ queryId: String(id), userKey: key, deptKey: deptKeyOf(cu), at: Date.now() }],
+        }),
+      });
+      if (!r.ok) return fail('使用上报失败：HTTP ' + r.status);
+      return { ok: true };
+    } catch (e) {
+      return fail('使用上报失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
+  /**
    * get() 的 async 版：镜像里没有就去服务端找（先「我的」，再全集）。
    * 为什么要它：?saved=<id> 深链回填时，换电脑/清过缓存的本机镜像可能是空的——
    * 记录在共享库里，按 id 捞得到就照样回填（2026-09-20 架构改版配套）。
@@ -1130,6 +1166,7 @@
     exportJsonAsync,
     importJson,
     getAsync,
+    markUsed,
     syncFromServer,
     pushToServer,
     lastSyncState,
