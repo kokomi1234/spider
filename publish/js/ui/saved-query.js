@@ -27,6 +27,11 @@
   'use strict';
 
   const STORAGE_KEY = 'spider.savedQueries.v1';
+  // 「无人认领」记录的**独立存储键**（2026-09-22 分键，用户报「登录了再退出，未登录存的会被覆盖」）：
+  // 登录时 syncFromServer 会用服务端拉回的「我的列表」**整段覆盖**登录镜像 —— 单键时代
+  // 没登录时保存的匿名记录会跟着被冲掉。分键后同步只动登录段，匿名段独立存活，
+  // 认领（claimAnonymous）时 writeRaw 按归属分流，记录自然从匿名段挪进登录段。
+  const ANON_STORAGE_KEY = 'spider.savedQueries.anon.v1';
   // 上限与代理端点（/local/saved-queries）保持一致：合并了同团队别人的记录后
   // 本机条目数会超过「自己存的」，两边用同一个数字才不会互相打架。
   const MAX_ITEMS = 200;
@@ -50,11 +55,12 @@
     }
   }
 
-  function readRaw() {
+  /** 读单个存储段（不 sanitize；JSON 坏掉当空列表，不拖崩首页） */
+  function readSeg(key) {
     const s = storage();
     if (!s) return [];
     try {
-      const txt = s.getItem(STORAGE_KEY);
+      const txt = s.getItem(key);
       if (!txt) return [];
       const parsed = JSON.parse(txt);
       return Array.isArray(parsed) ? parsed : [];
@@ -63,14 +69,87 @@
     }
   }
 
+  /** 写单个存储段 */
+  function writeSeg(key, items) {
+    const s = storage();
+    if (!s) return false;
+    try {
+      s.setItem(key, JSON.stringify(items));
+      return true;
+    } catch (_) {
+      return false; // 最常见的是 QuotaExceededError
+    }
+  }
+
+  // 旧版只有 STORAGE_KEY 一个键、登录与匿名的记录混在一起。分键后要把里面
+  // 的匿名记录挪到匿名段，否则**迁移前的一次登录同步**就会把它们冲掉。
+  let migrated = false;
+  function migrateIfNeeded() {
+    if (migrated) return;
+    migrated = true;
+    const raw = readSeg(STORAGE_KEY);
+    const anonInUserSeg = raw.filter((it) => saverKeysOf(it).length === 0);
+    if (!anonInUserSeg.length) return;
+    const exist = readSeg(ANON_STORAGE_KEY);
+    const merged = exist.concat(anonInUserSeg.filter((x) => x && !exist.some((a) => a && a.id === x.id)));
+    try {
+      writeSeg(ANON_STORAGE_KEY, merged);
+      writeSeg(STORAGE_KEY, raw.filter((it) => saverKeysOf(it).length !== 0));
+    } catch (_) { /* 迁移失败不致命：下次写操作时 writeRaw 会按归属再分流一次 */ }
+  }
+
+  /**
+   * 合并视图 = 登录镜像段 + 匿名段。
+   * 2026-09-22 分键：登录时 syncFromServer 的 writeRaw(我的记录) 是**整段覆盖**，
+   * 单键时代会把「没登录时保存的」匿名记录一起冲掉（用户报）。
+   * 同 id 冲突时登录段优先 —— 认领会把记录从匿名段挪进登录段，理论上不会共存，防御一下。
+   */
+  function readRaw() {
+    migrateIfNeeded();
+    const mine = readSeg(STORAGE_KEY);
+    const anon = readSeg(ANON_STORAGE_KEY);
+    if (!anon.length) return mine;
+    // 段里是**未清洗**的原始 JSON，可能有 null / 非对象这类脏条目 ——
+    // 合并去重前先防御，脏的照原样带过去，交给 list() 的 sanitize 统一处理
+    const ids = new Set(mine.filter((x) => x && typeof x === 'object' && x.id).map((x) => x.id));
+    return mine.concat(anon.filter((x) => x && typeof x === 'object' && x.id && !ids.has(x.id)));
+  }
+
+  /**
+   * 写镜像：**按归属分流** —— 有归属人的进登录段（会被服务端同步整段覆盖），
+   * 匿名的进独立段（登录/退出都不碰它）。上层所有写操作（保存/改名/删除/导入/认领/同步）
+   * 都走这里，所以分流只需写对这一处。
+   */
   function writeRaw(list) {
     const s = storage();
     if (!s) return fail('浏览器存储不可用（隐私模式？），无法保存');
     try {
-      s.setItem(STORAGE_KEY, JSON.stringify(list));
+      const anon = list.filter((it) => saverKeysOf(it).length === 0);
+      const mine = list.filter((it) => saverKeysOf(it).length !== 0);
+      s.setItem(STORAGE_KEY, JSON.stringify(mine));
+      s.setItem(ANON_STORAGE_KEY, JSON.stringify(anon));
       return { ok: true };
     } catch (e) {
       // 最常见的是 QuotaExceededError
+      return fail('保存失败：浏览器存储空间不足或被禁用');
+    }
+  }
+
+  /**
+   * 只覆盖**登录镜像段**（服务端拉回的「我的列表」），匿名段原样不动。
+   *
+   * syncFromServer / pushToServer / getAsync 回填这类调用拿到的是「当前用户的」数据，
+   * **不是全量镜像** —— 不能走 writeRaw（全量替换两段），否则匿名段会被一起冲掉
+   *（2026-09-22 用户报「登录了再退出，未登录存的会被覆盖」的根因）。
+   */
+  function writeMineSeg(items) {
+    const s = storage();
+    if (!s) return fail('浏览器存储不可用（隐私模式？），无法保存');
+    try {
+      const mine = (Array.isArray(items) ? items : []).filter((it) => saverKeysOf(it).length !== 0);
+      s.setItem(STORAGE_KEY, JSON.stringify(mine));
+      return { ok: true };
+    } catch (e) {
       return fail('保存失败：浏览器存储空间不足或被禁用');
     }
   }
@@ -344,6 +423,8 @@
    * 这里直接认领：改本机镜像 + 推给服务端，用户感知上就是「登录之后东西还在」。
    *
    * 幂等：没有匿名记录时什么都不做（返回 claimed: 0），反复调用安全。
+   * 推送是 fire-and-forget：调用方（首页 renderSaved）要靠 markLocalWrite 的 5 秒保护
+   * 挡住「GET 跑赢 POST、用认领前的旧数据覆盖镜像」的竞态。
    *
    * @param {object} user 当前用户 {userId,userName,teamId,...}
    * @returns {{ok:boolean, claimed:number, error?:string}}
@@ -870,7 +951,7 @@
               let total = items.length;
               if (cu) {
                 const mine = await mineFromServer(cu);
-                if (mine.ok) { writeRaw(mine.items); total = mine.items.length; }
+                if (mine.ok) { writeMineSeg(mine.items); total = mine.items.length; }   // 只覆盖登录段
               }
               recordSync({ ok: true, total, file: pd.file, storage: pd.storage, people: pd.people });
               return { ok: true, added, merged, total, server: true };
@@ -1070,7 +1151,7 @@
       const mine = await mineFromServer(cu);
       if (!mine.ok) return recordSync(fail(mine.error));
       const meta = { file: mine.storage, storage: mine.storage };
-      writeRaw(mine.items);
+      writeMineSeg(mine.items);   // 只覆盖登录段：匿名段独立存活，不能被同步冲掉
       return recordSync({ ok: true, added: 0, merged: 0, total: mine.items.length, ...meta });
     } catch (e) {
       return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
@@ -1125,7 +1206,7 @@
       const cu = window.CurrentUser && window.CurrentUser.get();
       if (cu) {
         const mine = await mineFromServer(cu);
-        if (mine.ok) writeRaw(mine.items);
+        if (mine.ok) writeMineSeg(mine.items);   // 只覆盖登录段，匿名段不动
         return recordSync({ ok: true, total: mine.ok ? mine.items.length : list().length, ...meta });
       }
       return recordSync({ ok: true, total: list().length, ...meta });

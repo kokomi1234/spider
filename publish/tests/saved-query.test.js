@@ -43,6 +43,7 @@ function load(storage, win = {}) {
 }
 
 const KEY = 'spider.savedQueries.v1';
+const ANON_KEY = 'spider.savedQueries.anon.v1';
 
 // ══════════════════════════════════════════════════════════
 // 1) 保存与校验
@@ -1313,4 +1314,39 @@ test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回�
   const item = await S.getAsync('deep1');
   assert.strictEqual(item.id, 'deep1', '从服务端捞回来');
   assert.strictEqual(S.list().length, 0, '别人的记录只回填用，不进镜像');
+});
+
+test('saved-query：分键 —— 登录同步整段覆盖登录镜像，匿名记录不受影响', async () => {
+  // 2026-09-22 用户报「登录了再退出的未登录用户又会被覆盖」：以前只有一个键，
+  // 登录时 syncFromServer 用服务端拉回的「我的列表」**全量覆盖**镜像，
+  // 没登录时保存的匿名记录跟着被冲掉。分键后同步只覆盖登录段，匿名段独立存活。
+  const noNet = async () => { throw new Error('离线'); };
+  const st = fakeStorage();
+  // ① 没登录，先存一条匿名的
+  const S0 = loadSync(st, noNet);
+  await S0.save({ page: 'publish', name: '匿名存的', fields: {} });
+  assert.strictEqual(S0.list().length, 1);
+  // ② 同一份 localStorage 换到登录环境：同步会用服务端的「我的列表」整段覆盖登录镜像。
+  //    fakeProxy 的库里是空的 → 覆盖后登录段为空 —— 但匿名那条必须活着。
+  const S1 = loadUserSync(st, fakeProxy(), { userId: '6464402', userName: '吴树海' });
+  await S1.syncFromServer();
+  assert.deepStrictEqual(S1.list().map((x) => x.name), ['匿名存的'],
+    '匿名记录被登录同步冲掉了');
+  // 匿名记录确实落在独立段里（不与登录镜像混存）
+  assert.deepStrictEqual(JSON.parse(st.getItem(ANON_KEY)).map((x) => x.name), ['匿名存的']);
+});
+
+test('saved-query：旧单键里的匿名记录会被迁移进匿名段（升级兼容）', () => {
+  // 旧版只有一个键、登录与匿名的混在一起。分键后首次读取必须把匿名记录挪出去 ——
+  // 否则迁移前的一次登录同步就会把它们冲掉，等于白迁移。
+  const st = fakeStorage({
+    [KEY]: JSON.stringify([
+      { id: 'u1', page: 'publish', name: '有归属的', fields: {}, owner: OWNER_A },
+      { id: 'a1', page: 'publish', name: '旧键里的匿名', fields: {} },
+    ]),
+  });
+  const S = loadSync(st, async () => { throw new Error('离线'); });
+  assert.deepStrictEqual(S.list().map((x) => x.name).sort(), ['旧键里的匿名', '有归属的'], '迁移不该丢数据');
+  assert.deepStrictEqual(JSON.parse(st.getItem(ANON_KEY)).map((x) => x.name), ['旧键里的匿名'], '匿名记录要落进匿名段');
+  assert.deepStrictEqual(JSON.parse(st.getItem(KEY)).map((x) => x.name), ['有归属的'], '登录段里不再混匿名记录');
 });

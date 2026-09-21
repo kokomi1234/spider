@@ -227,8 +227,14 @@
 
     // 有身份：先把本机那些无人认领的记录**认领给 ta**（以前是让用户"去查询页重新保存一次"，
     // 等于白存），再读列表。认领是幂等的，没有匿名记录时就是一步空操作。
+    // ⚠️ 认领前先 markLocalWrite：认领会写镜像 + 推服务端（fire），随后的 ?user= 拉取
+    //    如果跑赢了那个 POST，拉回来的是认领前的旧数据 —— 不能拿它覆盖刚认领的结果
+    //   （与改名/删除/导入同一套 5 秒保护，见 loadMineFromServer）。
     try {
-      if (typeof S.claimAnonymous === 'function') S.claimAnonymous(u);
+      if (typeof S.claimAnonymous === 'function') {
+        markLocalWrite();
+        S.claimAnonymous(u);
+      }
     } catch (e) {
       console.error('[home] 认领本机常用查询失败：', e);
     }
