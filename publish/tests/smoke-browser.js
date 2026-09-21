@@ -1122,9 +1122,10 @@ const PAGES = [
           const origOp = api.fetchOperationRecordList;
           const opCalls = [];
           // 抓包里 operationType 出现过的编码：12/17/18/43/45/47/50/52（现已全部有显示名）。
-          // 桩里刻意带上 999（映射表里根本没有的编码）——
-          // 守「未覆盖的编码原样显示数字，不猜中文」这条铁律。
-          const TYPE_CYCLE = ['12', '43', '52', '999', '50'];
+          // 桩里三种都覆盖到：13（**反推**出来的，别只验实证那批）、
+          // 999（映射表里根本没有的编码）—— 守「反推的能显示、未覆盖的原样显示数字、
+          // 两种都不猜中文」。
+          const TYPE_CYCLE = ['12', '43', '52', '13', '50', '999'];
           const mkParam = (i, messageType) => ({
             parameter: 'p' + i, parameterName: '参数' + i, dictNo: 'D' + i, length: '16',
             type: 'String', isMust: i % 2 ? '是' : '否', remark1: '', remark2: '', remark3: '',
@@ -1227,9 +1228,9 @@ const PAGES = [
             out.opCols = document.querySelectorAll('#opRecordThead th').length;
             out.opColMatch = document.querySelectorAll('#opRecordCols col').length === out.opCols;
             out.opCall = JSON.stringify(opCalls[0] || null);
-            // 编码 → 显示名：映射表命中的走中文/英文名，没命中的（999）原样显示数字
+            // 编码 → 显示名：实证与推断的都走名称，没命中的（999）原样显示数字
             out.opTypeLabels = Array.from(document.querySelectorAll('#opRecordTbody tr'))
-              .map((tr) => tr.children[3].textContent.trim()).slice(0, 5).join(',');
+              .map((tr) => tr.children[3].textContent.trim()).slice(0, 6).join(',');
             // 操作类型下拉必须被 createSearchableSelect 接管（原生 <select> 会被组件隐藏）
             const host = document.getElementById('opTypeFilter');
             out.opHostHidden = host ? getComputedStyle(host).display === 'none' : null;
@@ -1311,8 +1312,8 @@ const PAGES = [
           }
           if (!rowDlg.opColMatch) f.push('操作记录 colgroup 的 col 数与表头 th 数不一致');
           if (rowDlg.opTypeLabels !==
-            '正式版基线,服务发布-审核人审核通过,服务订阅-归档,999,服务订阅-审核人审核通过') {
-            f.push('操作类型编码映射不对（没覆盖的编码要原样显示数字）：' + rowDlg.opTypeLabels);
+            '正式版基线,服务发布-审核人审核通过,服务订阅-归档,下线,服务订阅-审核人审核通过,999') {
+            f.push('操作类型编码映射不对（反推的要显示名称、没覆盖的要原样显示数字）：' + rowDlg.opTypeLabels);
           }
           if (rowDlg.opHostHidden !== true || !rowDlg.opPickedInput) {
             f.push('操作类型下拉没被 createSearchableSelect 接管（原生下拉展开面板样式不可控）');
