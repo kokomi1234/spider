@@ -1096,6 +1096,9 @@
     // （静态 HTML 里浮层是 hidden 的 —— 页面没加载完表头高度还测不准，先不显示，
     //   免得浮层按 top:0 盖住表头。）
     if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
+
+    // Token 管理浮窗：三个查询页都要能改 token（2026-09-21 补，与发布页同一支）
+    if (window.TokenManager && typeof window.TokenManager.init === 'function') window.TokenManager.init();
   }
 
   if (document.readyState === 'loading') {

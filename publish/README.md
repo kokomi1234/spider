@@ -16,6 +16,10 @@
 
 四页共用 `theme.css` 与 `js/core`、`js/api`、`js/data`、`js/ui` 下的公共模块。
 
+**三个查询页的标题栏是同一套按钮**（2026-09-21 补齐）：`← 首页` ＋ 跳往另外两个查询页
+（各自不显示自己）＋ `🔑 Token`（TokenManager.init，弹同一个管理浮窗）。
+冒烟里有跨三页的断言守住，别只改一个页面。
+
 > 2026-09-18：`index.html` 由「服务发布数据查询」改为**首页**，原查询页迁到 `publish.html`。
 > 干净路由 `/home`（首页）、`/publish`、`/task`、`/subscription` 在 `proxy.js` 的 `PAGE_ROUTES` 里维护；
 > `bootstrap.js` 的 `currentPage()` 按路径判定页签，改路由时两处要一起看。

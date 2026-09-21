@@ -335,7 +335,9 @@
       <h1>服务订阅关系查询</h1>
       <div class="toolbar">
         <a class="outlined btn-sm" href="/home">← 返回首页</a>
+        <a class="outlined btn-sm" href="/publish">服务发布数据查询</a>
         <a class="outlined btn-sm" href="/task">任务单查询</a>
+        <button class="outlined btn-sm" id="btnTokenManager">🔑 Token</button>
       </div>
     </div>
 
@@ -618,6 +620,9 @@
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/core/app-navigator.js"></script>
   <script src="js/ui/toast.js"></script>
+  <!-- token-manager：本页 toolbar 的「🔑 Token」要用（2026-09-21 补，与发布页同一支；
+       它依赖 toast 与 dialog-utils，且要早于页面脚本）。 -->
+  <script src="js/ui/token-manager.js"></script>
   <!-- 本页已无导出功能，但保留该引入：csv-export.js 由三页共用，index / task 页仍在用 -->
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>

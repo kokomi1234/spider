@@ -3680,6 +3680,56 @@ const PAGES = [
   }
 
   // ═══════════════════════════════════════════════════════════════
+  // 三个查询页的工具栏（2026-09-21 补）：**每页**都要有「🔑 Token」和跳往另外两个
+  // 查询页的按钮。以前只有发布页（+首页）有，在任务单页/订阅页想改 token 或去别的页
+  // 只能先退回首页。按钮在还不算数 —— 这里还要真的点一下，确认 init() 接上了。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    const PAGES = [
+      ['发布查询页', 'publish.html', ['/task', '/subscription']],
+      ['任务单页', 'task.html', ['/publish', '/subscription']],
+      ['订阅关系页', 'subscription.html', ['/publish', '/task']],
+    ];
+    try {
+      for (const [name, file, hops] of PAGES) {
+        await page.goto(base + file, { waitUntil: 'load', timeout: 15000 });
+        await page.waitForTimeout(900);
+        const r = await page.evaluate((needHops) => {
+          const links = [...document.querySelectorAll('.page-header .toolbar a')]
+            .map((a) => a.getAttribute('href'));
+          return {
+            hasToolbar: !!document.querySelector('.page-header .toolbar'),
+            hasTokenBtn: !!document.getElementById('btnTokenManager'),
+            hasHomeLink: links.indexOf('/home') > -1,
+            missingHops: needHops.filter((h) => links.indexOf(h) < 0),
+          };
+        }, hops);
+        // 按钮存在还不够：点了要真弹出 Token 管理弹窗（验证 TokenManager.init() 接上了）
+        await page.click('#btnTokenManager');
+        await page.waitForTimeout(900);
+        r.tokenOpens = await page.evaluate(() => !!document.querySelector('.dlg-util-overlay.show'));
+        if (r.tokenOpens) {
+          await page.locator('.dlg-util-overlay.show .sub-foot button').first().click();   // 取 消
+          await page.waitForTimeout(500);
+        }
+        process.stdout.write(`  ${name}工具栏: ${JSON.stringify(r)}\n`);
+        if (!r.hasToolbar) fails.push(`${name} 缺 .page-header .toolbar`);
+        if (!r.hasTokenBtn) fails.push(`${name} 缺「🔑 Token」按钮（#btnTokenManager）`);
+        if (!r.hasHomeLink) fails.push(`${name} 缺回首页的链接`);
+        if (r.missingHops.length) fails.push(`${name} 缺跳往 ${r.missingHops.join('、')} 的按钮`);
+        if (!r.tokenOpens) fails.push(`${name} 点「🔑 Token」没弹出管理弹窗（TokenManager.init 没接上？）`);
+      }
+    } catch (e) {
+      fails.push(`工具栏段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // 发布页分页条（A5）：原来只有「上一页 / 下一页 / 第 X / Y 页」，
   // 翻到第 20 页要点 19 次。用假 state 直接驱动 PublishView.updatePagination
   // 验证渲染（页码/首末页/跳页/禁用态），再点一个页码验证事件委托真的接管了点击。

@@ -151,7 +151,9 @@
       <h1 data-page-node-id="GN9KpXOj6464oBm07mLk05">任务单查询</h1>
       <div class="toolbar" data-page-node-id="gkjfH8qhqyzf6r0cyxDnRR">
         <a class="outlined btn-sm" href="/home" data-page-node-id="H3YoFnGBOOV5kiZoHUJK9M">← 返回首页</a>
+        <a class="outlined btn-sm" href="/publish">服务发布数据查询</a>
         <a class="outlined btn-sm" href="/subscription">服务订阅关系查询</a>
+        <button class="outlined btn-sm" id="btnTokenManager">🔑 Token</button>
       </div>
     </div>
 
@@ -467,6 +469,10 @@
   <script src="js/ui/date-picker.js"></script>
   <script src="js/ui/people-search.js"></script>
   <script src="js/ui/toast.js"></script>
+  <!-- dialog-utils + token-manager：本页 toolbar 的「🔑 Token」要用（2026-09-21 补，
+       与发布页同一支；token-manager 依赖 toast 与 DialogUtils，且要早于页面脚本）。 -->
+  <script src="js/ui/dialog-utils.js"></script>
+  <script src="js/ui/token-manager.js"></script>
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>
   <script src="js/ui/query-feedback.js"></script>

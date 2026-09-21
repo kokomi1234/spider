@@ -831,6 +831,9 @@
     // 首屏就是空态：显示宽表空态浮层并对齐到表头下沿。
     // （静态 HTML 里浮层是 hidden 的 —— 表头高度要等布局完成才测得准，先不显示。）
     if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
+
+    // Token 管理浮窗：三个查询页都要能改 token（2026-09-21 补，与发布页同一支）
+    if (window.TokenManager && typeof window.TokenManager.init === 'function') window.TokenManager.init();
   }
 
   if (document.readyState === 'loading') {
