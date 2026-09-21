@@ -42,7 +42,9 @@
 
 **起点不是零**：上一路会话 11:40 起写了 `publish-dialog-model.js` / `intf-detail-dialog.js` /
 `op-record-dialog.js` + 页面接线，**11:52 中断且没留交接**（`ps` 里已无那个进程、文件 mtime 停在那一刻）。
-本次先读现场判断「哪些做完了」，再补齐缺的，没有推翻它的数据口径（核对过抓包，是对的）。
+本次先读现场判断「哪些做完了」，再补齐缺的，没有推翻它的数据口径（数组名/列名逐条对过 HAR，是对的）。
+⚠️ 但**只核了「字段存在」，没核「值对不对」** —— `sysServeNo` 的形态问题（遗留 1）就是漏在这条上：
+35 行缓存里那个字段**确实存在**，所以我当时判成"已核对"，其实两边形态并不一样。
 
 **这一轮补的（前一路留下的缺口，全部是「不补就点不动/看不见」的）**：
 1. **样式整块缺失**：markup 用到的 `.dlg-tabs/.dlg-tab/.dlg-table/.dlg-pager/.intf-body/
@@ -68,8 +70,11 @@
 **真实数据实测**（离线代理 3100 + 真实缓存，探针用完已移入回收站）：
 `接口明细` 10 列宽 56/104/99/151/42/62/67/197/352/140，表宽 1270 = 视口宽 → **无横向溢出、无一格被截断**，
 表头 `position:sticky`、弹窗主体 `overflow-y:hidden`；`操作记录` 真实 21 条 / 第 1 页 10 行，
-筛选下拉确为统一组件（宿主 `display:none`、占位「请选择操作类型」）。截图见
-`/tmp/intf_shot/`（一次性证据，随时可丢）。
+筛选下拉确为统一组件（宿主 `display:none`、占位「请选择操作类型」）。
+截图已归到 `publish/output/弹窗实拍-2026-09-21/`（该目录 gitignore）。
+⚠️ **这次实测验的是「渲染」，不是「请求参数对不对」**：两个新接口在离线代理里都是**宽松匹配**回放的
+（请求体与录制时不同，代理会回同接口最近一条并打警告），所以「表渲染出来了」不等于「我传的参数是对的」——
+遗留第 1 条就是这么被盖住的。
 
 **两个口径（用户 2026-09-21 拍板，别再"补全"）**：
 - **`operationType` 只映射有证据的 5 个**（12 删除 / 43 修改 / 45 新增 / 50 CHECKIN / 52 CHECKOUT）。
@@ -80,19 +85,31 @@
 - **弹窗里不放水印、不做红色主按钮**：参考截图是**原系统**的样子；用户明确「风格按我这个项目」，
   所以主按钮走 `.filled`（动作蓝）、无水印、弹窗宽度走 `.dialog--*` + 类选择器。
 
-**接口要点（抓包确认，一个字段没猜）**：
+**接口要点（抓包确认；唯一没有证据的是 `sysServeNo` 的形态，见遗留 1）**：
 - `POST /itamp-tool/intfcMgmt/serviceChildList` body `{ dataId, sysServeNo }` → 一次回 5 张表
   `childReqList / childRespList / revisionList / interfaceModifyList / deployList`；
-  `dataId` = 发布行 `publishId`、`sysServeNo` = 行里 `sysServeNo` 原值（都在 30 行真实缓存里核对过）。
+  `dataId` = 发布行 `publishId`（该字段在发布行里真实存在，且抓包里两个接口传的是同一个 UUID）。
 - `POST /itamp-tool/operation/getOperationRecordList` body `{ operationType, pageNum, pageSize, publishId }`，
-  **服务端分页**（真实 total=21 → 3 页）。
+  **服务端分页**（真实 total=21 → 3 页）。这条的参数口径是**实打实**的：
+  同一次会话的对照就在 HAR 里（请求体三个字段与响应 total 都能对上）。
 
-**遗留（如实说，均不影响使用）**：
-1. 「文档级修订记录」这次抓包里是**空数组**，列名按兄弟表 `interfaceModifyList` 的键口径取；
-   `revisionList` 有数据后要**再对一次字段**（该表是否真的同名同义没证据）。
-2. `serviceChildList` **没有进** `analysis/output/接口文档.md`（那份只覆盖 getOperationRecordList），
+**遗留（按「该先验」的顺序排）**：
+1. ⚠️ **`sysServeNo` 该传什么形态，没有证实**（12:19 用户问「最没把握的是什么」时复核发现的，
+   比下面两条都严重）：HAR 里 `serviceChildList` 收到的是 **`E00306MG0001-queryPreviousTransaction`**
+   （**带短横线、后半段是方法名**），而发布列表 35 行真实数据的 `sysServeNo` **全是纯编号**
+   （`E00301TO1200` 这种，无短横线）—— 两边**不是同一种形态**；而那份 HAR **没有发布列表请求**，
+   无法把「某一行」与「随后的 body」对上，所以判定不了该传什么。两种可能都成立：
+   ① 后端要「编号-接口编码」拼接（那行该拼 `E00301TO1200-ObsSDTotalTransQuotaQry`）；
+   ② 那个服务的 `sysServeNo` 本身就带后缀（那原值就是对的）。**现按「原值」传。**
+   若错了，表现是**打开弹窗后整表为空、或拿到别的服务的数据，且不报错** ——
+   而我的离线实测会被**宽松匹配**掩盖成「看起来对了」。
+   **一次抓包即可定案**：同一次会话里先查发布列表、再点开那一行的「接口明细」，两个请求一起抓。
+   `tool-api.js` 与 `intf-detail-dialog.js` 的注释已按此标注（别再把这条读成"已核对"）。
+2. 「文档级修订记录」这次抓包里是**空数组**，列名按兄弟表 `interfaceModifyList` 的键口径取；
+   `revisionList` 有数据后要**再对一次字段**（写错只会整列显示「—」，不报错）。
+3. `serviceChildList` **没有进** `analysis/output/接口文档.md`（那份只覆盖 getOperationRecordList），
    字段以 `publish-dialog-model.js` 的列定义为准 —— 已在模型文件头注明，别去文档里找。
-3. 抓包已归档到 `analysis/har/操作记录和接口明细.har`（该目录 gitignore，本地留档）。
+4. 抓包已归档到 `analysis/har/操作记录和接口明细.har`（该目录 gitignore，本地留档）。
 
 **下一步给谁**：无锁定。`TODO.md` 里仍等外部条件的那几条没动。
 
