@@ -40,6 +40,36 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-21 18:35] 主会话 —— 与 origin/dev 同步（合并，双方内容都保留）
+
+**触发**：用户「远端刚推了一个到 dev，看看能否合并，保留两者」。
+
+**差异**：本地领先 4（两份测试报告 + 13:25 那轮修复），远程领先 5
+（`55f656c..b787120`，全是「操作记录」弹窗的 operationType 编码映射补全 37 → 50 条）。
+`git merge origin/dev` → **只有 `CHANGELOG.md` 冲突**（双方都是往顶部追加记录，第三次同一原因）。
+
+**冲突解决**：按「新在上」重排 —— 远程 17:10 / 16:47 在前，本机 13:25 在后，
+其余条目一条不删。备份在 `%TEMP%/CHANGELOG.before-merge2.bak`。合并提交 `7b812e1`。
+
+**验证（合并后逐个确认，不是"看着对"）**
+- `git diff origin/dev HEAD --stat` 只列出**本机侧**改的 13 个文件 ——
+  远程改的 `publish-dialog-model.js` / `op-record-dialog.js` / 两个 test / `memory.md`
+  **不在差异里**，即与远端逐字节一致，远程改动完整保留；
+  `publish-dialog-model.js` 里 operationType 映射实测 **50 条**。
+- 本机侧改动也逐项确认在位：`query-feedback.js` 的 `isAuthError`、
+  `proxy.js` 的 `truncated`、`shared/README.md` 的「备份与恢复」、
+  `publish.html` 的 `#failBar`、`subscription.html` 的 `min(600px, 92vw)`、
+  `theme.css` 死规则已删（仅剩说明注释）。
+
+**门禁原话（合并后重跑，因为远程改了模型与冒烟脚本）**：
+`node tests/run.js` → `614/615 通过`（唯一失败仍是 Windows `execFileSync` 的 `spawnSync EBUSY`
+环境错误）；`node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**状态**：本分支领先 `origin/dev` **5 个提交、0 落后**，**未推送**。
+若要回到 `dev`，需 `git push origin HEAD:dev`（本分支含 1 个 merge 提交，dev 会变成非线性但内容无损）。
+
+**下一步**：无锁定。
+
 ### [2026-09-21 17:10] 主会话（承上条：反推补映射 37 → 50 条）
 
 **分支**：`dev`。**用户答复**：上一条遗留 2 问的「要不要继续挖」→「反推的填上，标上注释就行」。
