@@ -908,9 +908,12 @@ const server = http.createServer((req, res) => {
   }
 
   // 订阅页「批量修改批次时间」的本地落盘（不走 ITAMP 后端）。
-  // 存到 config/batch-times.json：页面可直接读写，也可手改该文件。
+  // 存到 **shared/batch-times.json**（BATCH_TIMES_DEFAULT，可用 PROXY_BATCH_TIMES_FILE 改），
+  //   **不是** publish/config/batch-times.json —— config/ 在代码目录里，重新部署会被新包里的
+  //   空文件盖掉，所以 2026-09-20 迁到 shared/，旧文件首次使用时自动搬过来（留着当备份）。
+  //   （2026-09-21 更正本注释：原来这里写的是迁走前的旧路径，会把人带错。）
   //   GET  /local/batch-times → { code:200, data:{ batchTimes:{...} } }
-  //   POST /local/batch-times   body { batchTimes:{...} } → 写回文件
+  //   POST /local/batch-times   body { batchTimes:{...} } → 按键合并后写回文件
   if (cachePath === '/local/batch-times') {
     const FILE = batchTimesFile();
     // 老位置（publish/config/）的文件第一次用到时**复制**过去，不删原文件（留着当备份）——
