@@ -985,14 +985,9 @@
       $('#filterToggle').setAttribute('aria-expanded', String(!collapsed));
     });
 
-    // 更多筛选项
-    $('#btnToggleAdvanced').addEventListener('click', () => {
-      const body = $('#advancedFields');
-      const open = body.style.display !== 'none';
-      body.style.display = open ? 'none' : '';
-      $('#btnToggleAdvanced').style.transform = open ? 'rotate(-90deg)' : '';
-      $('#btnToggleAdvanced').setAttribute('aria-expanded', String(!open));
-    });
+    // （2026-09-22 删除）原来这里有「更多筛选项」的折叠开关：用户拍板去掉折叠、
+    // 直接把 #advancedFields 平铺出来，所以 `#btnToggleAdvanced` 元素与这段绑定一并删掉。
+    // 注意别再顺手把它加回来 —— HTML 里没有那个按钮了，addEventListener 会直接抛。
 
     // 快速筛选
     document.querySelectorAll('#callerQuick .filter-quick-btn').forEach((b) => {

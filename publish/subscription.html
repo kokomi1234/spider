@@ -349,7 +349,7 @@
                 aria-expanded="true" aria-controls="filterBody">▼</button>
       </div>
       <div class="card-body" id="filterBody">
-        <!-- 常用条件：调用方系统 + 两个批次。其余全部收进「更多筛选项」。 -->
+        <!-- 常用条件：调用方系统 + 两个批次。其余条件在下面平铺（2026-09-22 起不再折叠）。 -->
         <div class="form-grid">
           <div class="form-group">
             <label for="f_callerCompNum" class="required">调用方系统/分行</label>
@@ -365,14 +365,8 @@
           </div>
         </div>
 
-        <!-- 更多筛选项（默认隐藏） -->
-        <div class="more-head">
-          <button type="button" class="chevron" id="btnToggleAdvanced"
-                  aria-expanded="false" aria-controls="advancedFields"
-                  style="transform: rotate(-90deg);">▼</button>
-          <span class="more-head-title">更多筛选项</span>
-        </div>
-        <div class="form-grid" id="advancedFields" style="display:none;">
+        <!-- 其余筛选条件（2026-09-22 用户拍板：删掉「更多筛选项」折叠头，直接平铺展开） -->
+        <div class="form-grid" id="advancedFields">
           <div class="form-group">
             <label for="f_providerCompNum" class="required">提供方系统</label>
             <select id="f_providerCompNum" placeholder="请输入或选择提供方系统"></select>
