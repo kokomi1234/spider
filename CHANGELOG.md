@@ -37,6 +37,41 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-21 12:50] 主会话（发布 stable-20260921）
+
+**动作**：dev 跑全门禁（`615/615 通过` + 冒烟 `ALL PASS`）→ `git checkout main && git merge dev`
+（产出合并提交 `762f97b`；核对 `main^{tree}` == `dev^{tree}`，逐字节相同）→ `git tag stable-20260921`
+（标签信息里抄了门禁原话 + 已知未验证项）→ `main` / `dev` / 标签各自 push，**三条已同步**。
+交付包在外层 `/Users/a1/Desktop/spider/`。
+
+**这一版包含**（相对 `stable-20260920-4` = `f4b2f7e`，5 个提交）：
+1. `feat(发布查询页)`：结果行新增「接口明细」「操作记录」两个弹窗（接口明细 5 个 tab、
+   一次请求拿全；操作记录服务端分页 + 按操作类型筛选）。
+2. `fix(首页常用查询)`：点「导 出」必抛 `ReferenceError`（`items` 取不到）→ 用户看到的是
+   「⚠️ 页面出现异常」而不是「已导出 N 条」。来源 `23ad36e`，**一直没暴露是因为测试从没点过这个按钮**。
+3. 清掉「常用查询存在本机 localStorage」时代的过时文案（可见的两处在空态，其余是注释与 README）。
+
+**⚠️ 发布流程更正（AGENTS.md 0.5、`MEMORY.md` 同改，别再照旧写法办事）**：
+原先写的 `git merge --ff-only dev` **在这个仓库上必然失败** —— `main` 上每次发布都留一个 merge
+commit，那些 commit 不在 `dev` 里，所以 `main` 永远不是 `dev` 的祖先。但 `git log main --not dev`
+列出的**全是合并提交、没有一行内容改动**，`main^{tree}` 与上一版 `dev` 的树逐字节相同：
+**内容一致，只是历史形状不同**。恢复快进形状只能 force-push `main`（同事 clone 的正是这条线）→ 不许。
+现改为 `git merge dev`，并把「发版记录先落 `dev`、下次发布才带进 `main`」这个既有事实写进 AGENTS.md。
+
+**打包（按约定，别用 `git archive`）**：`git checkout-index -a -f --prefix=/tmp/pkg_src/`
+铺出工作树 → Python `zipfile` 打包（非 ASCII 名自动置 UTF-8 标志）：
+- `spider-stable-762f97b-20260921.zip`（248 个文件，4.1 MB）
+- `spider-history-762f97b-20260921.bundle`（4.9 MB）
+**验收**：真解压到 `/tmp/pkg_verify` → 核对 10 个中文文件名无乱码 → **在解压目录里跑全套门禁**
+（`615/615 通过` + 冒烟 `ALL PASS`）。两条都过了才算交付。
+
+**已知未验证项（写进标签信息了，用户说"小问题、等下抓包"）**：「接口明细」请求体的 `sysServeNo`
+形态未证实（HAR 里是 `E00306MG0001-queryPreviousTransaction`，发布列表 35 行却是纯编号）
+→ 形态若错，弹窗整表为空或拿到别的服务的数据且不报错。定案只差一次「先查发布列表、
+再点开该行接口明细」的连续抓包。
+
+**下一步给谁**：无锁定。
+
 ### [2026-09-21 12:45] Agent-Dev（主会话）—— 清掉「常用查询存在本机」的过时文案 + 修掉导出必报错
 
 **任务**：用户「把一些过时的页面文本删除，比如常用查询的那个文本提醒，我已经不在 localStorage
