@@ -288,17 +288,15 @@
       : ($('#f_prodBatch')?.value || '').trim();
   }
 
-  // 必填校验失败时的聚焦：只点击「查询」时主动聚焦；输入框按回车不抢焦点
-  function focusProvider() {
-    const el = providerSelectInstance
-      ? document.querySelector('#f_provideSystemNumber + div .searchable-select-input')
-      : $('#f_provideSystemNumber');
-    if (el) el.focus();
-  }
-  function focusBatch() {
-    if (!batchSelectInstance) return;
-    const el = document.querySelector('#f_prodBatch + div .searchable-select-input');
-    if (el) el.focus();
+  // 「没限定批次」时的二次确认（系统/批次 2026-09-21 起都已非必选，
+  // 但那种查询会跨批次回数据、结果集可能很大，所以查之前先问一次）。
+  // 与 home.js 的 askConfirm 同一手法：优先用站内 DialogUtils.confirmBox（样式统一、可拖拽），
+  // 没有它时退回原生 confirm。返回 Promise<boolean>。
+  function askConfirm(opts) {
+    const o = opts || {};
+    const D = window.DialogUtils;
+    if (D && typeof D.confirmBox === 'function') return D.confirmBox(o);
+    return Promise.resolve(window.confirm(`${o.title || '请确认'}\n\n${o.message || ''}`));
   }
 
   // ── 收集要发给后端的请求体 ──────────────────────────
@@ -437,8 +435,7 @@
     getDeptValue,
     getProviderValue,
     getBatchValue,
-    focusProvider,
-    focusBatch,
+    confirm: askConfirm,
     fillDeptListFromRows,
     showToast,
     showLoading,
@@ -510,7 +507,7 @@
     state.pageNum = 1;
     state.currentFilter = 'all'; // 重置筛选状态
     setFilter('all');
-    PublishQuery.doQuery({ focusMissing: true });
+    PublishQuery.doQuery();
   });
 
   btnReset.addEventListener('click', resetForm);
@@ -737,7 +734,7 @@
     state.pageNum = 1;
     state.currentFilter = 'all';
     setFilter('all');
-    PublishQuery.doQuery({ focusMissing: false });
+    PublishQuery.doQuery();
     return item;
   }
 
@@ -889,7 +886,7 @@
     // 而 loading 遮罩的 z-index 比弹窗高，用户看到的是「填着表突然整页转圈」。
     // 判据用 .overlay.show —— 全站弹窗（含 dialog-utils 动态建的那种）都带这两个类。
     if (document.querySelector('.overlay.show')) return;
-    PublishQuery.doQuery({ focusMissing: false });
+    PublishQuery.doQuery();
   });
 
   /** 初始化页面加载状态 */

@@ -3633,7 +3633,8 @@ const PAGES = [
 
   // ═══════════════════════════════════════════════════════════════
   // 必填标记（C5）：.required 的星号规则已从 publish.html 的页面样式提到 theme.css 共享。
-  // 断言首页的星号没被改坏（回归），且订阅页查询表单的「二选一必填」有标记 + 说明。
+  // 2026-09-21 起发布页的「系统 / 批次」改为**非必选**（星号撤掉，校验换成查询前的二次确认），
+  // 所以这里守两点：发布页**不该**再出现 .required；订阅页查询表单的「二选一必填」标记 + 说明仍在。
   // ═══════════════════════════════════════════════════════════════
   {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
@@ -3647,7 +3648,7 @@ const PAGES = [
     try {
       await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(700);
-      const idx = await star('label.required');
+      const pubReq = await star('label.required');
 
       await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(700);
@@ -3657,11 +3658,11 @@ const PAGES = [
         const n = document.querySelector('.filter-required-note');
         return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       });
-      process.stdout.write(`  必填标记(C5): 发布页=${JSON.stringify(idx)} 调用方=${JSON.stringify(caller)}`
+      process.stdout.write(`  必填标记(C5): 发布页=${JSON.stringify(pubReq)} 调用方=${JSON.stringify(caller)}`
         + ` 提供方=${JSON.stringify(provider)} 说明=${JSON.stringify(note)}\n`);
       const hasStar = (x) => !!x && !x.missing && String(x.content).indexOf('*') > -1;
-      if (!hasStar(idx)) {
-        fails.push(`发布页必填星号丢了（.required 规则搬到 theme.css 后失效？）实际 ${JSON.stringify(idx)}`);
+      if (pubReq && !pubReq.missing) {
+        fails.push(`发布页不该再有必填星号（系统/批次已改为非必选），实际 ${JSON.stringify(pubReq)}`);
       }
       if (!hasStar(caller)) fails.push(`订阅页「调用方系统/分行」应带必填星号，实际 ${JSON.stringify(caller)}`);
       if (!hasStar(provider)) fails.push(`订阅页「提供方系统」应带必填星号，实际 ${JSON.stringify(provider)}`);
