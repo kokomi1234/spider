@@ -349,8 +349,11 @@
                 aria-expanded="true" aria-controls="filterBody">▼</button>
       </div>
       <div class="card-body" id="filterBody">
-        <!-- 常用条件：调用方系统 + 两个批次。其余条件在下面平铺（2026-09-22 起不再折叠）。 -->
-        <div class="form-grid">
+        <!-- 2026-09-22：删「更多筛选项」折叠后，这里曾是**两个独立的 form-grid**（常用 3 个 +
+             其余 10 个）。auto-fill 各自算列，两块的列宽/间隔对不齐，用户报「布局很不协调」。
+             合并成一个网格：常用条件在前，13 个字段同一套列宽与间隔。 -->
+        <div class="form-grid" id="advancedFields">
+          <!-- 常用条件：调用方系统 + 两个批次 -->
           <div class="form-group">
             <label for="f_callerCompNum" class="required">调用方系统/分行</label>
             <select id="f_callerCompNum" placeholder="请输入或选择调用方系统/分行"></select>
@@ -363,10 +366,8 @@
             <label for="f_providerBatch">提供方最新变更批次</label>
             <select id="f_providerBatch" placeholder="请输入或选择变更批次"></select>
           </div>
-        </div>
 
-        <!-- 其余筛选条件（2026-09-22 用户拍板：删掉「更多筛选项」折叠头，直接平铺展开） -->
-        <div class="form-grid" id="advancedFields">
+          <!-- 其余筛选条件 -->
           <div class="form-group">
             <label for="f_providerCompNum" class="required">提供方系统</label>
             <select id="f_providerCompNum" placeholder="请输入或选择提供方系统"></select>
