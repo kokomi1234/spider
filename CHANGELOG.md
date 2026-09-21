@@ -80,21 +80,37 @@
 `countByStatus` 的 failed 改成 `(下线) + (已下线)` 两口径都认。
 
 **5）CHECKOUT/IN 状态改为可选**（用户拍板「去掉禁用 + 给选项值」）
-- `dict-selects.js`：去掉 `disabled: true`，选项 = 全部 / CHECKOUT / IN；
+- `dict-selects.js`：去掉 `disabled: true`，选项 = **全部 / CHECKOUT / CHECKIN**；
   `publish.html` 上的 `disabled` 属性也删了（否则组件降级到原生下拉时这栏仍不可用）。
 - 下发方式（**关键设计，别改回去**）：**只在用户选了具体值时才把 `checkOutInStatus` 塞进 body**，
   不写进 `FIELDS` / `API_BODY_DEFAULTS`。理由：那两处是「17 个字段一个不少」的契约，
   而代理缓存 key = `sha1(method+path+query+body)`，多一个字段会让 `publish/cache/`
   里**所有已录制条目失效**。实测：默认「全部」时字段数仍是 17、不含该字段；
   选 CHECKOUT 时为 18、含该字段。
-- ⚠️ **参数名 `checkOutInStatus` 与取值 CHECKOUT / IN 都没有抓包实证**，
-  是按字段名直译 + 用户知情拍板。将来拿到抓包要按实证修正。
+- **取值由用户直接告知（不需要抓包）：CHECKOUT / CHECKIN**。
+  参数名 `checkOutInStatus` 仍无抓包实证（见下），按字段名直译。
+
+**6）用户给的 `temp.har` 核对结论（2026-09-21 19:35）**
+- `getPublishDataList` 的**真实请求体就是那 17 个字段**，与 `collectApiBody` 产出**逐字段一致**
+  （`compNum / batch / serverCodingList / serviceName / callerComponent / subscriberStatus /
+  isChecked / isSendOutsideSystem / principal / principalName / serviceStatus /
+  sysServeNoList / sysServeNo / deptId / implementationUnit` + `pageNum / pageSize`）。
+- **抓包里没有 CHECKOUT/IN 相关字段**，也没有对应字典：响应 122 个字段里无 `checkOutInStatus`；
+  `codeValueList` 只返回 `productionBatch` 一种码表（295 条）；
+  `getDropDownList` 只回 MCIS/context/IPS/gateway 四个空数组。
+  → 说明该参数名**无法从抓包证实**，只能等用户下次点选它筛一次再抓。已如实标注在代码注释里。
+- 该 har 已用 `tools/har-import.js` 导入本机 `publish/cache/`（39 条，**该目录 gitignore，不入库**），
+  于是本轮修复终于能用**真实数据**端到端验证：
+  发布页打开即请求 `getInformationProdBatch`（`X-Cache-Match: exact`），
+  服务编号候选实测填出 **5762 项**，前 5 个正是用户截图里的
+  `E00301TP42E9 / E00301TO1182 / E00301TP9067 / E00301TP7806 / E00301TP7418`。
 
 **门禁原话**：`node tests/run.js` → `614/615 通过`（唯一失败仍是 Windows `execFileSync`
 的 `spawnSync EBUSY` 环境错误）；`node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`。
-修复专项验证：前 4 项 `7/7 通过`，CHECKOUT/IN + 服务状态 `9/9 通过`。
+修复专项验证：前 4 项 `7/7`、CHECKOUT/IN 与服务状态 `9/9`；真实数据端到端 5 项全过
+（服务编号 5762 项 / 查询出 10 行 / 弹窗 460px 不裁面板 / 选中「订阅」自动发第二次请求且 `operationType:"2"`）。
 
-**下一步**：无锁定。遗留一条：CHECKOUT/IN 的选项与参数名待抓包实证。
+**下一步**：无锁定。遗留一条：CHECKOUT/IN 的参数名 `checkOutInStatus` 待用户实际筛一次并抓包证实。
 
 ### [2026-09-21 18:35] 主会话 —— 与 origin/dev 同步（合并，双方内容都保留）
 
