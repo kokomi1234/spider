@@ -1,4 +1,4 @@
-# 工时系统 — 页面风格指南
+# ITAMP 数据查询前端 — 页面风格指南
 
 > 设计语言：Material Design 3 风格  
 > 所有页面统一引用 `theme.css`，调整主题色、圆角、间距只需改这一个文件。
@@ -269,7 +269,7 @@ font-family: "Roboto Mono", "Menlo", monospace;
 
 ```css
 .wrap {
-  max-width: 1180px;
+  max-width: var(--page-w);   /* 1500px，见 theme.css 的 :root */
   margin: 0 auto;
   padding: var(--sp3) var(--sp2) var(--sp5);
 }
@@ -338,4 +338,4 @@ font-family: "Roboto Mono", "Menlo", monospace;
 
 ---
 
-*最后更新：2025年*
+*最后更新：2026-09-21*

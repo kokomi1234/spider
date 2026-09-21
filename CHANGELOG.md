@@ -11,6 +11,9 @@
 （无锁定）
 ```
 
+> 上一轮锁定（2026-09-21 20:30 起：清理 md 里的过时信息）
+> **已于 2026-09-21 20:40 完成并解锁**，见下面第一条交接记录。
+
 > 上一轮锁定（2026-09-21 19:40 起：修下拉面板被容器裁切）
 > **已于 2026-09-21 19:55 完成并解锁**，见下面第一条交接记录。
 
@@ -46,6 +49,61 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-21 20:40] Agent-Doc（主会话）—— 清掉文档里的过时信息（**不改任何代码逻辑**）
+
+**触发**：用户「看看还有没有过时的信息在 md 里」→ 并行两路只读审查（根目录 4 份 / publish 侧 7 份），
+逐条回源码核实后分两批修。
+
+**第一批·事实性错误（照做会出错）**
+- `publish/docs/服务订阅关系查询页面设计.md:231` —— 把「提供方变更批次」映射到 `putBatch`，
+  但它是**死字段**（后端忽略）。改为「前端本地过滤」，并点明请求体里的 `prodBatch` 对应的是
+  **调用方**批次筛选。
+- `publish/README.md:258` —— 「22 列 / 左固定 5 列」→ 「**23 列**（22 数据列 + 操作列）/ 左固定 **3 列**」。
+- `ONBOARDING.md:53` + `publish/README.md:193` —— `js/page/index.js` → **`publish.js`**（早就改了名）。
+- `ONBOARDING.md:48` —— api 目录里的 `sys-api` **不存在**，删。
+- `ONBOARDING.md:56` —— `tools/` 里的 `mock-proxy` **已于 09-19 删除**，换成 `backup-queries-db.js`。
+- `.env.example:14` + `publish/js/ui/token-manager.js:30` —— `PROXY_ADMIN_TOKEN` 残留
+  （该变量 **09-20 已整体删除**）。`.env.example` 里那段重写清楚"别再配这个名字"，
+  token-manager 的注释改成"`?token=` 只是可选传参，不是鉴权开关"。
+
+**第二批·会误导（不致命）**
+- `ONBOARDING.md`（3 处）+ `TODO.md:4` —— 把「长期约定必读」指向 **`.workbuddy/memory/MEMORY.md`**，
+  那是**不入库**的本机文件、外部 Agent clone 后看不到 → 一律改指**根目录 `memory.md`**，
+  并说明 `.workbuddy/memory/` 只是本机流水。
+- `AGENTS.md:24` —— 发布流程补上 `git fetch origin main` + `git checkout main && git reset --hard origin/main`
+  （**本地 main 常落后远端**，不重置会漏掉 PR 合进来的提交）与「在 main 上再跑一次门禁」。
+- `AGENTS.md:75` —— 删掉写死的「584」，改为「以实跑为准（2026-09-21 实跑 614/615，
+  唯一失败是 Windows `execFileSync` 的 `spawnSync EBUSY`，环境错误）」。
+- `publish/docs/design-system.md` —— 标题「**工时系统**」→「ITAMP 数据查询前端」；
+  `最后更新：2025年` → `2026-09-21`；`.wrap max-width: 1180px` → `var(--page-w)`（1500px）。
+- `publish/docs/订阅预演台使用说明.md:73` —— 「30 种输入」与同文「32 项」自相矛盾，统一为 32。
+- `ONBOARDING.md` —— chromium 缓存路径补 Windows 位置（原文只有 macOS 路径）；
+  `.opencode` / `.workbuddy-ai` 改成"**clone 后不会有**，别当成必然存在"；
+   `shared/` 补上 `batch-times.json`（09-20 从 `publish/config/` 搬来）。
+
+**第三批·历史文档只加标注、不重写原稿**（保留当时现场）
+- `UI体验优化清单-2026-09-16.md` 文首标注：文中建议「补 `title`」**已被推翻**
+  （2026-09-21 拍板界面不写提示文字）、`index.js` 已改名、列数 22→23、
+  `col-name`/`col-coding` 规则已删、弹窗高度与面板裁切已统一处理。
+- `服务订阅关系查询页面设计.md` 文首补「本文是 v1.0 原稿，正文多处过时」+ 已知过时项清单。
+- `模块化方案评估.md` 文首补「下文数字都是 2026-09-16 快照（190/194 单测、三页），
+  现状见实跑；结论仍有效，但别引用数字」。
+
+**顺带修**：`memory.md`（我 20:25 压缩时漏改的一处）——「随交付包发」与「不要交付包」矛盾，已删。
+
+**遗留（本轮**故意没动**）**
+- `publish/docs/服务订阅关系查询页面设计.md` 正文里那份**脚本清单含不存在的 `js/api/sys-api.js`**，
+  且缺 `bootstrap.js` 等；已在文首标注「以代码为准」，但**没有逐行重写**（那是整段替换，
+  收益低于风险）。要用该清单时请直接对照 `subscription.html` 的实际 `<script>`。
+- 源码里仍有 **`title` 悬停提示残留**（`searchable-select.js:124` 清除按钮、`multi-select.js:66/97`、
+  `subscription-view.js:153/158/163`、几个表格截断单元格）。若「界面不写提示文字」是最终口径，
+  这些是**待清理项** —— 本轮只修文档，没动代码，等用户表态。
+
+**门禁原话**：`node tests/run.js` → `614/615 通过`；`node tests/smoke-browser.js` →
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。本轮仅动文档与一处注释，无逻辑改动。
+
+**下一步**：无锁定。
 
 ### [2026-09-21 20:10] Agent-Dev（主会话）—— 用外部资料核对两个弹窗（**无代码改动**）
 

@@ -21,8 +21,11 @@
 - **`main` = 稳定线**：只放验收过的代码，**HEAD 永远是可以直接跑的状态**。同事 `git clone` 下来默认就在 `main`，
   所以任何"做了一半"的东西都不许出现在这里。
 - **`dev` = 开发线**：**所有 Agent 的日常改动一律在 `dev` 上提交。**
-- 发布动作（只有主会话/用户做）：dev 上跑全门禁 → `git checkout main && git merge dev`
-  → `git tag stable-YYYYMMDD -m "门禁原话 + 这一版包含什么"` → 两条线 + 标签各自 push。
+- 发布动作（只有主会话/用户做）：dev 上跑全门禁 → `git fetch origin main` →
+  `git checkout main && git reset --hard origin/main`（**本地 main 常落后远端**，
+  不重置就会漏掉 GitHub 上 PR 合进来的提交）→ `git merge <工作分支> --no-edit`
+  → **在 `main` 上再跑一次门禁** → `git tag stable-YYYYMMDD -m "门禁原话 + 这一版包含什么"`
+  → 两条线 + 标签各自 push → 切回工作分支。
   ⚠️ **别写 `--ff-only`**（2026-09-21 更正）：`main` 上每次发布都会留下一个 merge commit，
   那些 commit 不在 `dev` 里，所以 `main` 永远**不是** `dev` 的祖先，`--ff-only` 必然失败。
   实测依据：`git merge-base --is-ancestor main dev` 返回非 0，而 `git log main --not dev`
@@ -72,7 +75,9 @@ node tests/smoke-browser.js  # 无头浏览器冒烟，必须打印 "ALL PASS"�
 ```
 或一次跑完：`npm run test:all`。
 
-**本文件不刻死用例条数**（2026-09-20 写下的"572"当天就过期了：并行加用例后实跑已是 584）。
+**本文件不刻死用例条数**（一写就会过期：2026-09-20 写的"572"当天就变成了 584；
+截至 2026-09-21 实跑是 614/615——唯一失败项是 Windows 下 `execFileSync` 的 `spawnSync EBUSY`，
+属环境错误，非代码问题）。**一律以实跑输出为准。**
 一律以 `node tests/run.js` 的实跑输出为准；写交接记录时抄原话，不要凭记忆填数字。
 
 新增单测文件**必须在 `publish/tests/run.js` 里 require 注册**，否则根本不会被跑。
