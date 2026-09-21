@@ -647,6 +647,9 @@
     const res = await window.ToolApi.fetchProdSysServeNoList(caller);
     if (!res.ok) {
       console.warn('[subscription] 调用方服务编号加载失败:', res.error);
+      // 2026-09-21 补：失败要让用户在页面上看见。原先只 console.warn，
+      // 下拉静默为空、面板写「没有匹配项」，用户分不清「业务上没数据」和「接口挂了」。
+      toast('⚠️ 调用方服务编号选项加载失败，可重新选择或稍后再试', 4000, 'warn');
       return;
     }
     multiSelects.prodSysServeNo.setOptions(
@@ -669,16 +672,22 @@
       window.ToolApi.fetchInformationProdBatch(compNum),
       window.ToolApi.fetchInformationServerCoding(compNum),
     ]);
-    const toOpts = (res) => {
-      if (!res || !res.ok || !Array.isArray(res.list)) return [];
+    // toOpts 遇到「请求失败」要记下来：这种空是**故障**，不是「本来就没数据」。
+    // 两者在界面上都表现为下拉为空，不给提示的话用户会一直去调筛选条件。
+    const failed = [];
+    const toOpts = (res, label) => {
+      if (!res) { failed.push(label); return []; }
+      if (!res.ok) { failed.push(label); console.warn(`[subscription] ${label}加载失败:`, res.error); return []; }
+      if (!Array.isArray(res.list)) return [];
       return res.list
         .map((it) => (typeof it === 'string'
           ? { value: it, label: it }
           : { value: String(it.value ?? it.label ?? ''), label: String(it.label ?? it.value ?? '') }))
         .filter((o) => o.value);
     };
-    if (multiSelects.sysServeNo) multiSelects.sysServeNo.setOptions(toOpts(b));
-    if (multiSelects.serverCoding) multiSelects.serverCoding.setOptions(toOpts(c));
+    if (multiSelects.sysServeNo) multiSelects.sysServeNo.setOptions(toOpts(b, '提供方服务编号'));
+    if (multiSelects.serverCoding) multiSelects.serverCoding.setOptions(toOpts(c, '接口编码'));
+    if (failed.length) toast(`⚠️ ${failed.join('、')}选项加载失败，可重新选择或稍后再试`, 4000, 'warn');
   }
 
   // ═══════════════════════════════════════════════════

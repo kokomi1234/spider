@@ -117,15 +117,39 @@ POST 是幂等 upsert，不是「直接覆盖」：
 一份代理、多人连它，而不是一个文件多人写。
 （SQLite 官方也警告网络文件系统上的锁实现常不可靠，见其 FAQ。）
 
+## 备份与恢复（⚠️ 别直接 cp 那个 .db）
+
+`saved-queries.db` 是 **WAL 模式**，最近的写入都还在 `saved-queries.db-wal` 里，
+主库文件本身可能只有几 KB。2026-09-21 实测：主库 4 KB、`-wal` 1.79 MB，
+**只拷 `.db` 一个文件打开会报 `no such table: saved_queries`** —— 连表都没有，数据全丢。
+代理进程被强杀后 WAL 也不会自动合并回主库。
+
+**正确做法：用现成的备份脚本**（走 SQLite `VACUUM INTO`，产出**自包含的单文件**）：
+
+```bash
+cd publish
+node tools/backup-queries-db.js                  # 备份到 shared/backups，默认保留 14 份
+node tools/backup-queries-db.js --keep 30         # 保留 30 份
+node tools/backup-queries-db.js --out /data/bk    # 换目录
+```
+
+**恢复**：
+1. 停掉代理；
+2. 用选中的 `saved-queries-YYYYMMDD-HHMMSS.db` 覆盖 `shared/saved-queries.db`；
+3. **删掉同目录的 `-wal` / `-shm`** —— 那是旧库的残页，留着会被当成新库的一部分。
+
+真要手工拷贝，必须连带 `-wal` 和 `-shm` 三个文件一起搬，且拷贝期间没有写入。
+
 ## 默认只绑本机，共享要显式打开
 
 `proxy.js` 默认 `listen(PORT, '127.0.0.1')`：这台机器以外访问不到。
-要让同事连同一份代理，在根目录 `.env` 里设 `PROXY_HOST=0.0.0.0`，
-**并同时设 `PROXY_ADMIN_TOKEN`** —— 否则 `/local/*`、`/cache/*` 谁都能读写
-（代理的 CORS 是 `*`，不设 token 时同网段任意网页也能 POST 进来改这份团队库）。
-设了 token 之后，前端「常用查询」的同步请求不带 token，会退化成角标显示
-「同步失败：HTTP 401」并用本机数据 —— 那种场景下请让同事各自连同一份带 token 的代理时
-一并配好，或干脆保持默认只绑本机 + 用导 出/导 入交换。
+要让同事连同一份代理，在根目录 `.env` 里设 `PROXY_HOST=0.0.0.0`。
+
+⚠️ **注意：`/local/*`、`/cache/*`、`/admin/*` 目前完全不鉴权，且 CORS 是 `*`**
+—— 同网段任何人都能读光、改写、删空这份团队库，也能一键清空录制缓存。
+这是 2026-09-20 用户拍板的选择（内网自用、一台部署），**不是漏配**。
+（更早版本有过 `PROXY_ADMIN_TOKEN` 开关，**已在 2026-09-20 整体删除**，别再照旧文档去设它；
+现在要收窄只能设 `PROXY_HOST=127.0.0.1` 只绑本机。）
 
 > 历史：2026-09-19 之前用的是 `publish/config/saved-queries.json`。
 > 首次落成库时会自动把那里的旧记录迁进来，旧文件保留不动，确认不用后可自行删除。

@@ -341,7 +341,7 @@
     <div class="page-header" data-page-node-id="FPYoXuuCWbBl5BcZuPWDmq">
       <h1 data-page-node-id="Vs6PSQHztyrq1Pz3b1FCGl">服务发布数据查询</h1>
       <div class="toolbar" data-page-node-id="1i97TQGjWUfhcJ3s98xG11">
-        <a class="outlined btn-sm" href="/" id="navHome">← 首页</a>
+        <a class="outlined btn-sm" href="/home" id="navHome">← 首页</a>
         <button class="outlined btn-sm" id="btnSubscribePanel" data-page-node-id="SOtRYG9cXoPuN2nWwAS4BD">已订阅 (0)</button>
         <a class="outlined btn-sm" href="/task" data-page-node-id="navTaskPage">任务单查询</a>
         <a class="outlined btn-sm" href="/subscription">服务订阅关系查询</a>
@@ -501,6 +501,13 @@
       <!-- 缓存回放告警：本地代理用旧录制数据顶替当前查询时出现，避免把回放数据当成真实结果 -->
       <div class="cache-replay-bar" id="cacheReplayBar" role="status" aria-live="polite" style="display:none;" data-page-node-id="cacheReplayBar">
         <span id="cacheReplayText"></span>
+      </div>
+      <!-- 查询失败常驻条：toast 几秒就消失，失败原因必须留在页面上。
+           2026-09-21 补：此前只有 task / subscription 两页有它，发布页查询失败
+           只剩一句 5 秒 toast，错过就分不清「失败」和「没数据」。
+           结构、class、id 与另两页一致，直接复用 QueryFeedback.showQueryFail。 -->
+      <div class="retry-bar fail-bar" id="failBar" role="status" aria-live="polite" style="display:none;">
+        <span class="retry-text" id="failText"></span>
       </div>
       <!-- 失败分页重试条：仅部分后端分页拉取失败时出现。
            放在**表格上方**（原来在分页条下面，几乎没人注意到，失败了也不知道可以重试） -->
@@ -965,9 +972,6 @@
 
   <!-- Toast -->
   <div class="toast" id="toast" data-page-node-id="UEBkrSRybBSuS6gMq4gIBY"></div>
-
-  <!-- 隐藏的文件上传 input（批量导入用） -->
-  <input type="file" id="fileImport" accept=".txt,.csv,.json" style="display:none;">
 
   <!--
     脚本顺序不能随意调整：各模块是 IIFE，加载时就把 window.X 取进闭包，

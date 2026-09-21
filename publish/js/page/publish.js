@@ -146,6 +146,10 @@
   const QF = () => window.QueryFeedback || { setLoading() {} };
   function showLoading()  { QF().setLoading(true); }
   function hideLoading()  { QF().setLoading(false); }
+  // 查询失败常驻条（#failBar / #failText），与 task / subscription 两页同一套。
+  // 2026-09-21 补：发布页此前只有 5 秒 toast，失败原因一晃就没了。
+  function showQueryFail(reason) { QF().showQueryFail(reason, false); }
+  function hideFail() { QF().hideFail(); }
 
   // Toast 公共实现见 js/ui/toast.js（三页共用；本地保留 showToast 这个名字）
   const showToast = (...a) => (window.toast || (() => {}))(...a);
@@ -429,6 +433,8 @@
     showToast,
     showLoading,
     hideLoading,
+    showQueryFail,
+    hideFail,
     debugLog,
   });
 

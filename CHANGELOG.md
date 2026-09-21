@@ -11,6 +11,9 @@
 （无锁定）
 ```
 
+> 上一轮锁定（2026-09-21 13:05 起：修复测试报告里仍存在的 8 个问题）
+> **已于 2026-09-21 13:25 完成并解锁**，见下面第一条交接记录。
+
 > 「常用查询过时文案」那一轮（2026-09-21 12:30 起）**已完成并解锁**，见下面第一条交接记录。
 
 > 上一条锁定（2026-09-21 11:40 起：发布查询页结果行新增「接口明细」「操作记录」两个弹窗）
@@ -36,6 +39,54 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-21 13:25] Agent-Dev（主会话，分支 `workbuddy/dev-e2d2ccd2`）—— 同步 + 修复测试报告遗留
+
+**任务**：用户要求「拉取最新，看前端和代理端还有这些问题吗，有的话进行修复」。
+
+**同步**：本地 2 个报告提交 vs 远程 6 个提交（`47c4d49..aa0edbe`）已分叉 →
+`git merge origin/dev`，**只在 `CHANGELOG.md` 冲突**（双方都是往顶部追加交接记录），
+按「新在上」重排保留全部条目（远程 12:50/12:45/12:10 在前，我的 01:55/01:45 在后），
+合并提交 `a38e03d`。备份留在 `%TEMP%/CHANGELOG.local.bak`。
+
+**复核结论（下一个 Agent 别重新判断）**
+- **P1-1（首页导出崩溃）已被远程 `19a39f6` 修掉**，别再改。
+- **三条是我此前误报，不是缺陷**，别去"修"：
+  1. P2-3 已订阅面板「选择文件」—— `label[for=importFile]` 正常拉起 filechooser，导入成功；
+     当初我点错了元素。
+  2. P3-3 任务单页 `#pageJump` 无 max —— `task.js:336` 查询后**会**设 `jump.max`；
+     当初我在**无数据状态**下测的，所以是空串。
+  3. P3-4 导入脏数据文案 —— 实测正确（「文件里没有可用的常用查询」）；
+     当初读到的是上一条 toast 的残留。
+  **教训：断言 toast 时要等它刷新（>4s）或先清干净；断言 DOM 属性前先把它驱动到"有数据"状态。**
+
+**本轮改动（8 处，均已实测验证）**
+| 文件 | 改动 |
+|---|---|
+| `shared/README.md` | 新增「备份与恢复」节（WAL 坑 + `tools/backup-queries-db.js` + 恢复三步）；顺带把已删除的 `PROXY_ADMIN_TOKEN` 过时指引改成现状 |
+| `publish/README.md` | 团队共享节加「别直接 cp .db」警告，指向 shared/README |
+| `publish/subscription.html` | `.batch-time-dialog` 的 `min-width` 600px → `min(600px, 92vw)` |
+| `publish/theme.css` | 删 `th.col-name` / `th.col-coding` 死规则（thead 里确实没有这两个 class） |
+| `publish/publish.html` | 删 `#fileImport` 死元素；`href="/"` → `/home`；补 `#failBar` + `#failText` |
+| `publish/js/page/publish.js` | 加 `showQueryFail` / `hideFail` 薄封装并注入 ctx |
+| `publish/js/page/publish-query.js` | 查询开始 `hideFail()`；catch 里 `showQueryFail(errorMsg)` |
+| `publish/js/ui/query-feedback.js` | `shortError` 支持对象型错误（原来对 `{response}` 只吐 `[object Object]`）；新增 `isAuthError` + 401 引导 |
+| `publish/js/page/subscription.js` | 两个字典加载函数失败时 toast（原先只 `console.warn`） |
+| `publish/proxy.js` | `/local/saved-queries` 超 2000 条截断**回传 `truncated`** |
+
+**两个实现上的坑（别踩回去）**
+- 发布页这条链路抛出的错误对象里**没有后端 msg**，`shortError` 只能压出「HTTP 500」。
+  所以 `showQueryFail` 传的是 `errorMsg`（`parseApiError` 已翻译的话），不是原始 `err`。
+- `showQueryFail` 的 401 引导做了去重：文案里已含「Token」就不追加，免得同一句说两遍
+  （`publish-response.js` 的 401 文案本身就写了「请检查 Token 是否有效」）。
+
+**门禁原话**：`node tests/run.js` → `614/615 通过`（唯一失败是 Windows `execFileSync`
+的 `spawnSync EBUSY`，环境问题，时区逻辑已手工验证正确）；
+`node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+修复专项验证 **12/12 通过**（含首页导出、发布页正常查询等回归）。
+
+**下一步**：无锁定。剩余未做的只有**可选**项：发布页 `#failBar` 我没加重试按钮
+（另两页有），需要的话照 `task.html` 补一个 `#btnRetryQuery` 并接 `doQuery`。
 
 ### [2026-09-21 12:50] 主会话（发布 stable-20260921）
 

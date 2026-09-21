@@ -88,6 +88,10 @@ POST /local/saved-queries                        → body { items, deletedIds }�
   个人视图和部门视图一次都能查出来。详见 `shared/README.md`。
 - Node < 22.5 没有 `node:sqlite`：代理会自动**回落 JSON 文件**（`shared/saved-queries.json`），
   功能不残废，只是部门排行退回前端本机计算。首次落成库时会把旧 JSON 的记录迁进去。
+- ⚠️ **备份别直接 `cp shared/saved-queries.db`**：它是 WAL 模式，数据大多还在
+  `.db-wal` 里，只拷主库文件打开会报 `no such table`（实测：主库 4 KB、`-wal` 1.79 MB）。
+  用 `node tools/backup-queries-db.js`（`VACUUM INTO`，产出自包含单文件），
+  恢复步骤见 `shared/README.md` 的「备份与恢复」一节。
 - 要跨机器共享，在根目录 `.env` 里把位置指到一个所有人都能访问的**同一个库**：
   `PROXY_QUERIES_DB=\\nas\share\saved-queries.db`（Windows 网络盘；macOS/Linux 写挂载点路径）。
   同一个文件路径就是同一个团队库。
