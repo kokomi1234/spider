@@ -19,17 +19,30 @@
   'use strict';
 
   /**
-   * 向上找第一个「可滚动」祖先：overflow-y 为 auto|scroll 且确有溢出内容
-   * （scrollHeight 比 clientHeight 多出至少 1px）。没有则返回 null。
-   * 命中它，面板才需要升到 body 逃离裁剪。
+   * 向上找第一个「会把面板裁掉」的祖先盒子；没有则返回 null。
+   * 命中它，面板就升到 body + fixed 逃离裁剪。
+   *
+   * 判定条件：`overflow-x` 或 `overflow-y` **不是 visible**。
+   *
+   * 2026-09-21 改（原实现有两个漏洞，实测导致面板仍被裁 32~57px）：
+   *   ① 原条件只认 `auto|scroll` —— 但 `.op-record-body` / `.intf-body` 是
+   *      `overflow:hidden`，它**比 auto 裁得更死**，却被整条跳过 → 操作记录弹窗的
+   *      筛选下拉底部被裁，最后 1~2 个选项看不见。
+   *   ② 原条件还要求 `scrollHeight > clientHeight + 1`（"确有溢出"）—— 但
+   *      `overflow:auto` 的盒子**无论当前滚不滚动都会裁掉超出 padding box 的
+   *      绝对定位子元素**；文档弹窗列表为空时 `.doc-body` 不溢出 → 不判定 →
+   *      筛选下拉仍被裁 ≈54px。
+   *   现在改成「非 visible 即命中」。`visible`（默认值）不裁剪，所以普通文档流里的
+   *   下拉不受影响、不会平白升到 body。
    */
   function scrollParentOf(el) {
     let node = el ? el.parentElement : null;
     while (node && node !== document.body && node !== document.documentElement) {
       const style = window.getComputedStyle(node);
-      const overflowY = style.overflowY || '';
-      const scrollable = /(auto|scroll)/;
-      if (scrollable.test(overflowY) && node.scrollHeight > node.clientHeight + 1) return node;
+      const oy = style.overflowY || '';
+      const ox = style.overflowX || '';
+      const clips = (oy && oy !== 'visible') || (ox && ox !== 'visible');
+      if (clips) return node;
       node = node.parentElement;
     }
     return null;
