@@ -267,12 +267,6 @@
       margin-bottom: 6px;
     }
     .dept-label label { margin: 0; }
-    .field-note {
-      display: block;
-      margin-top: 4px;
-      font-size: var(--fs-nano);
-      color: var(--muted);
-    }
 
     /* 必填项星号 .required 已移到 theme.css（订阅页查询表单也要用，三页共用一份） */
 
@@ -381,10 +375,9 @@
           </div>
           <div class="form-group" data-page-node-id="JEzZa0TS6TFECgDjphW4hn">
             <!-- 2026-09-18：原来是手输单值，现与「服务订阅关系查询」页对齐成多选，
-                 选项由「提供方系统」联动带出（口径与订阅页一致，实现见 index.js 的 loadSysServeNos）。 -->
+                 选项由「提供方系统」联动带出（口径与订阅页一致，实现见 js/page/publish.js 的 loadSysServeNos）。 -->
             <label id="label_sysServeNo" data-page-node-id="bcdvU6VFo2NtGLrKsID4Va">提供方应用系统服务编号（可多选）</label>
             <div class="msel" id="msel_sysServeNo" data-page-node-id="EEC7iIM4DTsE4S277G1ZCD"></div>
-            <span class="field-note" id="sysServeNoNote">先选「提供方系统」，可选项会自动带出</span>
           </div>
           <div class="form-group" data-page-node-id="lhli1ZTywyz4FH6eNwerNb">
             <label for="f_serviceName" data-page-node-id="8l65VCF6nFBHdrw34S43zR">提供方应用系统服务中文名称</label>
