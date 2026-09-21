@@ -8,8 +8,13 @@
 ## 📌 当前锁定
 
 ```
-【状态：无锁定】任何 Agent 可认领文件。
+（无锁定）
 ```
+
+> 上一条锁定（2026-09-21 11:40 起：发布查询页结果行新增「接口明细」「操作记录」两个弹窗）
+> **已于 2026-09-21 12:10 完成并解锁**，见下面第一条交接记录。
+> ⚠️ 那一条是**上一路会话留下的半成品**（模型/两个弹窗/页面接线已写，但样式、脚本引入、
+> bootstrap 登记、测试与实测都没做），本路是接着做完的，不是从头写的。
 
 > **2026-09-20 决定：不做脱敏**（上一条锁定的结论）。本仓库是**内网自用**，
 > 入库文件里的同事姓名/工号/部门码/任务单号**不算泄露**，不要主动去"帮忙脱敏"
@@ -29,6 +34,67 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-21 12:10] Agent-Dev（主会话）—— 发布查询页结果行两个弹窗
+
+**任务**：用户给了 `操作记录和接口明细.har` + 两份开发提示词 + 4 张参考截图，要求按本项目风格
+做发布查询页结果行的「接口明细」「操作记录」两个弹窗。
+
+**起点不是零**：上一路会话 11:40 起写了 `publish-dialog-model.js` / `intf-detail-dialog.js` /
+`op-record-dialog.js` + 页面接线，**11:52 中断且没留交接**（`ps` 里已无那个进程、文件 mtime 停在那一刻）。
+本次先读现场判断「哪些做完了」，再补齐缺的，没有推翻它的数据口径（核对过抓包，是对的）。
+
+**这一轮补的（前一路留下的缺口，全部是「不补就点不动/看不见」的）**：
+1. **样式整块缺失**：markup 用到的 `.dlg-tabs/.dlg-tab/.dlg-table/.dlg-pager/.intf-body/
+   .op-record-body/.op-record-filter/.c-mono/.c-center/.c-long` 在仓库里**一个都没有**
+   （表格最终改成复用弹窗表 `.sub-tbl`，与「关联文档」子弹窗同一套线型，少维护一份）。
+   新增 `theme.css` 一节（页签条 / 高度分配 / 筛选行 / 单元格辅助类），选择器带 `.sub-dialog`
+   前缀 —— 页面 `<style>` 在 theme.css 之后加载，同权重会盖掉 theme（本文件末尾「台账纸」层同一手法）。
+2. **三个脚本没引入** `publish.html`（页面里一个 `<script>` 都没加，弹窗模块根本没加载）。
+3. **`bootstrap.js` PRESETS 未登记** → 现在登记了：少了它们页面不白屏，只是点「接口明细」**毫无反应**，
+   没有登记就只能靠人肉发现。
+4. **操作类型下拉改走 `createSearchableSelect`**：原实现是原生 `<select>`。本项目铁律是
+   「弹窗下拉看起来像原生只能换组件、不能改样式」（展开面板是系统原生渲染，CSS 碰不到）。
+   组件不幂等 → 只在首次开窗挂一次，之后 `clear()/getValue()`；没有组件时降级成原生下拉。
+5. **滚动锁口径**：`close()` 从 `unlockScroll()` 改成 `forceUnlockAll()`（顶层弹窗、内无子层，
+   与 `detail-dialog.js` 同口径），避免重复 `open()` 时计数漂移把整页锁死。
+6. **测试**：新增 `tests/publish-dialog-model.test.js`（12 条，模型纯逻辑 + 用抓包真实行逐列断言），
+   `run.js` 注册；冒烟加两段（`PAGES[].globals` 补 3 个全局）——① 两个弹窗端到端接线（桩数据形态照抄 HAR）
+   ② 接口明细分页/每 tab 记页码（真实抓包每 tab 只有 1~8 行，走不到第 2 页，只能靠桩数据守）。
+
+**门禁原话**：`node tests/run.js` → **615/615 通过**（603 + 新增 12）；
+`node tests/smoke-browser.js` → **ALL PASS**（`[FAIL]` 0）。
+
+**真实数据实测**（离线代理 3100 + 真实缓存，探针用完已移入回收站）：
+`接口明细` 10 列宽 56/104/99/151/42/62/67/197/352/140，表宽 1270 = 视口宽 → **无横向溢出、无一格被截断**，
+表头 `position:sticky`、弹窗主体 `overflow-y:hidden`；`操作记录` 真实 21 条 / 第 1 页 10 行，
+筛选下拉确为统一组件（宿主 `display:none`、占位「请选择操作类型」）。截图见
+`/tmp/intf_shot/`（一次性证据，随时可丢）。
+
+**两个口径（用户 2026-09-21 拍板，别再"补全"）**：
+- **`operationType` 只映射有证据的 5 个**（12 删除 / 43 修改 / 45 新增 / 50 CHECKIN / 52 CHECKOUT）。
+  抓包里还出现过 **17 / 18 / 47**，**没有依据说明它们叫什么 → 原样显示数字**。
+  提示词里提到的「接口批量更新 / 接口批量新增」找不到对应编码，**不放进筛选下拉**
+  （编码填错会让筛选静默查错数据，比少两个选项更坏）；拿到映射表后只改
+  `js/ui/publish-dialog-model.js` 里 `OP_TYPES` 一处即可（下拉项由它派生）。
+- **弹窗里不放水印、不做红色主按钮**：参考截图是**原系统**的样子；用户明确「风格按我这个项目」，
+  所以主按钮走 `.filled`（动作蓝）、无水印、弹窗宽度走 `.dialog--*` + 类选择器。
+
+**接口要点（抓包确认，一个字段没猜）**：
+- `POST /itamp-tool/intfcMgmt/serviceChildList` body `{ dataId, sysServeNo }` → 一次回 5 张表
+  `childReqList / childRespList / revisionList / interfaceModifyList / deployList`；
+  `dataId` = 发布行 `publishId`、`sysServeNo` = 行里 `sysServeNo` 原值（都在 30 行真实缓存里核对过）。
+- `POST /itamp-tool/operation/getOperationRecordList` body `{ operationType, pageNum, pageSize, publishId }`，
+  **服务端分页**（真实 total=21 → 3 页）。
+
+**遗留（如实说，均不影响使用）**：
+1. 「文档级修订记录」这次抓包里是**空数组**，列名按兄弟表 `interfaceModifyList` 的键口径取；
+   `revisionList` 有数据后要**再对一次字段**（该表是否真的同名同义没证据）。
+2. `serviceChildList` **没有进** `analysis/output/接口文档.md`（那份只覆盖 getOperationRecordList），
+   字段以 `publish-dialog-model.js` 的列定义为准 —— 已在模型文件头注明，别去文档里找。
+3. 抓包已归档到 `analysis/har/操作记录和接口明细.har`（该目录 gitignore，本地留档）。
+
+**下一步给谁**：无锁定。`TODO.md` 里仍等外部条件的那几条没动。
 
 ### [2026-09-21 00:05] 主会话（发布 stable-20260920-4）
 
