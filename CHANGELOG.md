@@ -65,8 +65,14 @@
 `node tests/run.js` → `614/615 通过`（唯一失败仍是 Windows `execFileSync` 的 `spawnSync EBUSY`
 环境错误）；`node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`。
 
-**状态**：本分支领先 `origin/dev` **5 个提交、0 落后**，**未推送**。
-若要回到 `dev`，需 `git push origin HEAD:dev`（本分支含 1 个 merge 提交，dev 会变成非线性但内容无损）。
+**状态**：**已于 2026-09-21 18:38 推送回 `origin/dev`** —— `b787120..d54958f`，
+推送前复核过 `origin/dev` 无新提交，`git merge-base --is-ancestor origin/dev HEAD` 为真，
+**是 fast-forward，没有覆盖远端任何提交**。推送后 `git rev-list --left-right --count HEAD...origin/dev`
+= `0 0`，两条线完全同步。
+
+**本分支在本次合并里落后过 5 个提交，所以 push 前一定要先 `git fetch origin dev` 再比对** ——
+今天连着三次同步都是 `CHANGELOG.md` 单点冲突（双方都往顶部追加记录），
+如果跳过 fetch 直接推，会把同事 17:10/16:47 那两条记录顶掉。
 
 **下一步**：无锁定。
 
