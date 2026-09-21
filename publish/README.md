@@ -190,17 +190,17 @@ publish/
 │   │                    #   date-picker / dialog-utils / csv-export / table-utils /
 │   │                    #   detail-dialog / dict-selects / toast / subscribe-* / people-search /
 │   │                    #   saved-query（常用查询存储：首页快捷入口的数据源）
-│   └── page/            # home.js（首页）/ index.js（服务发布数据查询）/ task.js /
+│   └── page/            # home.js（首页）/ publish.js（服务发布数据查询）/ task.js /
 │                        #   subscription.js / subscription-batch-times.js（批量改批次时间）
 ├── docs/                # design-system.md（设计规范）、导入说明.md（订阅导入测试）、
 │                        #   模块化方案评估.md（ESM/注册表的结论与顺序约定）
 ├── tests/               # 零依赖单测（run.js）+ 浏览器冒烟（smoke-browser.js）
 │                        #   用例数一直在涨，别在文档里刻死数字：以 `node tests/run.js` 实跑输出为准
-│                        #   + live-probe-saved-query.js（联调诊断，需代理与后端可达）
-├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走）
+│                        #   探针在 tests/probes/ 下（live-probe-*.js，需代理与后端可达）
+├── vendor/              # vendored playwright-core（13MB 零依赖，离线冒烟用，随仓库走，**勿清理**）
 └── tools/               # 开发工具，不参与页面加载
     ├── har-import.js        # HAR → cache/（离线回放的数据来源；原来手写的 mock 后端已移除）
-    └── my-subscribed-services.txt  # 订阅导入的测试数据
+    └── backup-queries-db.js # 团队库（shared/saved-queries.db）的 VACUUM INTO 备份
 ```
 
 接口分析（抓包 → 文档）在仓库根目录的 `analysis/`：
@@ -255,7 +255,7 @@ publish/
 ### subscription.html（服务订阅关系查询）
 
 - 常用筛选只露 3 项（调用方系统/分行 + 两个批次），其余 10 项收在「更多筛选项」
-- 22 列结果表：左侧固定「优先级 + 基线状态 + 审核流程状态 + 服务中文名 + 接口编码」5 列，
+- 23 列结果表（22 数据列 + 操作列）：左侧固定「优先级 + 基线状态 + 审核流程状态」**3 列**，
   右侧固定操作列；列宽可拖（双击恢复）
 - 投产优先级：批次 → 基线里程碑，逾期整行标红；规则集中在 `js/ui/priority.js`
 - 默认按优先级排序（结果 ≤1000 条时整批拉回前端排序分页）；「查 看」跳转 ITAMP 真实系统

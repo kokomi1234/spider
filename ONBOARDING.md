@@ -25,53 +25,58 @@ PROXY_OFFLINE=1 node proxy.js
 ```
 
 注意：**不能直连 itamp.bocsys.cn**（跨域会被拦），一切请求走代理。
+⚠️ **AI 请用 3010–3099，别占 3000**（3000 留给用户自己起的代理）；测本地端口加 `--noproxy '*'`。
 
 ## 目录地图
 
 ```
 spider/
+├── memory.md                ← **跨 Agent 共享约定**（入库，接手前先读这份）
+├── AGENTS.md                ← 协同协议（分支 / 锁 / 门禁 / 保护清单）
 ├── ONBOARDING.md            ← 本文，上手入口
-├── publish/                 ← 前端项目（唯一交付物）
+├── publish/                 ← 前端项目（唯一需要交付的代码目录；同事直接 git pull 即得）
 │   ├── index.html           # 首页：三页入口 + 常用查询 + 当前用户 + 部门排行
 │   ├── publish.html         # 页面①：服务发布数据查询（2026-09-18 起从 index.html 迁出）
 │   ├── task.html            # 页面②：任务单查询（首页工具栏有入口）
 │   ├── subscription.html    # 页面③：服务订阅关系查询
-│   ├── theme.css            # 全站唯一样式来源（令牌 + 组件 + 弹窗）
+│   ├── theme.css            # 全站唯一样式来源（令牌 + 组件 + 弹窗；有**两个** :root 块）
 │   ├── proxy.js             # 代理：转发/录制/离线回放（entry，勿挪）
-│   ├── README.md            # 运行细节（mock/离线/缓存管理）
+│   ├── README.md            # 运行细节（离线回放 / 缓存管理 / 配置）
 │   ├── API接入与上线指南.md   # 请求链路、生产部署、新接口接入流程
 │   ├── lib/                 # 只给代理用的服务端库：queries-db.js（常用查询的 SQLite 存储层，
 │   │                        #   Node 内置 node:sqlite，零 npm 依赖；不可用/打不开时回落 JSON）
 │   ├── js/
 │   │   ├── core/            # 运行时基建：runtime-config / api-client / bootstrap
 │   │   ├── api/             # 接口层（每域一个文件，ENDPOINTS+METHODS 模式）
-│   │   │                    #   task-api / service-api / user-api / tool-api / sys-api
+│   │   │                    #   task-api / service-api / user-api / tool-api
 │   │   ├── data/            # 字典/兜底数据：batch / provider / department
 │   │   ├── ui/              # 通用组件与弹窗：searchable-select / multi-select /
-│   │   │                    #   priority（投产优先级规则） / table-resize（列宽拖拽） /
-│   │   │                    #   date-picker / csv-export / subscribe-* / people-search
-│   │   └── page/            # 页面主逻辑：home.js（首页）/ index.js（服务发布数据查询）/
+│   │   │                    #   priority（投产优先级规则）/ table-resize（列宽拖拽）/
+│   │   │                    #   date-picker / csv-export / popup-position / query-feedback /
+│   │   │                    #   subscribe-* / intf-detail-dialog / op-record-dialog / people-search
+│   │   └── page/            # 页面主逻辑：home.js（首页）/ publish.js（服务发布数据查询）/
 │   │                        #   task.js / subscription.js
 │   ├── docs/                # 设计规范（design-system.md）、订阅导入说明
-│   ├── tools/               # 开发工具：har-import（HAR→缓存）、mock-proxy
+│   ├── tools/               # 开发工具：har-import（HAR→缓存）、backup-queries-db（团队库备份）
 │   └── cache/               # 代理录制的离线响应（gitignore，勿提交）
-├── shared/                  ← 跨机器共享库（首页「常用查询」落盘在这里：saved-queries.db /
-│                              降级用的 saved-queries.json）；**怎么配才算同一个团队库见
-│                              `shared/README.md`**，文件不入库
+├── shared/                  ← 跨机器共享库（**文件不入库**）：
+│                              saved-queries.db（常用查询；SQLite 是唯一真相源）/
+│                              降级用 saved-queries.json / batch-times.json（批次时间，
+│                              2026-09-20 从 publish/config/ 搬来，避免重新部署被新包盖掉）；
+│                              怎么配才算同一个团队库见 `shared/README.md`
 ├── analysis/                ← 抓包分析线（接口事实的唯一来源）
-│   ├── har/                 # 原始抓包：进入请求/查询接口/userinfo/任务单查询 + 订阅.json
+│   ├── har/                 # 原始抓包（gitignore，勿外发）
 │   ├── har2doc.py           # HAR → 接口文档生成器
-│   ├── output/              # 生成的接口文档（接口文档.md / openapi.json 等）
-│   ├── 任务单查询.har        # 任务单页抓包
-│   └── 任务单查询接口文档.md
-└── .workbuddy/memory/       ← AI 工作记忆（长期约定必读：抓包铁律/样式铁律）
+│   └── output/              # 生成的接口文档（接口文档.md / openapi.json 等）
+└── .workbuddy/memory/       ← **WorkBuddy 本机**流水与细节（不入库；别的 Agent clone 后看不到，
+                               跨 Agent 的约定一律写根目录 memory.md）
 ```
 
 ## 文档地图（哪份文档管什么）
 
 | 想知道… | 读哪份 |
 |---|---|
-| 怎么跑 / mock / 离线 / 缓存管理 | `publish/README.md` |
+| 怎么跑 / 离线回放 / 缓存管理 | `publish/README.md` |
 | 请求链路、生产上线、**怎么新增接口** | `publish/API接入与上线指南.md` |
 | 颜色/字号/圆角令牌、组件样式 | `publish/docs/design-system.md` |
 | 接口真实字段（抓包核实过） | `analysis/output/接口文档.md`、`analysis/output/openapi.json` |
@@ -79,7 +84,7 @@ spider/
 | 当前还欠什么、在等什么 | `TODO.md`（根目录） |
 | 订阅列表导入测试数据 | `publish/docs/导入说明.md` |
 | **跨机器共享怎么配**（常用查询的团队库、SQLite 与 JSON 降级、端点与合并规则） | `shared/README.md` |
-| 项目长期约定与踩坑史 | `.workbuddy/memory/MEMORY.md` |
+| **跨 Agent 的长期约定与踩坑史** | **`memory.md`（根目录，入库）**；本机细节才看 `.workbuddy/memory/MEMORY.md` |
 
 ## 安全与保密（务必遵守）
 
@@ -130,13 +135,17 @@ spider/
   顶部的 `MILESTONES`（状态机）和 `LEVELS`（紧急阈值）两个常量，页面代码不用动。
   当前规则：批次月 − 1 个月的 15 日转功能测试基线，批次月的 15 日转正式版基线
   （与「批量修改批次时间」选择栏的默认值口径一致：功测 = 批次月的上一个月）。
-- **前端自动化验证**：本机已有 chromium（`~/Library/Caches/ms-playwright/`），用 playwright-core
-  显式传 executablePath 即可，无需下载浏览器。
+- **前端自动化验证**：用 `publish/vendor/playwright-core`（**故意入库的 vendored 依赖，别清理**）
+  显式传 executablePath 即可，无需下载浏览器。浏览器缓存的默认位置**按平台不同**：
+  macOS `~/Library/Caches/ms-playwright/`、Windows `%USERPROFILE%\AppData\Local\ms-playwright`。
+  冒烟脚本也可用 `SMOKE_CHROME_PATH` 显式指定。
 
 ## 给 AI 接手者的说明
 
-- 工作记忆在 `.workbuddy/memory/`（`MEMORY.md` 是长期约定，`YYYY-MM-DD.md` 是日志），
-  项目根目录的 `.opencode`、`.workbuddy-ai` 是两个**单行文本指针文件**（内容就是字符串
-  `.workbuddy`，给 OpenCode 之类的 CLI 指路用 —— 不是软链），所有 AI 共享这一份；
-  这两个指针文件已在 `.gitignore` 里（属本地约定，不入库）。
+- **跨 Agent 的长期约定写在根目录 `memory.md`**（入库、随仓库走，接手前必读）；
+  `.workbuddy/memory/` 只是 **WorkBuddy 本机**的流水与细节（`MEMORY.md` 细节 /
+  `YYYY-MM-DD.md` 日志），**不入库**，别的 Agent clone 后看不到。
+- 本机可能另有 `.opencode`、`.workbuddy-ai` 这类**单行文本指针文件**（内容就是字符串
+  `.workbuddy`，给 OpenCode 之类 CLI 指路用，不是软链）；它们在 `.gitignore` 里，
+  **clone 下来不会有**，别把它们当成必然存在的东西。
 - 提交信息用中文；`publish/cache/`、`*.har`、`analysis/har/` 永远不入库。
