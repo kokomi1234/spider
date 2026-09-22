@@ -608,6 +608,28 @@ test('当前用户：未设置时清空身份条、显示表单，并建好可�
   assert.ok(selects[0], '可搜索下拉组件要建在这个 <select> 上');
 });
 
+test('首页：有身份时会向服务端要「我的」列表（别被本地写保护误挡）', async () => {
+  // 2026-09-22 用户报「我的常用查询不见了，但下面的部门查询还有我保存的」：
+  // renderSaved 里**无条件** markLocalWrite() → loadMineFromServer 每次都命中
+  // 「本地刚写过（5 秒）」的提前 return，镜像永远拉不回来；部门榜直读服务端，所以还看得见。
+  // 现在只有**认领到东西**（claimed > 0）时才标记本地写。
+  const { win, els } = buildEnv({ currentUser: ME, items: [] });
+  let called = 0;
+  win.SavedQuery.mineFromServer = async () => {
+    called += 1;
+    return {
+      ok: true, file: 'x', storage: 'sqlite', people: 1,
+      items: [{ id: 'm1', page: 'publish', name: '服务端那条', at: 5, owner: ME, saverKeys: [ME.userId] }],
+    };
+  };
+  win.HomePage.render();
+  await new Promise((r) => setTimeout(r, 30));      // 等那次 async 渲染回来
+  assert.strictEqual(called, 1, '有身份时必须向服务端要一次「我的」列表');
+  assert.strictEqual(els.savedList.children.length, 1, '拉回来的记录要画进「我的常用查询」');
+  const nameEl = findIn(els.savedList.children[0], (e) => e.textContent === '服务端那条');
+  assert.ok(nameEl, '卡片上要是服务端那条的名字');
+});
+
 test('部门排行：只列本部门的记录，且是只读视图（无重命名/删除）', () => {
   // ⚠️ 这里刻意不放 owner: null 的记录：首页渲染时会先把无归属的本机记录认领给当前用户
   //    （SavedQuery.claimAnonymous，2026-09-22 加），随后它就归进本部门了，会搅浑本用例

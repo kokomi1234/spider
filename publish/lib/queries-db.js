@@ -199,7 +199,7 @@ function open(file) {
     ORDER BY q.updated_at DESC LIMIT 1
   `);
   const selRowsByFp = db.prepare(`
-    SELECT q.id AS id, q.hits AS hits, q.saves AS saves, q.updated_at AS updated_at
+    SELECT q.id AS id, q.hits AS hits, q.saves AS saves, q.updated_at AS updated_at, q.created_at AS created_at
     FROM saved_queries q
     WHERE q.fingerprint = ?
     ORDER BY q.updated_at DESC
@@ -325,9 +325,16 @@ function open(file) {
           });
           byUser.forEach((list) => {
             if (list.length < 2) return;
-            const keep = list[0];                                  // 最近更新的那条留下
+            // 保留哪一条：重复行的条件完全一样，差别只在名字与计数 ——
+            // 按「更常用」定：hits 多的 → saves 多的 → 创建更早的。
+            // ⚠️ **别按 updated_at**：改名产生的那条副本才是"最新更新"的，
+            //    按它会留下副本、删掉正主（2026-09-22 实测：用户改名留下的"2"就是这样）。
+            const sorted = list.slice().sort((a, b) => (num(b.hits, 0) - num(a.hits, 0))
+              || (num(b.saves, 0) - num(a.saves, 0))
+              || (num(a.created_at, 0) - num(b.created_at, 0)));
+            const keep = sorted[0];
             updQueryCounts.run(num(keep.hits, 0), num(keep.saves, 1), keep.id);
-            list.slice(1).forEach((dup) => {
+            sorted.slice(1).forEach((dup) => {
               if (dup.id === keep.id) return;
               if (selSaversOf.all(dup.id).length > 1) return;      // 别人也存过 → 不动它
               updQueryCounts.run(num(dup.hits, 0), num(dup.saves, 1), keep.id);
@@ -368,7 +375,7 @@ function open(file) {
      */
     dedupeAll() {
       const rows = db.prepare(
-        "SELECT id, fingerprint, hits, saves, updated_at FROM saved_queries WHERE fingerprint <> ''",
+        "SELECT id, fingerprint, hits, saves, updated_at, created_at FROM saved_queries WHERE fingerprint <> ''",
       ).all();
       const byFp = new Map();
       rows.forEach((r) => {
@@ -389,8 +396,13 @@ function open(file) {
           });
           byUser.forEach((dups) => {
             if (dups.length < 2) return;
-            dups.sort((a, b) => (num(b.updated_at, 0) - num(a.updated_at, 0)) || String(a.id).localeCompare(String(b.id)));
-            const keep = dups[0];                       // 最近更新的那条留下
+            // 保留策略同 upsert：按「更常用」而不是「更新更晚」
+            //（改名副本的 updated_at 最新，按它会留副本删正主）。
+            dups.sort((a, b) => (num(b.hits, 0) - num(a.hits, 0))
+              || (num(b.saves, 0) - num(a.saves, 0))
+              || (num(a.created_at, 0) - num(b.created_at, 0))
+              || String(a.id).localeCompare(String(b.id)));
+            const keep = dups[0];
             dups.slice(1).forEach((d) => {
               if (d.id === keep.id) return;
               if (selSaversOf.all(d.id).length > 1) return;   // 别人也存过 → 不动
@@ -400,6 +412,17 @@ function open(file) {
               delQuery.run(d.id);
               removed += 1;
             });
+          });
+          // 没有任何 saver 记录的「孤儿行」：同条件下还有别的行时它就是历史残留
+          //（改名的中间产物曾被留成这种），删掉。只剩它一条时保留 ——
+          // 那可能是"刚 INSERT、saver 还没写"的中间态，不值得赌。
+          if (list.length < 2) return;
+          list.forEach((r) => {
+            if (selSaversOf.all(r.id).length > 0) return;
+            delSavers.run(r.id);
+            delUses.run(r.id);
+            delQuery.run(r.id);
+            removed += 1;
           });
         });
         db.exec('COMMIT');
