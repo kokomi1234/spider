@@ -288,17 +288,15 @@
       : ($('#f_prodBatch')?.value || '').trim();
   }
 
-  // 必填校验失败时的聚焦：只点击「查询」时主动聚焦；输入框按回车不抢焦点
-  function focusProvider() {
-    const el = providerSelectInstance
-      ? document.querySelector('#f_provideSystemNumber + div .searchable-select-input')
-      : $('#f_provideSystemNumber');
-    if (el) el.focus();
-  }
-  function focusBatch() {
-    if (!batchSelectInstance) return;
-    const el = document.querySelector('#f_prodBatch + div .searchable-select-input');
-    if (el) el.focus();
+  // 「没限定批次」时的二次确认（系统/批次 2026-09-21 起都已非必选，
+  // 但那种查询会跨批次回数据、结果集可能很大，所以查之前先问一次）。
+  // 与 home.js 的 askConfirm 同一手法：优先用站内 DialogUtils.confirmBox（样式统一、可拖拽），
+  // 没有它时退回原生 confirm。返回 Promise<boolean>。
+  function askConfirm(opts) {
+    const o = opts || {};
+    const D = window.DialogUtils;
+    if (D && typeof D.confirmBox === 'function') return D.confirmBox(o);
+    return Promise.resolve(window.confirm(`${o.title || '请确认'}\n\n${o.message || ''}`));
   }
 
   // ── 收集要发给后端的请求体 ──────────────────────────
@@ -437,8 +435,7 @@
     getDeptValue,
     getProviderValue,
     getBatchValue,
-    focusProvider,
-    focusBatch,
+    confirm: askConfirm,
     fillDeptListFromRows,
     showToast,
     showLoading,
@@ -510,7 +507,7 @@
     state.pageNum = 1;
     state.currentFilter = 'all'; // 重置筛选状态
     setFilter('all');
-    PublishQuery.doQuery({ focusMissing: true });
+    PublishQuery.doQuery();
   });
 
   btnReset.addEventListener('click', resetForm);
@@ -615,10 +612,22 @@
   }
 
   /** 每个条件的人类可读文本（存进记录，首页以后改版式不用重新解析编号） */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function snapshotLabels(fields) {
     const out = {};
     SNAPSHOT_IDS.forEach((id) => {
-      if (fields[id]) out[id] = displayTextFor(id, fields[id]);
+      // 用 shortCode 把「E00301-互联网金融服务平台-BOCNET-G-IFS」这类长编码截成尾部
+      // 英文编码（2026-09-22 用户要求）—— labels 是给人看的，留着编号+中文只是占地方。
+      if (fields[id]) out[id] = sc(displayTextFor(id, fields[id]));
     });
     return out;
   }
@@ -682,7 +691,7 @@
     // 也是用户口头描述时最自然的顺序。
     const suggest = ['f_prodBatch', 'f_provideSystemNumber']
       .filter((id) => fields[id])
-      .map((id) => displayTextFor(id, fields[id]))
+      .map((id) => sc(displayTextFor(id, fields[id])))
       .join(' ');
 
     let name = '';
@@ -694,7 +703,12 @@
     } catch (_) { name = ''; }
     if (!name || !String(name).trim()) return;   // 取消 / 空输入：什么都不做
 
-    const r = await S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
+    const r = await S.save({
+      page: 'publish', name: String(name).trim(), fields, summary,
+      labels: snapshotLabels(fields),
+      // 默认名（弹窗里预填的那个）一起存下来：部门榜的标题用它，不随个人改名变
+      autoName: suggest.trim(),
+    });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
     // 2026-09-20 架构改版后 save 是双态的：server=true 表示已直接写进共享库；
     // localOnly=true 表示只落在本机（代理没连上 / 服务端失败），措辞要说清。
@@ -721,6 +735,11 @@
     const item = await S.getAsync(id);
     if (!item || item.page !== 'publish') return null;
 
+    // 「我用了这份查询」上报给共享库（部门高频的时间衰减排序要用）。
+    // 放在**落地页**而不是首页点卡片时：那一刻 <a> 正在跳转，在途 fetch 会被浏览器中断。
+    // 失败无所谓（最多热度算粗一点），不挡回填、也不弹提示。
+    if (typeof S.markUsed === 'function') Promise.resolve(S.markUsed(id)).catch(() => {});
+
     Object.keys(item.fields || {}).forEach((fid) => {
       const val = item.fields[fid];
       // 先看有没有组件实例（多选 / 下拉 / 日期都走实例，能同步显示文本）；
@@ -737,7 +756,7 @@
     state.pageNum = 1;
     state.currentFilter = 'all';
     setFilter('all');
-    PublishQuery.doQuery({ focusMissing: false });
+    PublishQuery.doQuery();
     return item;
   }
 
@@ -805,6 +824,14 @@
     }
     const subBtn = e.target.closest('button[data-sub]');
     if (subBtn) {
+      // 订阅是**写内网**的操作（POST /itamp-tool/publish/setSubcription）。
+      // 用管理员 token 时内网只给查询权限（2026-09-22 用户拍板），所以在入口就拦住，
+      // 而不是等内网返回 401 才报错 —— 后者会让用户以为是自己点错了。
+      if (window.API && typeof window.API.tokenSource === 'function'
+        && window.API.tokenSource() === 'fallback') {
+        showToast('当前用的是管理员 token（回落），只有查询权限：订阅需要先在「🔑 Token」里录入你自己的 token', 4200, 'error');
+        return;
+      }
       // 与「详情」同口径：用 filteredRows 的绝对下标定位。
       // 原来按 serverCoding 反查 find()：该编码允许重复（rowKey 注释里就写了），
       // 会订阅到同编码的第一行；而且每点一次都 O(n) 扫一遍。
@@ -889,10 +916,37 @@
     // 而 loading 遮罩的 z-index 比弹窗高，用户看到的是「填着表突然整页转圈」。
     // 判据用 .overlay.show —— 全站弹窗（含 dialog-utils 动态建的那种）都带这两个类。
     if (document.querySelector('.overlay.show')) return;
-    PublishQuery.doQuery({ focusMissing: false });
+    PublishQuery.doQuery();
   });
 
   /** 初始化页面加载状态 */
+  /**
+   * Token 按钮上的「归属」提示（2026-09-22）。
+   *
+   * 'admin' = 本次用的是管理员 token（内网只给查询权限）—— 必须让用户一眼看到，
+   * 否则他点「订阅」被拦会以为是自己的操作问题。'user' = 用的是他自己录入的。
+   * 数据来自 API.tokenSource()（代理的响应头 x-token-source）。
+   */
+  function updateTokenBadge() {
+    const btn = document.getElementById('btnTokenManager');
+    if (!btn) return;
+    const src = (window.API && typeof window.API.tokenSource === 'function') ? window.API.tokenSource() : '';
+    if (src === 'fallback') {
+      // 回落用管理员 token：只有查询权限，订阅那类写操作会被禁 —— 必须让用户一眼看到原因
+      btn.textContent = '🔑 管理员 token';
+      btn.title = '当前用的是管理员 token（只有查询权限）：在弹窗里录入你自己的 token，即可解锁订阅等写操作';
+    } else if (src === 'admin') {
+      btn.textContent = '🔑 管理员';
+      btn.title = '你是管理员：本次用的是全局 token（其他人没录入自己的 token 时兜底用它）';
+    } else if (src === 'user') {
+      btn.textContent = '🔑 我的 token';
+      btn.title = '当前用的是你自己录入的 token';
+    } else {
+      btn.textContent = '🔑 Token';
+      btn.title = '';
+    }
+  }
+
   function initPageState() {
     // 检测是否处于离线状态
     if (!navigator.onLine) {
@@ -975,6 +1029,13 @@
 
   // Token 管理浮窗
   if (window.TokenManager) TokenManager.init();
+
+  // 这次用的是谁的 token（2026-09-22）：用管理员的就在按钮上标出来 ——
+  // 否则用户点「订阅」被拦会以为是自己点错了。
+  updateTokenBadge();
+  if (window.API && typeof window.API.onTokenSourceChange === 'function') {
+    window.API.onTokenSourceChange(updateTokenBadge);
+  }
 
   window.addEventListener('storage', (e) => {
     if (e.key === SUBSCRIBE_STORAGE_KEY) {

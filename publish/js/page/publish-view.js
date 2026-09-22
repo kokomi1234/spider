@@ -64,6 +64,11 @@
     const pageSize = ctx.pageSize;
     const checkSubscribe = ctx.checkSubscribe;
     const M = window.PublishModel;
+    // 本次是不是"回落用管理员 token"（只有查询权限）。取一次给整轮渲染用 ——
+    // 每行都去问一次既不必要，也可能在同一轮渲染里拿到不一致的值。
+    // ⚠️ 只认 'fallback'：管理员本人也是用管理员 token，但他有全套权限，不能一起禁掉。
+    const readOnlyToken = !!(window.API && typeof window.API.tokenSource === 'function'
+      && window.API.tokenSource() === 'fallback');
 
     return (rows || []).map((r, i) => {
       const idx = (pageNum - 1) * pageSize + i + 1;
@@ -121,7 +126,11 @@
             <button class="text-btn btn-xs" data-intf="${absIdx}">接口明细</button>
             <button class="text-btn btn-xs" data-oprecord="${absIdx}">操作记录</button>
             ${checkSubscribe && checkSubscribe(serverCoding) === 'unsubscribed'
-              ? `<button class="text-btn btn-xs btn-subscribe" data-sub="${absIdx}">订阅</button>`
+              // 订阅是写内网的操作；用管理员 token 时内网只给查询权限（2026-09-22 用户拍板），
+              // 所以这里直接置灰并说明原因 —— 点击拦截在 publish.js 里还有一道（双保险）。
+              ? (readOnlyToken
+                ? `<button class="text-btn btn-xs btn-subscribe" data-sub="${absIdx}" disabled title="当前用的是管理员 token（只有查询权限）。在「🔑 Token」里录入你自己的 token 后可订阅">订阅</button>`
+                : `<button class="text-btn btn-xs btn-subscribe" data-sub="${absIdx}">订阅</button>`)
               : ''}
           </div>
         </td>

@@ -102,6 +102,10 @@ const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
 function refreshConfig() {
   loadEnv();
   TOKEN_REFRESHED = process.env.PROXY_TOKEN || '';
+  // 管理员工号（2026-09-22）：token 归属的分界线 —— 管理员自己用 .env 里的 PROXY_TOKEN，
+  // 其他人在没录入自己 token / 录了但过期 / 没登录时**回落**到它。
+  // 默认写死 4711510，.env 里配了就以 .env 为准。
+  ADMIN_USER_ID_REFRESHED = String(process.env.ADMIN_USER_ID || '4711510').trim();
   for (const [name, envKey] of [
     ['systemId', 'PROXY_SYSTEM_ID'],
     ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
@@ -121,6 +125,8 @@ const EXTRA_HEADERS = {};
 
 let TOKEN_REFRESHED = '';
 let OFFLINE_REFRESHED = false;
+/** 管理员工号（refreshConfig 里从 .env 的 ADMIN_USER_ID 读，默认 4711510） */
+let ADMIN_USER_ID_REFRESHED = '4711510';
 
 // 启动时先加载一次 .env
 refreshConfig();
@@ -173,7 +179,12 @@ const LOOSE = process.env.PROXY_LOOSE_MATCH !== '0';
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, token',
+  // x-user-token：用户本机录入的 token（2026-09-22 起随请求带过来，代理不存）
+  // x-user-key：工号，**只用于日志/诊断**（让"用的谁的 token"能落到人）
+  'Access-Control-Allow-Headers': 'Content-Type, token, x-user-token, x-user-key',
+  // ⚠️ 不 Expose 的话，跨域下前端 JS **读不到**响应头 —— 「这次用的是谁的 token」
+  //    正是靠 x-token-source 传回去的（用管理员 token 时要禁掉订阅写操作）。
+  'Access-Control-Expose-Headers': 'x-token-source',
 };
 
 // ── 静态文件服务 ──────────────────────────────────────────────
@@ -454,7 +465,6 @@ function respondApiCache(res, hit) {
   headers['X-Api-Cache-Age'] = String(ageSec);
   res.writeHead(hit.status || 200, headers);
   res.end(hit.body);
-  console.log(`   ⚡ API 内存缓存命中（${ageSec}s 前的响应，X-Cache: HIT）`);
 }
 function storeApiCache(key, entry) {
   if (!API_CACHE_TTL) return;
@@ -470,7 +480,6 @@ function invalidateApiCache(reason) {
   if (!apiCache.size) return;
   const n = apiCache.size;
   apiCache.clear();
-  console.log(`   ♻️  已失效 API 内存缓存 ${n} 条（${reason}）`);
 }
 
 // ── 回放 ──────────────────────────────────────────────────────
@@ -488,11 +497,6 @@ function replay(res, entry, reason, loose) {
   res.writeHead(entry.status || 200, headers);
   res.end(entry.body);
 
-  console.log(`   📦 回放本地缓存（${reason}）· 录制于 ${entry.recordedAt || '未知'}`);
-  if (loose) {
-    console.log(`   ⚠️  宽松匹配：请求参数与录制时不一致，回放的是同接口最近一条记录，` +
-                `数据可能与当前筛选条件不符，仅供参考`);
-  }
 }
 
 function sendJson(res, status, payload) {
@@ -519,7 +523,13 @@ function forward(req, res, bodyBuf, key, meta) {
   // ⚠️ 必须在配了 token 时才写这个头。写成 undefined 时 http.request 会同步抛
   // ERR_HTTP_INVALID_HEADER_VALUE，异常被 uncaughtException 吞掉后响应永远不会发出，
   // 客户端只能一直转圈（实测 6s 无响应）。token 约 12 小时过期，这个坑迟早踩到。
-  if (TOKEN_REFRESHED) fwdHeaders['token'] = TOKEN_REFRESHED;
+  //
+  // 2026-09-22 按人取 token：本人录入过且没过期就用本人的；否则回落管理员 token。
+  // x-token-source 随响应回给前端 —— 它同时是「是否禁掉订阅写操作」的依据。
+  const tk = resolveToken(req);
+  if (tk.token) fwdHeaders['token'] = tk.token;
+  res.setHeader('x-token-source', tk.source);
+  // （日志不在这里打：离线回放不走这个函数，会一条都看不到 —— 见 server 入口那段）
   Object.assign(fwdHeaders, EXTRA_HEADERS);    // systemId / ssopSessionId / authMethods
   fwdHeaders['Accept-Encoding'] = 'identity'; // 不压缩，便于调试与录制
   if (!fwdHeaders['content-type']) fwdHeaders['content-type'] = 'application/json';
@@ -557,7 +567,6 @@ function forward(req, res, bodyBuf, key, meta) {
       // API 内存缓存：字典响应存一份（带 TTL），下回同参数请求直接命中
       if (isApiCachePath(req.url) && proxyRes.statusCode === 200) {
         storeApiCache(key, { status: proxyRes.statusCode, headers: proxyRes.headers, body: body.toString('utf8') });
-        console.log('   ⚡ 已存入 API 内存缓存（下次同参数请求 X-Cache: HIT）');
       }
 
       // 只录 200：token 过期返回的 401 / 后端 500 不能被录进去，
@@ -570,9 +579,6 @@ function forward(req, res, bodyBuf, key, meta) {
           headers: proxyRes.headers,
           body: body.toString('utf8'),
         });
-        console.log(`   💾 已录制 (${key.slice(0, 8)}…)`);
-      } else {
-        console.log(`   ⚠️  HTTP ${proxyRes.statusCode}，未录制（只缓存 200）`);
       }
     });
   });
@@ -622,6 +628,8 @@ function forward(req, res, bodyBuf, key, meta) {
 const QUERIES_DB_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.db');
 const QUERIES_JSON_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.json');
 const QUERIES_JSON_LEGACY = path.join(__dirname, 'config', 'saved-queries.json');
+// （2026-09-22 删除）TOKENS_DB_DEFAULT：用户 token 曾经存在 shared/user-tokens.db，
+// 后按用户要求改成只存浏览器本机（见 resolveToken 的注释）——代理侧不再有任何用户凭证落盘。
 
 // 批次时间（订阅页「批量修改批次时间」的落盘）。
 // 2026-09-20 从 publish/config/ 搬到 shared/ —— 它和库一样是**运行时数据**，
@@ -689,6 +697,34 @@ function getQueriesStore() {
   }
 }
 
+// ── 用户的 token（2026-09-22 用户改口径：**只存用户本机**）────────────
+// 原来代理侧按工号存一张表；用户后来改主意：有的同事 token 权限较高，不愿交给后端存 ——
+// 那就只留在用户自己的浏览器里，发请求时随请求头 `x-user-token` 带过来。
+// **代理因此不保存任何用户凭证**（`lib/user-tokens.js` 与那张表已整体删除）。
+//
+// 过期（每天 5:00 失效）也由前端判：token 就在本地，带一个必然失效的只会换来 401。
+
+/**
+ * 这次请求用谁的 token。
+ *
+ * @returns {{token:string, source:'user'|'fallback', userKey:string, reason:string}}
+ *   source 随响应头 `x-token-source` 回去（仅作诊断：界面判定由前端自己算），
+ *   同时会打进日志 —— 排查「为什么订阅被禁 / 为什么用了管理员的」时一眼能看到。
+ */
+function resolveToken(req) {
+  const h = req.headers || {};
+  const own = String(h['x-user-token'] || '').trim();
+  // 工号只用于**日志与诊断**，不参与选 token（token 本身就在请求里）。
+  // 没登录时前端不带，日志里就显示"未登录"。
+  const userKey = String(h['x-user-key'] || '').trim();
+  if (own) return { token: own, source: 'user', userKey, reason: '本人 token' };
+  return {
+    token: TOKEN_REFRESHED,
+    source: 'fallback',
+    userKey,
+    reason: userKey ? '本人没有可用 token（未录入或已过期）' : '未登录',
+  };
+}
 /**
  * SQLite 分支的请求处理。
  * @returns {boolean} true = 已接走（含 405）；false = 交给调用方继续
@@ -737,10 +773,18 @@ function handleQueriesSqlite(req, res, store) {
         const keptArr = incoming.slice(0, 2000);
         const truncated = incoming.length - keptArr.length;
         const r = store.upsert(keptArr, delIds);
+        // 「谁用过这份查询」（部门高频的时间衰减排序要用，见 docs/部门高频查询排序方案.md）。
+        // 与 items 分开传：它是**使用关系**，不是保存关系，混进 upsert 会把 savers 口径搞乱。
+        // 失败不当成保存失败 —— 使用上报丢了最多让热度算得粗一点，不该让用户以为保存没成功。
+        let used = 0; let useErr = '';
+        const uses = Array.isArray(parsed.uses) ? parsed.uses.slice(0, 2000) : [];
+        if (uses.length) {
+          try { used = store.markUsed(uses); } catch (e) { useErr = String((e && e.message) || e); }
+        }
         sendJson(res, 200, {
           code: 200, msg: truncated ? `已合并保存（超出 2000 条上限，丢弃 ${truncated} 条）` : '已合并保存',
           data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite',
-            people: store.peopleCount(), mode: 'all', truncated },
+            people: store.peopleCount(), mode: 'all', truncated, used, ...(useErr ? { useError: useErr } : {}) },
         });
       } catch (e) {
         sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
@@ -758,6 +802,18 @@ const server = http.createServer((req, res) => {
   // 请求日志：记录来源 IP + 方法 + 路径，便于排查「外部访问进不来」
   const clientIp = (req.socket && req.socket.remoteAddress) || '?';
   console.log(`[req] ${clientIp} ${req.method} ${req.url}`);
+
+  // 「这次用谁的 token」（2026-09-22）：写在这里而不是转发函数里 ——
+  // 离线回放（PROXY_OFFLINE=1）根本不走转发，日志放那儿会一条都看不到。
+  // 只打**会转发到内网的**那些请求（静态资源、/local/*、/admin/* 不打），
+  // 因为只要"没带 x-user-* 头"就判定条件的话，未登录的查询反而会被漏掉。
+  const isLocalEndpoint = /^\/(local|admin|cache)\b/.test(req.url);
+  if (req.method !== 'OPTIONS' && !isLocalEndpoint && !isStaticRequest(req.url)) {
+    const tkLog = resolveToken(req);
+    console.log(tkLog.source === 'user'
+      ? `   🔑 用本人 token（工号 ${tkLog.userKey || '未带'}）`
+      : `   🔑 用管理员 token（${tkLog.reason}${tkLog.userKey ? ' · 工号 ' + tkLog.userKey : ''}）`);
+  }
 
   // CORS 预检
   if (req.method === 'OPTIONS') {
@@ -852,7 +908,9 @@ const server = http.createServer((req, res) => {
           sendJson(res, 400, { code: 400, msg: '缺少 token 字段' });
           return;
         }
-        // 立即生效
+        // （2026-09-22 简化）这里原来还有两条用户 token 的分支：按 userKey 存/清
+        // 「他自己的 token」。用户随后改口径 —— token 只存用户本机，代理不保存任何用户凭证，
+        // 那两条整体删掉了。**这个端点现在只管管理员那个全局 token。**
         const prevToken = TOKEN_REFRESHED;
         process.env.PROXY_TOKEN = token;
         TOKEN_REFRESHED = token;
@@ -898,19 +956,30 @@ const server = http.createServer((req, res) => {
   // 获取当前 token 状态（同 /admin/token）
   if (cachePath === '/admin/token/status') {
     // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
+    // 2026-09-22：只回**代理侧**的状态（管理员 token + 管理员工号 + 失效时刻）。
+    // 用户自己的 token 存在浏览器本机，前端直接读 localStorage，不从这里要 ——
+    // 这也是「token 不交给后端」的一部分：代理连它的存在都不需要知道。
+    let adminKey = '';
+    const expiryHour = 5;   // 与前端 UserToken.expiryHour 同一口径（每天 5:00 失效）
+    adminKey = String(ADMIN_USER_ID_REFRESHED || '').trim();
     sendJson(res, 200, {
       code: 200,
       hasToken: !!TOKEN_REFRESHED,
       tokenPreview: TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)',
       envPath: envPath,
+      adminUserId: adminKey,
+      expiryHour,
     });
     return;
   }
 
   // 订阅页「批量修改批次时间」的本地落盘（不走 ITAMP 后端）。
-  // 存到 config/batch-times.json：页面可直接读写，也可手改该文件。
+  // 存到 **shared/batch-times.json**（BATCH_TIMES_DEFAULT，可用 PROXY_BATCH_TIMES_FILE 改），
+  //   **不是** publish/config/batch-times.json —— config/ 在代码目录里，重新部署会被新包里的
+  //   空文件盖掉，所以 2026-09-20 迁到 shared/，旧文件首次使用时自动搬过来（留着当备份）。
+  //   （2026-09-21 更正本注释：原来这里写的是迁走前的旧路径，会把人带错。）
   //   GET  /local/batch-times → { code:200, data:{ batchTimes:{...} } }
-  //   POST /local/batch-times   body { batchTimes:{...} } → 写回文件
+  //   POST /local/batch-times   body { batchTimes:{...} } → 按键合并后写回文件
   if (cachePath === '/local/batch-times') {
     const FILE = batchTimesFile();
     // 老位置（publish/config/）的文件第一次用到时**复制**过去，不删原文件（留着当备份）——
@@ -1288,9 +1357,19 @@ server.listen(PORT, HOST, () => {
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);
   console.log(`   模式：${OFFLINE_REFRESHED ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
-  console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
-  console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
   console.log(`   🔑 .env 位置：${envPath}（前端「Token 管理」写入此处；可用 PROXY_ENV_PATH 改）`);
+  // 「同一份条件 + 同一个人」的历史重复归并一次（2026-09-22）：
+  // 旧的判重比的是名字，改名 / 认领攒下的重复不会自己消失 —— 启动时扫一遍收干净。
+  // 只删「仅属于这一个人」的重复行，别人也存过的行不动。
+  try {
+    const st = getQueriesStore();
+    if (st && typeof st.dedupeAll === 'function') {
+      const d = st.dedupeAll();
+      if (d && d.removed) console.log(`   🧹 已归并 ${d.removed} 条旧记录（同一个人重复保存了同一份条件）`);
+    }
+  } catch (e) {
+    console.log(`   ⚠️ 归并历史重复失败（不影响运行）：${(e && e.message) || e}`);
+  }
   if (!OFFLINE_REFRESHED) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
     if (!TOKEN_REFRESHED) {
@@ -1299,7 +1378,6 @@ server.listen(PORT, HOST, () => {
     }
   }
   console.log(`   健康检查：http://localhost:${PORT}/health`);
-  console.log(`   缓存列表：http://localhost:${PORT}/cache/list`);
   console.log(`   热更新 .env：修改后自动生效（约 1.5 秒），也可 curl http://localhost:${PORT}/reload 立即生效`);
   console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面`);
   console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/publish.html?dryrun=1`);

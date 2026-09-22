@@ -677,8 +677,7 @@ function setupDoQuery() {
     getDeptValue: () => '',
     getProviderValue: () => 'E001',
     getBatchValue: () => '2609pc',
-    focusProvider: () => rec.focused.push('provider'),
-    focusBatch: () => rec.focused.push('batch'),
+    confirm: () => Promise.resolve(true),   // 未限定批次的二次确认（本文件用例的批次都非空）
     fillDeptListFromRows: (rows) => rec.deptRows.push(rows.length),
     showToast: (msg, ms, type) => rec.toasts.push({ msg, ms, type }),
     showLoading: () => rec.loading.push(true),
@@ -716,7 +715,7 @@ test('PublishQuery.retryFailedPages：重试后仍有失败页 → 失败清单�
   let failPage2 = true;
   installBackend(t, (p) => (p === 2 && failPage2 ? errResp(500) : okResp(pageData(p, TOTAL), TOTAL)));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
   assert.strictEqual(t.Q.hasFailedPages(), true, 'doQuery 后应存在失败分页');
 
   // 让第 2 页在重试时继续失败
@@ -732,7 +731,7 @@ test('PublishQuery.retryFailedPages：重试补齐失败页 → 失败清单清�
   let failPage2 = true;
   installBackend(t, (p) => (p === 2 && failPage2 ? errResp(500) : okResp(pageData(p, TOTAL), TOTAL)));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
   assert.strictEqual(t.Q.hasFailedPages(), true);
 
   failPage2 = false;                                  // 重试前修好第 2 页
@@ -746,7 +745,7 @@ test('PublishQuery.retryFailedPages：重试补齐失败页 → 失败清单清�
 test('PublishQuery.doQuery：网络中断 → 可读的「网络连接失败」toast，不抛异常、loading 收回', async () => {
   const t = setupDoQuery();
   installBackend(t, () => { throw new TypeError('Failed to fetch'); });
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
   assert.ok(toastOf(t, '网络连接失败'), '应给出用户可读的网络错误，实际：' + JSON.stringify(t.rec.toasts));
   assert.strictEqual(t.rec.errors.length, 1);
   assert.strictEqual(t.rec.loading[t.rec.loading.length - 1], false);

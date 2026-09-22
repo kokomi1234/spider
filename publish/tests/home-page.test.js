@@ -138,12 +138,30 @@ function makeSavedQuery(seed, syncState) {
     list() { return store.slice(); },
     // 与真实实现同口径：有工号用工号、否则姓名；取不到键就是「没有我的」，绝不退回全部
     userKeyOf: (u) => String((u && (u.userId || u.userName)) || ''),
+    // 与真实实现同口径（2026-09-22 改）：有身份按人过滤；
+    // 没身份则只给「无人认领」的本机记录（就是没登录时存的那批），别人的一律不露。
     listForUser(user) {
       const key = String((user && (user.userId || user.userName)) || '');
-      if (!key) return [];
       return store
-        .filter((it) => String((it.owner && (it.owner.userId || it.owner.userName)) || '') === key)
+        .filter((it) => {
+          const mine = String((it.owner && (it.owner.userId || it.owner.userName)) || '');
+          return key ? mine === key : !mine;
+        })
         .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || ((b.at || 0) - (a.at || 0)));
+    },
+    // 与真实实现同口径：把本机无人认领的记录认领给当前用户（首页渲染前会调一次）
+    claimAnonymous(user) {
+      const key = String((user && (user.userId || user.userName)) || '');
+      if (!key) return { ok: false, error: '未设置当前用户' };
+      let n = 0;
+      store.forEach((it) => {
+        const mine = String((it.owner && (it.owner.userId || it.owner.userName)) || '');
+        if (!mine) {
+          it.owner = { userId: user.userId, userName: user.userName, teamId: user.teamId, teamName: user.teamName };
+          n += 1;
+        }
+      });
+      return { ok: true, claimed: n };
     },
     // 默认不提供服务端数据：让首页停在「本机渲染」这条分支上（也顺带钉住
     // 「服务端这条路失败就别覆盖本机结果」）。要用服务端数据的用例自己覆盖它。
@@ -590,11 +608,35 @@ test('当前用户：未设置时清空身份条、显示表单，并建好可�
   assert.ok(selects[0], '可搜索下拉组件要建在这个 <select> 上');
 });
 
+test('首页：有身份时会向服务端要「我的」列表（别被本地写保护误挡）', async () => {
+  // 2026-09-22 用户报「我的常用查询不见了，但下面的部门查询还有我保存的」：
+  // renderSaved 里**无条件** markLocalWrite() → loadMineFromServer 每次都命中
+  // 「本地刚写过（5 秒）」的提前 return，镜像永远拉不回来；部门榜直读服务端，所以还看得见。
+  // 现在只有**认领到东西**（claimed > 0）时才标记本地写。
+  const { win, els } = buildEnv({ currentUser: ME, items: [] });
+  let called = 0;
+  win.SavedQuery.mineFromServer = async () => {
+    called += 1;
+    return {
+      ok: true, file: 'x', storage: 'sqlite', people: 1,
+      items: [{ id: 'm1', page: 'publish', name: '服务端那条', at: 5, owner: ME, saverKeys: [ME.userId] }],
+    };
+  };
+  win.HomePage.render();
+  await new Promise((r) => setTimeout(r, 30));      // 等那次 async 渲染回来
+  assert.strictEqual(called, 1, '有身份时必须向服务端要一次「我的」列表');
+  assert.strictEqual(els.savedList.children.length, 1, '拉回来的记录要画进「我的常用查询」');
+  const nameEl = findIn(els.savedList.children[0], (e) => e.textContent === '服务端那条');
+  assert.ok(nameEl, '卡片上要是服务端那条的名字');
+});
+
 test('部门排行：只列本部门的记录，且是只读视图（无重命名/删除）', () => {
+  // ⚠️ 这里刻意不放 owner: null 的记录：首页渲染时会先把无归属的本机记录认领给当前用户
+  //    （SavedQuery.claimAnonymous，2026-09-22 加），随后它就归进本部门了，会搅浑本用例
+  //    「只看部门口径」的意图。无归属记录的展示/认领由「没设当前用户也要显示」那条用例守。
   const items = [
     { id: 'd1', page: 'publish', name: '本部门A', at: 3, owner: ME, hits: 1 },
     { id: 'd2', page: 'task', name: '别的部门', at: 2, owner: OTHER, hits: 9 },
-    { id: 'd3', page: 'publish', name: '无归属', at: 1, owner: null, hits: 5 },
   ];
   const { win, els } = buildEnv({ currentUser: ME, items });
   win.HomePage.render();
@@ -701,15 +743,18 @@ test('首页：「我的」为空时要说清是哪一种空（无归属 / 别�
   a.win.HomePage.render();
   assert.ok(/你还没有保存过常用查询/.test(a.els.savedEmpty.textContent), a.els.savedEmpty.textContent);
 
-  // ② 有记录但**全都没归属人**（owner: null）→ 必须点明"没归属人"这个真原因，
-  //    否则用户会一直重复保存却永远看不到
+  // ② 有记录但**没归属人**（owner: null）→ 2026-09-22 改：**自动认领给当前用户**并直接显示。
+  //    旧行为是"空列表 + 提示设好用户再去查询页重新保存一次"，等于承认用户白存了一次
+  //    （用户报过"没登录时保存的明明存下来了，首页却看不到"）。
   const b = buildEnv({
     currentUser: ME2,
     items: [{ id: 'o1', page: 'publish', name: '没归属的', at: 1, owner: null }],
   });
   b.win.HomePage.render();
-  assert.ok(/没有归属人/.test(b.els.savedEmpty.textContent), b.els.savedEmpty.textContent);
-  assert.ok(/设好当前用户/.test(b.els.savedEmpty.textContent), '要说清下一步该干什么');
+  assert.strictEqual(b.els.savedList.children.length, 1, '认领后它应该出现在列表里');
+  assert.strictEqual(b.els.savedEmpty.hidden, true, '有内容了空态要收起');
+  const claimed = (b.win.SavedQuery.list()[0] || {}).owner || {};
+  assert.strictEqual(claimed.userId, '4711510', '认领要落到本机镜像：owner 改成当前用户');
 
   // ③ 有归属人、但不是"我"的 → 说清"没有一条属于郑梓辉"
   const c = buildEnv({
@@ -719,6 +764,29 @@ test('首页：「我的」为空时要说清是哪一种空（无归属 / 别�
   c.win.HomePage.render();
   assert.ok(/郑梓辉/.test(c.els.savedEmpty.textContent), c.els.savedEmpty.textContent);
   assert.ok(!/没有归属人/.test(c.els.savedEmpty.textContent), '这条有归属人，不该说成没归属');
+});
+
+test('首页：没设「当前用户」也要显示本机存的查询，但绝不露别人的', () => {
+  // 2026-09-22 用户报：没登录时保存的查询存下来了，首页却是空的（只留一句"先设当前用户"）。
+  // 现在没身份就把**无人认领的本机记录**列出来；别人的（有归属人的）依然一条都不显示 ——
+  // 「宁可不显示，也不把同事的查询说成我的」这条防线不能因为这次改动而破。
+  const env = buildEnv({
+    currentUser: null,
+    items: [
+      { id: 'a1', page: 'publish', name: '没登录时存的', at: 5, owner: null },
+      { id: 'x1', page: 'task', name: '别人的', at: 9, owner: OTHER },
+    ],
+  });
+  env.win.HomePage.render();
+  assert.strictEqual(env.els.savedList.children.length, 1, '只列本机那条匿名的，别人的不算');
+  assert.strictEqual(env.els.savedEmpty.hidden, true, '有内容就不该显示空态');
+  assert.strictEqual(env.els.savedCount.textContent, '共 1 条', '计数也要按实际列出来的算');
+
+  // 一条匿名记录都没有时，才回到"空"的提示（这时该告诉用户怎么开始）
+  const empty = buildEnv({ currentUser: null, items: [] });
+  empty.win.HomePage.render();
+  assert.strictEqual(empty.els.savedList.children.length, 0);
+  assert.ok(/保存到首页/.test(empty.els.savedEmpty.textContent), empty.els.savedEmpty.textContent);
 });
 
 test('首页：光输入就出候选（走 searchable-select 组件，不点「查 询」）', async () => {

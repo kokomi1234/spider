@@ -111,7 +111,18 @@
     badge.className = 'saved-badge';
     badge.textContent = (window.SavedQuery && window.SavedQuery.PAGES[item.page]) || item.page;
     const nameText = document.createElement('span');
-    nameText.textContent = item.name;
+    // 部门榜（titleFromLabels）的标题**只认筛选条件**，不认个人起的名字：
+    // 否则有人改个名，整个部门的榜单都跟着变（2026-09-22 用户报）。
+    // labels 为空（没填任何条件）时退回 name —— 那种记录本来就没"条件"可拼。
+    const condTitle = o.titleFromLabels && window.SavedQuery
+      && typeof window.SavedQuery.condNameOf === 'function'
+      ? window.SavedQuery.condNameOf(item) : '';
+    // 标题统一过一遍 shortCode：把「E00301-互联网金融服务平台-BOCNET-G-IFS」显示成
+    // 「BOCNET-G-IFS」（2026-09-22 用户要求）。**只影响显示** —— 记录里存的、重命名弹窗里
+    // 显示的仍是完整名字；对不含这种编码的名字（"27年6月独立"、用户自己起的）原样返回。
+    const shortOf = window.SavedQuery && typeof window.SavedQuery.shortCode === 'function'
+      ? window.SavedQuery.shortCode : ((t) => t);
+    nameText.textContent = shortOf(condTitle || item.name);
     nameRow.appendChild(badge);
     nameRow.appendChild(nameText);
     main.appendChild(nameRow);
@@ -211,14 +222,32 @@
     if (savedTitleEl) savedTitleEl.textContent = u ? `我的常用查询（${u.userName || u.userId}）` : '常用查询';
 
     if (!u) {
-      // 没有身份就宁可空着：显示全部会把同事的查询说成"我的"，那比空列表更误导人
-      clear(savedListEl);
-      if (savedCountEl) savedCountEl.textContent = '';
-      if (savedEmptyEl) {
-        savedEmptyEl.hidden = false;
-        savedEmptyEl.textContent = '先在上方「当前用户」里填工号或姓名，这里才会显示你保存的查询。';
+      // 没设「当前用户」也**不再空着**：把本机那些「无人认领」的记录列出来 ——
+      // 也就是没登录时保存的查询。以前这里直接清空、只留一句"先设当前用户"，
+      // 用户看到的是"我明明存了却什么都没有"（2026-09-22 报）。
+      // 别人的记录依然不会出现：过滤口径见 SavedQuery.listForUser 的注释。
+      let anon = [];
+      try {
+        anon = S.listForUser(null);
+      } catch (e) {
+        console.error('[home] 读取本机常用查询失败：', e);
       }
+      paintSaved(anon, null);
       return;
+    }
+
+    // ⚠️ 只有**真的认领到了**才标「本地写过」：认领会改镜像 + 推服务端，
+    //    随后的 ?user= 拉取可能是认领前的旧数据，得挡住那一次。
+    //    没认领到（claimAnonymous 返回 claimed: 0）**千万别标** —— 标了会把正常的
+    //    「从服务端刷新我的列表」也一起挡掉，表现就是「我的常用查询」永远是空的，
+    //    而部门榜因为直接读服务端还有数据（2026-09-22 真踩到）。
+    try {
+      if (typeof S.claimAnonymous === 'function') {
+        const cl = S.claimAnonymous(u);
+        if (cl && cl.claimed > 0) markLocalWrite();
+      }
+    } catch (e) {
+      console.error('[home] 认领本机常用查询失败：', e);
     }
 
     let items = [];
@@ -263,13 +292,17 @@
     if (!total) {
       return '你还没有保存过常用查询：到任一查询页填好筛选条件后，点「⭐ 保存到首页」，这里就会出现一键直达的入口。';
     }
+    // ⚠️ 这两条分支现在只在**认领失败**时才会走到（正常情况下 renderSaved 会先把
+    // 无人认领的记录认领给当前用户，见 SavedQuery.claimAnonymous）。
+    // 2026-09-22 之前它们说的是"再去查询页重新保存一次" —— 那等于承认用户白存了一次，
+    // 现在改成指向"认领"，别再写回旧口径。
     if (orphan === total) {
-      return `有 ${total} 条常用查询没有归属人（保存的时候还没设置当前用户），`
-        + '所以谁的「我的常用查询」里都不会出现。请先在上面设好当前用户，再去查询页重新保存一次。';
+      return `这 ${total} 条是本机保存的、还没有归属人（存的时候还没设「当前用户」）。`
+        + '在上面填好工号或姓名它们就会归到你名下（没归上时刷新一次页面即可）。';
     }
     if (orphan > 0) {
-      return `属于「${who}」的还没有；另有 ${orphan} 条没有归属人（不会出现在这里）。`
-        + '到任一查询页点「⭐ 保存到首页」即可。';
+      return `属于「${who}」的还没有；另有 ${orphan} 条是本机保存的、还没有归属人`
+        + '（填好当前用户后会自动归到你名下）。';
     }
     return `你还没有保存过常用查询（「${who}」名下一条都没有）：`
       + '到任一查询页填好条件后点「⭐ 保存到首页」就会出现。';
@@ -339,8 +372,10 @@
     if (!savedSyncEl) return;
     const S = window.SavedQuery;
     const st = (S && typeof S.lastSyncState === 'function') ? S.lastSyncState() : null;
-    // 还没同步过：不显示，免得首屏闪一个「仅本机」的假信号
-    if (!st || st.state === 'pending') {
+    // 还没同步过：不显示，免得首屏闪一个「仅本机」的假信号。
+    // 'nouser'（没设「当前用户」）同样隐藏 —— 那次只是探了个端点活着没，
+    // 根本没有「我的列表」可同步，显示「已同步」是空话（2026-09-21 用户拍板）。
+    if (!st || st.state === 'pending' || st.state === 'nouser') {
       savedSyncEl.hidden = true;
       savedSyncEl.textContent = '';
       savedSyncEl.title = '';
@@ -613,6 +648,10 @@
     if (CU) CU.clear();
     resetUserSearch();
     renderUser();
+    // 清掉登录态后「常用查询」列表必须跟着重渲染：镜像里还残留着上一个人的记录
+    //（清除登录态不清镜像），不重渲染的话屏幕上会一直挂着别人的列表。
+    // renderSaved 在没身份的分支里会把镜像收敛成只剩本机匿名的、并列出它们。
+    renderSaved();
     const box = userSearchBox();
     if (box) box.focus();   // 焦点回到组件内部那个真正的输入框（宿主 <select> 是隐藏的）
   }
@@ -670,7 +709,7 @@
       console.error('[home] 读取部门常用查询失败：', e);
     }
 
-    items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true })));
+    items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true, titleFromLabels: true })));
 
     const empty = items.length === 0;
     deptEmptyEl.hidden = !empty;
@@ -704,7 +743,7 @@
     if (!r || !r.ok || !Array.isArray(r.items)) return;   // 失败就保留本机渲染的结果
 
     clear(deptListEl);
-    r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true })));
+    r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true, titleFromLabels: true })));
     const empty = r.items.length === 0;
     deptEmptyEl.hidden = !empty;
     if (empty) {
@@ -719,14 +758,18 @@
   // 2026-09-21 更正：以前这里写的是「记录在本机 localStorage，同一台机器才自然共享」——
   // 那是**架构改版前**的口径，现在团队的记录都在代理的共享库（SQLite）里，
   // 同一份代理下大家本来就互相看得到，导出/导入不再是「唯一通路」。
-  // 它现在的用途是**搬运/备份**：换一台机器、或者把某人的一批查询挪到别处。
-  // 导出导的仍是**本机镜像里那几份 JSON 文件**（不按人切），导入是合并（id 去重）。
+  // 它现在的用途是**搬运/备份**：换一台机器、或者把自己的一批查询挪到别处。
+  // **范围（2026-09-21 用户拍板）**：导出导的是**当前用户自己的**记录
+  // （此前误取团队库全集，实测 12 条跨了 6 个人）；导入进来的记录**归当前用户**
+  // （按 id / 同页面同名合并）。没设「当前用户」时，两侧都只走本机镜像 ——
+  // 那时常用查询本来就保存在 localStorage、不进共享库。
 
   async function exportQueries() {
     const S = window.SavedQuery;
     if (!S) { showToast('常用查询模块未加载', 2600, 'error'); return; }
-    // 2026-09-20 架构改版：镜像只含「我的」，导出主体应该是**服务端团队库**
-    // （exportJsonAsync 连不上代理才退本机镜像）。所以这里不再用本机条数拦人。
+    // 2026-09-21 用户拍板：导出**只导当前用户自己的**（此前 exportJsonAsync 拉的是
+    // 团队库全集）。它内部已按「当前用户」问服务端，连不上/没设用户才退本机镜像。
+    // 所以这里不再用本机条数拦人 —— 本机镜像只有「我的」，条数少不代表服务端没有。
     const text = await S.exportJsonAsync();
     const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -738,7 +781,8 @@
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    // 条数从**导出内容**里读（导出主体是服务端团队库，这里没有现成的 items 变量）。
+    // 条数从**导出内容**里读（导出的是「我的」那份，可能来自服务端、也可能来自本机镜像，
+    // 这一层没有现成的 items 变量）。
     // 2026-09-21 修：原先写的是 `${items.length}` —— `items` 是 renderSaved/deptRender 里的
     // **函数局部变量**，这一层根本取不到，点导出必抛 ReferenceError。表现很隐蔽：
     // 文件照常下载，但成功提示永不出现，反被全局兜底弹一句「⚠️ 页面出现异常」，看着像导出失败。
@@ -748,7 +792,7 @@
       const parsed = JSON.parse(text);
       n = Array.isArray(parsed && parsed.items) ? parsed.items.length : 0;
     } catch (_) { /* 解析不了就只说「已导出」，不编一个数 */ }
-    showToast((n ? `已导出 ${n} 条` : '已导出')
+    showToast((n ? `已导出你的 ${n} 条常用查询` : '已导出你的常用查询')
       + '，发给同团队的人让他「导 入」即可合并', 3600, 'success');
   }
 

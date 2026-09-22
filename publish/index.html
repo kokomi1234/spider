@@ -54,7 +54,6 @@
     }
     .home-entry .entry-head { display: flex; align-items: center; gap: 10px; }
     .home-entry .entry-title { font-size: var(--fs-lg); font-weight: 600; margin: 0; }
-    .home-entry .entry-desc { color: var(--muted); font-size: var(--fs-sm); line-height: 1.5; margin: 0; }
     .home-entry .entry-meta {
       display: flex;
       flex-wrap: wrap;
@@ -282,7 +281,6 @@
           <span class="entry-idx">1</span>
           <h2 class="entry-title">服务发布数据查询</h2>
         </div>
-        <p class="entry-desc">按提供方系统、变更批次等条件查询服务发布台账，支持查看服务详情与发起订阅。</p>
         <ul class="entry-meta">
           <li>服务 / 接口检索</li>
           <li>订阅与评委信息</li>
@@ -296,7 +294,6 @@
           <span class="entry-idx">2</span>
           <h2 class="entry-title">任务单查询</h2>
         </div>
-        <p class="entry-desc">按批次、任务分类等条件查询任务单，查看任务详情与流转状态。</p>
         <ul class="entry-meta">
           <li>任务单检索</li>
           <li>详情查看</li>
@@ -310,7 +307,6 @@
           <span class="entry-idx">3</span>
           <h2 class="entry-title">服务订阅关系查询</h2>
         </div>
-        <p class="entry-desc">查询服务与调用方之间的订阅关系，含投产优先级与逾期提醒。</p>
         <ul class="entry-meta">
           <li>订阅关系检索</li>
           <li>投产优先级</li>
@@ -414,6 +410,7 @@
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/ui/toast.js"></script>
   <script src="js/ui/token-manager.js"></script>
+  <script src="js/core/user-token.js"></script>
   <script src="js/core/api-client.js"></script>
   <script src="js/api/user-api.js"></script>
   <script src="js/ui/current-user.js"></script>

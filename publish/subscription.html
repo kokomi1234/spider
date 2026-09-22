@@ -267,18 +267,17 @@
        滚到底也不随内容走（用户报的 bug）。这里改成：主体不滚（overflow:hidden），
        由内部 .batch-time-table-wrap 单独滚动 —— 表头只在表格区顶部吸顶，
        弹窗里也只有这一条滚动条。 */
+    /* 主体高度（2026-09-21 改）：原来 60vh，上面压着两段提示文字（实测占 108px + 16px 间距）。
+       提示文字按界面铁律删掉后，这块高度直接让给表格 ——
+       `60vh + 110px` 就是「原高度 + 刚腾出来的那 108px」，但不得超过弹窗外框的上限
+       （88vh 减去标题栏 65 + 底栏 69 ≈ 140px，留 6px 余量，免得撑破 .sub-dialog 的 88vh）。
+       小视口取后者（如 768 高时 60vh+110 反而会溢出），所以用 min() 取安全值。 */
     .batch-time-body {
       display: flex;
       flex-direction: column;
-      max-height: 60vh;
+      max-height: min(calc(60vh + 110px), calc(88vh - 140px));
       overflow: hidden;
       padding: 16px 20px;
-    }
-    .batch-time-hint {
-      font-size: var(--fs-sm);
-      color: var(--muted);
-      margin: 0 0 16px;
-      line-height: 1.6;
     }
     .batch-time-table-wrap {
       flex: 1 1 auto;
@@ -336,7 +335,9 @@
       <h1>服务订阅关系查询</h1>
       <div class="toolbar">
         <a class="outlined btn-sm" href="/home">← 返回首页</a>
+        <a class="outlined btn-sm" href="/publish">服务发布数据查询</a>
         <a class="outlined btn-sm" href="/task">任务单查询</a>
+        <button class="outlined btn-sm" id="btnTokenManager">🔑 Token</button>
       </div>
     </div>
 
@@ -348,8 +349,11 @@
                 aria-expanded="true" aria-controls="filterBody">▼</button>
       </div>
       <div class="card-body" id="filterBody">
-        <!-- 常用条件：调用方系统 + 两个批次。其余全部收进「更多筛选项」。 -->
-        <div class="form-grid">
+        <!-- 2026-09-22：删「更多筛选项」折叠后，这里曾是**两个独立的 form-grid**（常用 3 个 +
+             其余 10 个）。auto-fill 各自算列，两块的列宽/间隔对不齐，用户报「布局很不协调」。
+             合并成一个网格：常用条件在前，13 个字段同一套列宽与间隔。 -->
+        <div class="form-grid" id="advancedFields">
+          <!-- 常用条件：调用方系统 + 两个批次 -->
           <div class="form-group">
             <label for="f_callerCompNum" class="required">调用方系统/分行</label>
             <select id="f_callerCompNum" placeholder="请输入或选择调用方系统/分行"></select>
@@ -362,16 +366,8 @@
             <label for="f_providerBatch">提供方最新变更批次</label>
             <select id="f_providerBatch" placeholder="请输入或选择变更批次"></select>
           </div>
-        </div>
 
-        <!-- 更多筛选项（默认隐藏） -->
-        <div class="more-head">
-          <button type="button" class="chevron" id="btnToggleAdvanced"
-                  aria-expanded="false" aria-controls="advancedFields"
-                  style="transform: rotate(-90deg);">▼</button>
-          <span class="more-head-title">更多筛选项</span>
-        </div>
-        <div class="form-grid" id="advancedFields" style="display:none;">
+          <!-- 其余筛选条件 -->
           <div class="form-group">
             <label for="f_providerCompNum" class="required">提供方系统</label>
             <select id="f_providerCompNum" placeholder="请输入或选择提供方系统"></select>
@@ -572,13 +568,6 @@
         <button type="button" class="sub-close" id="btnBatchTimeClose" aria-label="关闭">✕</button>
       </div>
       <div class="sub-body batch-time-body" id="batchTimeBody">
-        <p class="batch-time-hint">就地给批次填日期，保存到本地配置文件（config/batch-times.json，不调后端），
-           并<strong>覆盖</strong>「优先级」的里程碑截止日。日期<strong>精确到日</strong>，按你填的日期算；
-           保存时只写你改过的行，没填的行不影响优先级（按规则推算）。</p>
-        <p class="batch-time-hint">
-           打开日历会直接定位到该批次对应的月份：<strong>功能测试 = 批次月 −1</strong>、
-           <strong>上线 = 批次月</strong>。例：<strong>2608批次 → 功能测试落在 2026年7月、上线落在 2026年8月</strong>。
-           状态对应：功能测试时间 → 开发基线→功能测试基线；上线时间 → 功能测试基线→正式版基线。</p>
         <!-- 表格的滚动只发生在这里（.batch-time-table-wrap）：表头在本区域内吸顶 -->
         <div class="batch-time-table-wrap">
           <table class="batch-time-table">
@@ -612,6 +601,7 @@
   <script src="js/core/runtime-config.js"></script>
   <script src="js/core/debug.js"></script>
   <script src="js/core/format.js"></script>
+  <script src="js/core/user-token.js"></script>
   <script src="js/core/api-client.js"></script>
   <script src="js/api/tool-api.js"></script>
   <script src="js/data/batch-data.js"></script>
@@ -626,6 +616,9 @@
   <script src="js/ui/dialog-utils.js"></script>
   <script src="js/core/app-navigator.js"></script>
   <script src="js/ui/toast.js"></script>
+  <!-- token-manager：本页 toolbar 的「🔑 Token」要用（2026-09-21 补，与发布页同一支；
+       它依赖 toast 与 dialog-utils，且要早于页面脚本）。 -->
+  <script src="js/ui/token-manager.js"></script>
   <!-- 本页已无导出功能，但保留该引入：csv-export.js 由三页共用，index / task 页仍在用 -->
   <script src="js/ui/csv-export.js"></script>
   <script src="js/ui/table-utils.js"></script>

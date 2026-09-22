@@ -72,3 +72,29 @@ test('renderRows：字段兜底 —— 缺省值渲染占位符', () => {
   assert.strictEqual(html.includes('data-code="—"'), true);
   assert.strictEqual(html.includes('cell-sub"><span'), false);    // 无 subscribeMark
 });
+
+test('renderRows：回落用管理员 token 时订阅按钮要置灰（订阅是写内网的操作）', () => {
+  // 2026-09-22：用管理员 token 时内网只给查询权限。光在点击时拦不够 ——
+  // 用户会先点一下才知道不行，所以渲染时就把按钮置灰 + 写清原因。
+  const ctx = { pageNum: 1, pageSize: 20, checkSubscribe: () => 'unsubscribed' };
+  const withApi = (source) => {
+    win.API = { tokenSource: () => source };
+    return V.renderRows([SAMPLE], ctx);
+  };
+
+  const fallbackHtml = withApi('fallback');
+  assert.ok(fallbackHtml.includes('data-sub='), '按钮还在（只是禁用）');
+  assert.ok(fallbackHtml.includes('disabled'), '回落管理员 token 时必须置灰');
+  assert.ok(fallbackHtml.includes('录入你自己的 token'), '要说清怎么解锁');
+
+  const myHtml = withApi('user');
+  assert.ok(myHtml.includes('data-sub=') && !myHtml.includes('disabled'), '用自己 token 时可订阅');
+
+  // 管理员本人也用的是管理员 token，但他有全套权限，绝不能一起禁掉
+  const adminHtml = withApi('admin');
+  assert.ok(adminHtml.includes('data-sub=') && !adminHtml.includes('disabled'), '管理员本人不该被禁');
+
+  delete win.API;
+  const noApiHtml = V.renderRows([SAMPLE], ctx);
+  assert.ok(noApiHtml.includes('data-sub=') && !noApiHtml.includes('disabled'), '拿不到来源时不限制');
+});

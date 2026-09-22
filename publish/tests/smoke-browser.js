@@ -176,8 +176,10 @@ const PAGES = [
         const homeOk = !homeCheck.err
           && JSON.stringify(homeCheck.entries) === JSON.stringify(['/publish', '/task', '/subscription'])
           && homeCheck.emptyShown === true && homeCheck.items0 === 0
-          // 没设身份时空列表必须给"去设置当前用户"的指引，而不是显示别人的/全部的
-          && /当前用户/.test(homeCheck.emptyHintNoUser || '')
+          // 空列表要给「怎么开始」的指引。2026-09-22 起：没设身份也能保存、也能在首页看到
+          // （本机匿名记录会列出来），所以"先去设置当前用户"不再是必要步骤，
+          // 只要告诉用户去哪保存即可；别人的记录依然一条都不会露出来。
+          && /保存到首页/.test(homeCheck.emptyHintNoUser || '')
           && homeCheck.saved === true && homeCheck.items1 === 1
           && /冒烟甲/.test(homeCheck.titleAfterRender || '')
           && homeCheck.badge === '服务发布数据查询'
@@ -567,8 +569,9 @@ const PAGES = [
           // 存的时候自动带上归属人（current-user.js 在场），且不再报 ownerMissing
           out.mineOwnerSaved = !!(S.list()[0] && S.list()[0].owner);
           out.ownerMissingFlag = (await S.save({ page: 'publish', name: '第二条', fields: {} })).ownerMissing === false;
-          // 2026-09-20 改版：exportJsonAsync 连得上代理导团队库、连不上退本机镜像 ——
-          // 冒烟环境没有 /local/saved-queries 端点，两条路都该能出合法的 JSON
+          // 2026-09-21 改口径：exportJsonAsync 只导**当前用户自己的**（此前误取团队库全集）；
+          // 冒烟环境没有 /local/saved-queries 端点，会退回本机镜像 —— 两条路都该出合法 JSON，
+          // 而且都只含「我的」（镜像是按人维护的，不会混进别人的记录）。
           const text = await S.exportJsonAsync();
           out.exportHasApp = /"app":\s*"spider-saved-queries"/.test(text);
           out.exportCount = (JSON.parse(text).items || []).length;
@@ -622,13 +625,14 @@ const PAGES = [
           && ioCheck.firstImport && ioCheck.firstImport.ok && ioCheck.firstImport.added === 1
           && ioCheck.firstImport.total === 3
           && ioCheck.secondImport.added === 0 && ioCheck.secondImport.total === 3
-          // 我的两条 + 同事的那条不该出现
-          && ioCheck.renderedCount === 2
-          && ioCheck.renderedNames && !ioCheck.renderedNames.some((n) => /同事的查询/.test(n))
+          // 2026-09-21 用户拍板：导入进来的记录**归当前用户** —— 所以「同事发来的那条」
+          // 现在也出现在冒烟甲的列表里（以前保留原 owner，它归 1001、在自己列表里看不见）
+          && ioCheck.renderedCount === 3
+          && ioCheck.renderedNames && ioCheck.renderedNames.some((n) => /同事的查询/.test(n))
           && ioCheck.titleSaysMine === true
-          // 换人之后只剩同事那一条
-          && ioCheck.afterSwitchCount === 1
-          && ioCheck.afterSwitchNames && ioCheck.afterSwitchNames.some((n) => /同事的查询/.test(n))
+          // 换人之后同事名下什么都没有：那条已经归冒烟甲了（旧口径下这里会是 1 条）
+          && ioCheck.afterSwitchCount === 0
+          && ioCheck.afterSwitchNames && !ioCheck.afterSwitchNames.some((n) => /同事的查询/.test(n))
           // 没身份 → 0 条 + 指引（关键防线：不许静默退回"显示全部"）
           && ioCheck.noUserCount === 0 && /当前用户/.test(ioCheck.noUserHint || '')
           && ioCheck.hasSyncApi === true && ioCheck.pushWithoutEndpoint === true;
@@ -679,7 +683,7 @@ const PAGES = [
         });
         process.stdout.write(`  导出按钮: ${JSON.stringify(exportBtn)}\n`);
         {
-          const hit = (exportBtn.toasts || []).some((m) => /^已导出\s*1\s*条/.test(m));
+          const hit = (exportBtn.toasts || []).some((m) => /^已导出你的\s*1\s*条/.test(m));
           if (!hit || exportBtn.uncaught !== 0 || exportBtn.savedOk !== true) {
             process.stdout.write('    [FAIL] 点「导 出」没给出带条数的成功提示 / 抛了未捕获异常：'
               + JSON.stringify(exportBtn) + '\n');
@@ -1581,12 +1585,14 @@ const PAGES = [
         }
 
         // 批次时间的行来源 + 日历初始月份（2026-09-15 用户反馈的三个点一起守）：
-        //   · 行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立），
+        //   · 行 = 批次字典里落在批次窗口（当月 −2 ~ +3）内的批次（月度 + 独立），
         //     不再有「查询结果里冒出来的历史批次」（2408批次 就是这么进来的）；
         //   · 「作废」批次、解析不出年月的批次不进弹窗；
         //   · 打开日历直接定位到批次对应月份：功测 = 批次月 −1、上线 = 批次月。
+        // ⚠️ 窗口 2026-09-21 从 12 个月（−2 ~ +9）收成 6 个月（−2 ~ +3）：
+        //    2706批次 由「窗口内」变成「窗口外」，断言跟着换边（见下面的 mustHave / 不该有）。
         const btRows = await page.evaluate(async () => {
-          // 字典桩：真实字典要打接口，冒烟环境用固定样本覆盖（窗口 = 2607 ~ 2706）
+          // 字典桩：真实字典要打接口，冒烟环境用固定样本覆盖（窗口 = 2607 ~ 2612）
           window.loadBatchList = async () => [
             { label: '2607批次', value: 'z' },
             { label: '2608批次', value: 'a' },
@@ -1603,14 +1609,15 @@ const PAGES = [
           return rows;
         });
         process.stdout.write(`  批次行: ${btRows.join('、')}\n`);
-        const mustHave = ['2607批次', '2608批次', '26年8月独立', '2706批次'];
+        const mustHave = ['2607批次', '2608批次', '26年8月独立'];
         mustHave.forEach((b) => {
           if (!btRows.includes(b)) {
             process.stdout.write(`    [FAIL] 批次行缺少 ${b}（字典窗口过滤 / 排序有问题）\n`);
             anyFail = true;
           }
         });
-        ['2408批次', '26年8月独立批次(作废)', '技术支持类-2026年批次'].forEach((b) => {
+        // 2706批次 自 2026-09-21 起在窗口外（当月 +3 只到 2612）→ 换成「不该出现」这一侧
+        ['2408批次', '26年8月独立批次(作废)', '技术支持类-2026年批次', '2706批次'].forEach((b) => {
           if (btRows.includes(b)) {
             process.stdout.write(`    [FAIL] 批次行不该出现 ${b}（窗口外/作废/解析不出年月）\n`);
             anyFail = true;
@@ -1669,7 +1676,8 @@ const PAGES = [
         //     不再被全局 thead th{sticky;top:0} 顶到弹窗顶部、跟内容一起滚不动。
         //  ② 下拉栏完整可见：日历面板展开超出可视范围时，自动向下滚动表格容器，
         //     让面板完整落在输入框下方 —— 不用用户手动调。
-        // 用「12 个月度批次 + localStorage 里 20 个自定义批次」把表格撑长，制造真实滚动。
+        // 用「字典桩里的月度批次 + localStorage 里 20 个自定义批次」把表格撑长，制造真实滚动。
+        // （字典桩给了 2607~2612 与 2701~2706，后者落在窗口外会被过滤掉，正好一并验证过滤。）
         const btScroll = await page.evaluate(async () => {
           const KEY = 'itamp.batchTimes';
           const before = localStorage.getItem(KEY);
@@ -3629,7 +3637,8 @@ const PAGES = [
 
   // ═══════════════════════════════════════════════════════════════
   // 必填标记（C5）：.required 的星号规则已从 publish.html 的页面样式提到 theme.css 共享。
-  // 断言首页的星号没被改坏（回归），且订阅页查询表单的「二选一必填」有标记 + 说明。
+  // 2026-09-21 起发布页的「系统 / 批次」改为**非必选**（星号撤掉，校验换成查询前的二次确认），
+  // 所以这里守两点：发布页**不该**再出现 .required；订阅页查询表单的「二选一必填」标记 + 说明仍在。
   // ═══════════════════════════════════════════════════════════════
   {
     const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
@@ -3643,7 +3652,7 @@ const PAGES = [
     try {
       await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(700);
-      const idx = await star('label.required');
+      const pubReq = await star('label.required');
 
       await page.goto(base + 'subscription.html', { waitUntil: 'load', timeout: 15000 });
       await page.waitForTimeout(700);
@@ -3653,11 +3662,11 @@ const PAGES = [
         const n = document.querySelector('.filter-required-note');
         return n ? n.textContent.replace(/\s+/g, ' ').trim() : null;
       });
-      process.stdout.write(`  必填标记(C5): 发布页=${JSON.stringify(idx)} 调用方=${JSON.stringify(caller)}`
+      process.stdout.write(`  必填标记(C5): 发布页=${JSON.stringify(pubReq)} 调用方=${JSON.stringify(caller)}`
         + ` 提供方=${JSON.stringify(provider)} 说明=${JSON.stringify(note)}\n`);
       const hasStar = (x) => !!x && !x.missing && String(x.content).indexOf('*') > -1;
-      if (!hasStar(idx)) {
-        fails.push(`发布页必填星号丢了（.required 规则搬到 theme.css 后失效？）实际 ${JSON.stringify(idx)}`);
+      if (pubReq && !pubReq.missing) {
+        fails.push(`发布页不该再有必填星号（系统/批次已改为非必选），实际 ${JSON.stringify(pubReq)}`);
       }
       if (!hasStar(caller)) fails.push(`订阅页「调用方系统/分行」应带必填星号，实际 ${JSON.stringify(caller)}`);
       if (!hasStar(provider)) fails.push(`订阅页「提供方系统」应带必填星号，实际 ${JSON.stringify(provider)}`);
@@ -3666,6 +3675,56 @@ const PAGES = [
       }
     } catch (e) {
       fails.push(`必填标记段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 三个查询页的工具栏（2026-09-21 补）：**每页**都要有「🔑 Token」和跳往另外两个
+  // 查询页的按钮。以前只有发布页（+首页）有，在任务单页/订阅页想改 token 或去别的页
+  // 只能先退回首页。按钮在还不算数 —— 这里还要真的点一下，确认 init() 接上了。
+  // ═══════════════════════════════════════════════════════════════
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    const PAGES = [
+      ['发布查询页', 'publish.html', ['/task', '/subscription']],
+      ['任务单页', 'task.html', ['/publish', '/subscription']],
+      ['订阅关系页', 'subscription.html', ['/publish', '/task']],
+    ];
+    try {
+      for (const [name, file, hops] of PAGES) {
+        await page.goto(base + file, { waitUntil: 'load', timeout: 15000 });
+        await page.waitForTimeout(900);
+        const r = await page.evaluate((needHops) => {
+          const links = [...document.querySelectorAll('.page-header .toolbar a')]
+            .map((a) => a.getAttribute('href'));
+          return {
+            hasToolbar: !!document.querySelector('.page-header .toolbar'),
+            hasTokenBtn: !!document.getElementById('btnTokenManager'),
+            hasHomeLink: links.indexOf('/home') > -1,
+            missingHops: needHops.filter((h) => links.indexOf(h) < 0),
+          };
+        }, hops);
+        // 按钮存在还不够：点了要真弹出 Token 管理弹窗（验证 TokenManager.init() 接上了）
+        await page.click('#btnTokenManager');
+        await page.waitForTimeout(900);
+        r.tokenOpens = await page.evaluate(() => !!document.querySelector('.dlg-util-overlay.show'));
+        if (r.tokenOpens) {
+          await page.locator('.dlg-util-overlay.show .sub-foot button').first().click();   // 取 消
+          await page.waitForTimeout(500);
+        }
+        process.stdout.write(`  ${name}工具栏: ${JSON.stringify(r)}\n`);
+        if (!r.hasToolbar) fails.push(`${name} 缺 .page-header .toolbar`);
+        if (!r.hasTokenBtn) fails.push(`${name} 缺「🔑 Token」按钮（#btnTokenManager）`);
+        if (!r.hasHomeLink) fails.push(`${name} 缺回首页的链接`);
+        if (r.missingHops.length) fails.push(`${name} 缺跳往 ${r.missingHops.join('、')} 的按钮`);
+        if (!r.tokenOpens) fails.push(`${name} 点「🔑 Token」没弹出管理弹窗（TokenManager.init 没接上？）`);
+      }
+    } catch (e) {
+      fails.push(`工具栏段异常：${e.message}`);
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;

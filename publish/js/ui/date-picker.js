@@ -429,7 +429,14 @@
       const viewportHeight = window.innerHeight || 0;
       if (viewportHeight - rect.bottom - GAP >= naturalHeight) return rect;   // 下方已放得下
 
-      const need = rect.bottom + GAP + naturalHeight - viewportHeight;        // 还需向下滚多少
+      // ⚠️ 多留 2px 余量（2026-09-21 实测踩到）：原本按「滚完恰好放得下」算，
+      // 即滚完后 spaceBelow 正好 == naturalHeight；而调用方判定用的是**严格大于**
+      // （`naturalHeight > spaceBelow` 才翻上）。可 scrollTop 会被浏览器取整、rect 是浮点，
+      // 差 0.几像素就判成「下方放不下」→ 面板翻到输入框上方。
+      // 批次时间弹窗拉高后（1280×720：弹窗底部离视口底只剩 131px）必现。
+      // 多滚 2px 保证滚动后 spaceBelow 真的大于面板高，不改变其他行为。
+      const SLACK = 2;
+      const need = rect.bottom + GAP + naturalHeight + SLACK - viewportHeight;  // 还需向下滚多少
       if (need <= 0) return rect;
       const keepInputVisible = Math.max(0, rect.top - 8);
 

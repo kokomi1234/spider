@@ -442,11 +442,11 @@ test('batchWindow：委托 batchWindowLabels，模块缺失时返回空窗口', 
   assert.deepStrictEqual(win.SubscriptionModel.batchWindow(), ['2609批次', '2610批次']);
   assert.ok(gotArg instanceof Date);
 
-  // 与真正的 batchWindowLabels 联动：近 12 个月窗口，长度 12、YYMM批次 格式
+  // 与真正的 batchWindowLabels 联动：批次窗口（当月 −2 ~ +3），长度 6、YYMM批次 格式
   const win2 = loadScript('js/data/batch-data.js');
   loadScript('js/page/subscription-model.js', {}, win2);
   const labels = win2.SubscriptionModel.batchWindow();
-  assert.strictEqual(labels.length, 12);
+  assert.strictEqual(labels.length, 6);
   labels.forEach((l) => assert.strictEqual(/^\d{4}批次$/.test(l), true, '格式异常：' + l));
 });
 

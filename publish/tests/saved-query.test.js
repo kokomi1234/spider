@@ -43,6 +43,7 @@ function load(storage, win = {}) {
 }
 
 const KEY = 'spider.savedQueries.v1';
+const ANON_KEY = 'spider.savedQueries.anon.v1';
 
 // ══════════════════════════════════════════════════════════
 // 1) 保存与校验
@@ -89,15 +90,46 @@ test('saved-query：fields 只收 string / number / string[]，对象与 null �
     '对象/null/空串/NaN/Infinity 都不该进入 fields（它会被回填进表单）');
 });
 
-test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 id', async () => {
+test('saved-query：同一份条件重复保存 → 更新，不重复堆积、保留原 id', async () => {
   const S = load(fakeStorage());
-  const a = (await S.save({ page: 'publish', name: '同名', fields: { x: '1' } }));
-  const b = (await S.save({ page: 'publish', name: '同名', fields: { x: '2' } }));
+  const a = (await S.save({ page: 'publish', name: '第一次起的名字', fields: { x: '1' } }));
+  const b = (await S.save({ page: 'publish', name: '第一次起的名字', fields: { x: '1' } }));
   assert.strictEqual(b.ok, true);
-  assert.strictEqual(b.item.id, a.item.id, '更新应复用原 id，否则首页会存下一堆同名卡片');
+  assert.strictEqual(b.item.id, a.item.id, '同一份条件应复用原 id，否则首页会堆一串卡片');
   assert.strictEqual(b.updated, true);
-  assert.strictEqual(S.list().length, 1, '不该出现两条同名记录');
-  assert.strictEqual(S.list()[0].fields.x, '2', '应覆盖为最新条件');
+  assert.strictEqual(S.list().length, 1, '不该出现两条');
+  assert.ok((S.list()[0].saves || 1) >= 2, '「保存次数」要累加 —— 高频榜看它');
+});
+
+test('saved-query：改了名字再保存 → 还是同一条（2026-09-22 用户报的重复来源之一）', async () => {
+  // 现场：把常用查询改个名，同一个查询就多出一条。
+  // 根因是判重比的是**名字**，而名字是用户随手改的 —— 判据该是「同一份筛选条件 + 同一个人」。
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '原名', fields: { x: '1' }, owner: OWNER_A }));
+  const b = (await S.save({ page: 'publish', name: '改过的名', fields: { x: '1' }, owner: OWNER_A }));
+  assert.strictEqual(b.item.id, a.item.id, '改名字不该产生新记录');
+  assert.strictEqual(b.updated, true);
+  assert.strictEqual(S.list().length, 1);
+  assert.strictEqual(S.listForUser(OWNER_A)[0].name, '改过的名', '名字要跟着更新');
+});
+
+test('saved-query：同一份条件换个人存 → 各自一条（部门榜靠聚合，不靠共用一条）', async () => {
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '同一条件', fields: { x: '1' }, owner: OWNER_A }));
+  const b = (await S.save({ page: 'publish', name: '同一条件', fields: { x: '1' }, owner: OWNER_B }));
+  assert.notStrictEqual(b.item.id, a.item.id, '不同人各自一条，谁也别改到谁');
+  assert.strictEqual(b.updated, false);
+  assert.strictEqual(S.list().length, 2);
+});
+
+test('saved-query：什么条件都没填时不按条件归并（空条件各自独立）', async () => {
+  // fingerprint 为空串表示"没有筛选条件可归并"，退回同页同名同人
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '空条件', fields: {} }));
+  const b = (await S.save({ page: 'publish', name: '空条件', fields: {} }));
+  assert.strictEqual(b.item.id, a.item.id, '空条件 + 同名同人 → 仍是更新');
+  const c = (await S.save({ page: 'publish', name: '另一个名字', fields: {} }));
+  assert.notStrictEqual(c.item.id, a.item.id, '空条件 + 不同名 → 各自一条');
 });
 
 test('saved-query：同名同页但换了个人 → 新建一条，不复用别人的 id（2026-09-20 回归）', async () => {
@@ -570,14 +602,18 @@ test('saved-query：新增的保存排在最前（首页按最近使用展示）
 // ══════════════════════════════════════════════════════════
 
 test('saved-query：导出 → 导入 往返，记录与归属都在', async () => {
-  const a = load(fakeStorage());
+  // 2026-09-22 起 exportJson 的口径与列表一致（listForUser）：有身份导 ta 的、
+  // 没身份只导本机匿名的。所以这条往返用例必须**带着「当前用户」**跑（与真实页面一致），
+  // 否则显式传的 owner 会被"没身份只导匿名的"过滤掉。
+  const noNet = async () => { throw new Error('离线'); };
+  const a = loadUserSync(fakeStorage(), noNet, OWNER_A);
   (await a.save({ page: 'publish', name: '甲', fields: { f_prodBatch: '2611pc' }, summary: '变更批次：2611批次', owner: OWNER_A, labels: { f_prodBatch: '2611批次' } }));
   const text = a.exportJson();
   const parsed = JSON.parse(text);
   assert.strictEqual(parsed.app, 'spider-saved-queries', '要带标识，导入方好判断文件来源');
   assert.strictEqual(parsed.items.length, 1);
 
-  const b = load(fakeStorage());
+  const b = loadUserSync(fakeStorage(), noNet, OWNER_A);
   const r = (await b.importJson(text));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.added, 1);
@@ -586,6 +622,25 @@ test('saved-query：导出 → 导入 往返，记录与归属都在', async () 
   assert.strictEqual(got.name, '甲');
   assert.strictEqual(got.owner.userName, '张三', '归属要跟着走，否则导入后不进部门排行');
   assert.deepStrictEqual(got.labels, { f_prodBatch: '2611批次' });
+});
+
+test('saved-query：清了登录态再导出，不得把上一个登录的人的记录混进去', async () => {
+  // 2026-09-22 用户实测：吴树海登录存过记录 → 清了登录态（**镜像不会清**）→ 匿名又存了几条
+  // → 导出 → 文件里混着吴树海的记录。导出口径必须与列表一致（listForUser）：
+  // 没身份时只导「无人认领」的本机记录，别人的（有归属人的）一条都不能混入。
+  const noNet = async () => { throw new Error('离线'); };
+  const st = fakeStorage();
+  const WU = { userId: '6464402', userName: '吴树海', teamId: 'K4229', teamName: '开发三部' };
+  const S1 = loadUserSync(st, noNet, WU);
+  (await S1.save({ page: 'publish', name: '吴树海的', fields: {} }));
+
+  // 同一份 localStorage 换到「没设用户」的环境（模拟清除登录态后镜像未清）
+  const S2 = loadSync(st, noNet);
+  (await S2.save({ page: 'publish', name: '匿名存的', fields: {} }));
+
+  const parsed = JSON.parse(S2.exportJson());
+  assert.deepStrictEqual(parsed.items.map((x) => x.name), ['匿名存的'],
+    '只导本机匿名的，上一个登录的人的记录不得混入导出文件');
 });
 
 test('saved-query：同 id → 视为同一条合并，不重复堆积', async () => {
@@ -833,7 +888,7 @@ test('同步状态：成功且代理报了库文件 → shared，file/storage/pe
   const S = loadSync(fakeStorage(), okJson({
     items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 3,
   }));
-  const r = await S.syncFromServer();
+  const r = await S.pushToServer();
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.file, '/srv/shared/saved-queries.db', '返回值也要带 file，首页角标之外的人要用');
   const st = S.lastSyncState();
@@ -923,7 +978,7 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
   const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
   const seen = [];
   const off = S.onSyncStateChange((st) => seen.push(st.state));
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.deepStrictEqual(seen, ['shared']);
 
   const st = S.lastSyncState();
@@ -931,7 +986,7 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
   assert.strictEqual(S.lastSyncState().state, 'shared', 'lastSyncState 要给副本，改不坏内部状态');
 
   off();
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.deepStrictEqual(seen, ['shared'], '取消订阅后不该再被叫到');
 });
 
@@ -940,7 +995,7 @@ test('同步状态：订阅方自己抛异常，不能把存储层的同步带�
   // 故意保持**同步**回调：这条测的是「同步 throw 也要被 recordSync 接住」，
   // 不能被批量 async 化误伤（async throw 会变成 rejection，try/catch 接不住）
   S.onSyncStateChange(() => { throw new Error('订阅方炸了'); });
-  const r = await S.syncFromServer();
+  const r = await S.pushToServer();
   assert.strictEqual(r.ok, true, '同步本身该成功');
   assert.strictEqual(S.lastSyncState().state, 'shared');
 });
@@ -948,8 +1003,39 @@ test('同步状态：订阅方自己抛异常，不能把存储层的同步带�
 test('同步状态：代理没报 file 就不能说「已同步」，要退回 local', async () => {
   // 角标的判据是「代理告诉我们在读写哪个库」；少了这句话，就不该给用户一个共享的结论
   const S = loadSync(fakeStorage(), okJson({ items: [] }));
-  await S.syncFromServer();
+  await S.pushToServer();
   assert.strictEqual(S.lastSyncState().state, 'local', '没 file 就没证据：不能报 shared');
+});
+
+test('同步状态：没设「当前用户」时 syncFromServer → nouser（角标隐藏，不谎报已同步）', async () => {
+  // 2026-09-21 用户拍板：没设当前用户时只探活，没有「我的列表」可同步 —— 不能说「已同步」
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db', storage: 'sqlite', people: 3 }));
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true, '探活本身是成功的');
+  assert.strictEqual(r.file, '/srv/shared/a.db', '端点信息仍如实带回来（排查用）');
+  assert.strictEqual(S.lastSyncState().state, 'nouser', '但要标成 nouser，首页角标对它隐藏');
+});
+
+test('同步状态：设了当前用户 → syncFromServer 走「我的列表」，拿得到 shared', async () => {
+  const me = { userId: '1001', userName: '张三' };
+  const stub = async (url) => {
+    const u = new URL(String(url), 'http://localhost');
+    const isUserQuery = !!u.searchParams.get('user');
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        code: 200,
+        data: isUserQuery
+          ? { mode: 'user', items: [], storage: 'sqlite' }
+          : { items: [], file: '/srv/a.db', storage: 'sqlite', people: 3 },
+      }),
+    };
+  };
+  const S = loadUserSync(fakeStorage(), stub, me);
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(S.lastSyncState().state, 'shared', '有「我的列表」可同步 → 才是真的已同步');
 });
 
 test('同步状态：已经 shared 过之后，一次拿不到 file 的成功不该把它打成 local', async () => {
@@ -1203,7 +1289,7 @@ test('服务端优先：服务端失败时 save 回落本机（localOnly:true）
   assert.strictEqual(S.list().length, 1);
 });
 
-test('服务端优先：exportJsonAsync 连得上代理 → 导出团队库全集', async () => {
+test('服务端优先：exportJsonAsync → 只导当前用户自己的（2026-09-21 改口径）', async () => {
   const proxy = fakeProxy();
   const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
   await S.save({ page: 'publish', name: '张三的', fields: {}, owner: { userId: '1001', userName: '张三', teamName: '开发一部' } });
@@ -1211,8 +1297,44 @@ test('服务端优先：exportJsonAsync 连得上代理 → 导出团队库全�
   proxy.db.set('peerX', { id: 'peerX', page: 'task', name: '李四的', fields: {}, owner: { userId: '1002', userName: '李四', teamName: '开发一部' } });
   const text = await S.exportJsonAsync();
   const parsed = JSON.parse(text);
-  assert.deepStrictEqual(parsed.items.map((x) => x.id).sort(), ['peerX', String(parsed.items.find((x) => x.id !== 'peerX').id)],
-    '导出要含两条（张三的 + 李四的）——导出的是团队库，不是本机镜像');
+  // ⚠️ 这条断言 2026-09-21 反过来了：以前导出主体是**团队库全集**，断言「含张三+李四两条」；
+  // 用户实测导出文件 12 条跨了 6 个人，拍板改成「只导当前用户自己的」。
+  assert.strictEqual(parsed.items.length, 1, '导出只该有当前用户自己那一条，实际 ' + parsed.items.length);
+  assert.strictEqual(parsed.items[0].name, '张三的');
+  assert.ok(!parsed.items.some((x) => x.id === 'peerX'), '别人的记录不得出现在导出里');
+});
+
+test('服务端优先：没设「当前用户」时导出的是本机镜像（不含别人的）', async () => {
+  const proxy = fakeProxy();
+  // loadSync 不注入 CurrentUser —— 与没设用户时的页面一致
+  const S = loadSync(fakeStorage(), proxy);
+  S.clear();
+  const w = await S.save({ page: 'publish', name: '匿名的', fields: {} });   // 无归属人 → 本地兜底
+  assert.strictEqual(w.ok, true);
+  proxy.db.set('peerX', { id: 'peerX', page: 'task', name: '别人的', fields: {}, owner: { userId: '1002', userName: '李四' } });
+  const parsed = JSON.parse(await S.exportJsonAsync());
+  assert.deepStrictEqual(parsed.items.map((x) => x.name), ['匿名的'], '没设用户时导本机镜像，且不得混入别人的记录');
+});
+
+test('服务端优先：导入的记录归当前用户（2026-09-21 改）—— 导同事的文件后自己也能看到', async () => {
+  const proxy = fakeProxy();
+  const S = loadUserSync(fakeStorage(), proxy, { userId: '1001', userName: '张三', teamName: '开发一部' });
+  // 李四导出的文件：文件里那条的 owner 是李四
+  const peerFile = JSON.stringify({
+    app: 'spider-saved-queries',
+    v: 2,
+    items: [{
+      id: 'p1', page: 'publish', name: '李四的查询', fields: { f_prodBatch: '2611' },
+      owner: { userId: '1002', userName: '李四', teamName: '开发一部' },
+    }],
+  });
+  const r = await S.importJson(peerFile);
+  assert.strictEqual(r.ok, true);
+  // 镜像只刷「我的」：这条能出现在镜像里，就说明它已经归了张三（否则按人拉不回来）
+  assert.strictEqual(S.list().length, 1, '导入后本机镜像（=我的列表）里应能看到它');
+  assert.strictEqual(S.list()[0].owner.userId, '1001', '归属已改写成当前用户');
+  // 服务端库里那条同样归张三（合并后整份写回的）
+  assert.strictEqual((proxy.db.get('p1') || {}).owner.userId, '1001', '服务端库里也归当前用户');
 });
 
 test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回（深链回填用）', async () => {
@@ -1223,4 +1345,63 @@ test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回�
   const item = await S.getAsync('deep1');
   assert.strictEqual(item.id, 'deep1', '从服务端捞回来');
   assert.strictEqual(S.list().length, 0, '别人的记录只回填用，不进镜像');
+});
+
+test('saved-query：分键 —— 登录同步整段覆盖登录镜像，匿名记录不受影响', async () => {
+  // 2026-09-22 用户报「登录了再退出的未登录用户又会被覆盖」：以前只有一个键，
+  // 登录时 syncFromServer 用服务端拉回的「我的列表」**全量覆盖**镜像，
+  // 没登录时保存的匿名记录跟着被冲掉。分键后同步只覆盖登录段，匿名段独立存活。
+  const noNet = async () => { throw new Error('离线'); };
+  const st = fakeStorage();
+  // ① 没登录，先存一条匿名的
+  const S0 = loadSync(st, noNet);
+  await S0.save({ page: 'publish', name: '匿名存的', fields: {} });
+  assert.strictEqual(S0.list().length, 1);
+  // ② 同一份 localStorage 换到登录环境：同步会用服务端的「我的列表」整段覆盖登录镜像。
+  //    fakeProxy 的库里是空的 → 覆盖后登录段为空 —— 但匿名那条必须活着。
+  const S1 = loadUserSync(st, fakeProxy(), { userId: '6464402', userName: '吴树海' });
+  await S1.syncFromServer();
+  assert.deepStrictEqual(S1.list().map((x) => x.name), ['匿名存的'],
+    '匿名记录被登录同步冲掉了');
+  // 匿名记录确实落在独立段里（不与登录镜像混存）
+  assert.deepStrictEqual(JSON.parse(st.getItem(ANON_KEY)).map((x) => x.name), ['匿名存的']);
+});
+
+test('saved-query：旧单键里的匿名记录会被迁移进匿名段（升级兼容）', () => {
+  // 旧版只有一个键、登录与匿名的混在一起。分键后首次读取必须把匿名记录挪出去 ——
+  // 否则迁移前的一次登录同步就会把它们冲掉，等于白迁移。
+  const st = fakeStorage({
+    [KEY]: JSON.stringify([
+      { id: 'u1', page: 'publish', name: '有归属的', fields: {}, owner: OWNER_A },
+      { id: 'a1', page: 'publish', name: '旧键里的匿名', fields: {} },
+    ]),
+  });
+  const S = loadSync(st, async () => { throw new Error('离线'); });
+  assert.deepStrictEqual(S.list().map((x) => x.name).sort(), ['旧键里的匿名', '有归属的'], '迁移不该丢数据');
+  assert.deepStrictEqual(JSON.parse(st.getItem(ANON_KEY)).map((x) => x.name), ['旧键里的匿名'], '匿名记录要落进匿名段');
+  assert.deepStrictEqual(JSON.parse(st.getItem(KEY)).map((x) => x.name), ['有归属的'], '登录段里不再混匿名记录');
+});
+
+test('saved-query：长编码截断 shortCode —— 只留尾部英文编码（2026-09-22 用户要求）', () => {
+  // 用户报：「E00301-互联网金融服务平台-BOCNET-G-IFS 命名太长了，
+  //          截断一下 BOCNET-G-IFS 这个就行，前面的编号和中文都不要」。
+  const S = load(fakeStorage());
+  assert.strictEqual(S.shortCode('E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  assert.strictEqual(S.shortCode('E00406-网上银行服务前端-海外个人手机银行客户端-BOCNETC-O-MAPSN'), 'BOCNETC-O-MAPSN');
+  assert.strictEqual(S.shortCode('E00404-网上银行服务前端-海外个人网银-BOCNETC-O-WPSN'), 'BOCNETC-O-WPSN');
+  // 前面还挂着别的内容时，照样能取到尾部编码
+  assert.strictEqual(S.shortCode('探针批次 E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  // ⚠️ 中文前缀与英文编码**粘在同一段**（中间没有 -）—— 2026-09-22 用户截图报的
+  //    「发布查询也应该是 BOCNET-O-WPSN，但是截错了」：那时只取到了尾巴的 O-WPSN。
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-MAPSN'), 'BOCNETC-O-MAPSN');
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-WPSN'), 'BOCNETC-O-WPSN');
+  assert.strictEqual(S.shortCode('提供方系统：E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  // 本来就没有英文编码的（批次名 / 纯编号）原样返回 —— 宁可长一点，也不要把值弄成空的
+  assert.strictEqual(S.shortCode('27年6月独立'), '27年6月独立');
+  assert.strictEqual(S.shortCode('2611批次'), '2611批次');
+  assert.strictEqual(S.shortCode('E00301'), 'E00301');
+  // 空值 / 小写段不当编码（别把普通英文名也切了）
+  assert.strictEqual(S.shortCode(''), '');
+  assert.strictEqual(S.shortCode(null), '');
+  assert.strictEqual(S.shortCode('abc-def'), 'abc-def');
 });

@@ -233,7 +233,7 @@
   // ═══════════════════════════════════════════════════
 
   /**
-   * 入口：没指定调用方批次时，按「近 12 个月窗口」把每个批次并行拉回来合并
+   * 入口：没指定调用方批次时，按「批次窗口（当月 −2 ~ +3，共 6 个）」把每个批次并行拉回来合并
    * （避免一次查出 years 历史导致响应慢）；指定了批次就走原来的单批次查询。
    */
   async function query(pageNum) {
@@ -358,12 +358,12 @@
   }
 
   /**
-   * 没指定调用方批次：默认只看「当月 −2 个月 → 当月 +9 个月」这 12 个批次
-   * （如 26年9月 ⇒ 2607批次 ~ 2706批次），把窗口内每个批次并行拉回、合并、
+   * 没指定调用方批次：默认只看批次窗口「当月 −2 个月 → 当月 +3 个月」这 6 个批次
+   * （如 26年9月 ⇒ 2607批次 ~ 2612批次），把窗口内每个批次并行拉回、合并、
    * 去重后统一前端分页 + 优先级排序。相比一次查出全部历史，响应更快也更聚焦。
    */
   async function runWindowQuery(seq, cond) {
-    // 增量渲染：每有一个批次返回就先画一版（onProgress），不再等 12 个批次全部完成。
+    // 增量渲染：每有一个批次返回就先画一版（onProgress），不再等 6 个批次全部完成。
     const res = await SubscriptionModel.fetchWindowAll(cond, () => seq !== state.reqSeq, (rows, done, total) => {
       if (seq !== state.reqSeq) return;
       hideQueryFail();
@@ -402,12 +402,12 @@
     }
 
     render();
-    if (!state.total) toast('查询完成，窗口内（近 12 个月）没有匹配的订阅关系', 2400);
+    if (!state.total) toast('查询完成，窗口内（6 个批次）没有匹配的订阅关系', 2400);
     if (res.local) toast('⚠️ 该查询暂未开放，无法返回结果', 3000);
   }
 
   /**
-   * 生成「近 12 个月」批次 label 列表。
+   * 生成批次窗口 label 列表（当月 −2 ~ +3，共 6 个）。
    * 算法（含月份安全的两个约束）在 js/data/batch-data.js 的 batchWindowLabels()，
    * 这里只负责取基准日 —— 必须是业务时区（UTC+8）的今天，
    * 否则机器时区不是 +8 时，每月 1 日前后窗口会整体偏一个月。
@@ -731,7 +731,7 @@
   function initBatchTimes() {
     if (batchTimesInited || !window.SubscriptionBatchTimes) return;
     batchTimesInited = true;
-    // 弹窗的行 = 批次字典里落在近 12 个月窗口内的批次（月度 + 独立，见 subscription-batch-times.js）
+    // 弹窗的行 = 批次字典里落在批次窗口（当月 −2 ~ +3）内的批次（月度 + 独立，见 subscription-batch-times.js）
     window.SubscriptionBatchTimes.init({ toast, setLoading, batchWindow, refreshPriority });
   }
   initBatchTimes();
@@ -795,18 +795,28 @@
    * 摘要是给首页卡片上的人看的，所以写「2608批次 / BOCNETC-O-MAPSN」而不是内部编码；
    * 只有拿不到 label（选项里没有该项）时才回落到编号本身。
    */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function collectSavedLabels(fields) {
     const labels = {};
     SAVED_SELECT_KEYS.forEach((key) => {
       if (!fields[key]) return;
       const t = (selects[key] && typeof selects[key].getLabel === 'function')
-        ? String(selects[key].getLabel() || '').trim() : '';
+        ? sc(String(selects[key].getLabel() || '').trim()) : '';
       if (t) labels[key] = t;
     });
     SAVED_MULTI_KEYS.forEach((key) => {
       if (!fields[key]) return;
       const arr = (multiSelects[key] && typeof multiSelects[key].getLabels === 'function')
-        ? multiSelects[key].getLabels().filter(Boolean) : [];
+        ? multiSelects[key].getLabels().map((x) => sc(String(x))).filter(Boolean) : [];
       if (arr.length) labels[key] = arr.join('、');
     });
     return labels;
@@ -866,7 +876,11 @@
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
     // 2026-09-20 架构改版：save 是 async 的（服务端优先）。这里必须 await——
     // 否则读到的是 Promise，res.ok 恒为 undefined → 弹「保存失败」但东西其实存进去了。
-    const res = await SQ.save({ page: 'subscription', name, fields, summary, labels: collectSavedLabels(fields) });
+    const res = await SQ.save({
+      page: 'subscription', name, fields, summary,
+      labels: collectSavedLabels(fields),
+      autoName: summary ? summary.slice(0, 30) : '',   // 与弹窗预填的一致，部门榜用它
+    });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
     toast('已保存到首页' + (res.localOnly ? '（仅本机，连上共享库后会自动补上去）' : '')
       + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : '')
@@ -889,6 +903,9 @@
     // 「点了部门卡却没填条件就查询了」（有概率 = 点到自己的查询则成功）。
     const item = await SQ.getAsync(id);
     if (!item || !item.fields) return;
+    // 「我用了这份查询」上报（部门高频的时间衰减排序要用）。
+    // 放在落地页而不是首页点卡片时：那一刻 <a> 在跳转，在途 fetch 会被中断。失败不影响回填。
+    if (typeof SQ.markUsed === 'function') Promise.resolve(SQ.markUsed(id)).catch(() => {});
     const f = item.fields;
 
     // 1) 无联动依赖的单选下拉 + 文本输入先回填
@@ -982,14 +999,9 @@
       $('#filterToggle').setAttribute('aria-expanded', String(!collapsed));
     });
 
-    // 更多筛选项
-    $('#btnToggleAdvanced').addEventListener('click', () => {
-      const body = $('#advancedFields');
-      const open = body.style.display !== 'none';
-      body.style.display = open ? 'none' : '';
-      $('#btnToggleAdvanced').style.transform = open ? 'rotate(-90deg)' : '';
-      $('#btnToggleAdvanced').setAttribute('aria-expanded', String(!open));
-    });
+    // （2026-09-22 删除）原来这里有「更多筛选项」的折叠开关：用户拍板去掉折叠、
+    // 直接把 #advancedFields 平铺出来，所以 `#btnToggleAdvanced` 元素与这段绑定一并删掉。
+    // 注意别再顺手把它加回来 —— HTML 里没有那个按钮了，addEventListener 会直接抛。
 
     // 快速筛选
     document.querySelectorAll('#callerQuick .filter-quick-btn').forEach((b) => {
@@ -1096,6 +1108,9 @@
     // （静态 HTML 里浮层是 hidden 的 —— 页面没加载完表头高度还测不准，先不显示，
     //   免得浮层按 top:0 盖住表头。）
     if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
+
+    // Token 管理浮窗：三个查询页都要能改 token（2026-09-21 补，与发布页同一支）
+    if (window.TokenManager && typeof window.TokenManager.init === 'function') window.TokenManager.init();
   }
 
   if (document.readyState === 'loading') {

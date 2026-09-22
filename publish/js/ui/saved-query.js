@@ -27,6 +27,11 @@
   'use strict';
 
   const STORAGE_KEY = 'spider.savedQueries.v1';
+  // 「无人认领」记录的**独立存储键**（2026-09-22 分键，用户报「登录了再退出，未登录存的会被覆盖」）：
+  // 登录时 syncFromServer 会用服务端拉回的「我的列表」**整段覆盖**登录镜像 —— 单键时代
+  // 没登录时保存的匿名记录会跟着被冲掉。分键后同步只动登录段，匿名段独立存活，
+  // 认领（claimAnonymous）时 writeRaw 按归属分流，记录自然从匿名段挪进登录段。
+  const ANON_STORAGE_KEY = 'spider.savedQueries.anon.v1';
   // 上限与代理端点（/local/saved-queries）保持一致：合并了同团队别人的记录后
   // 本机条目数会超过「自己存的」，两边用同一个数字才不会互相打架。
   const MAX_ITEMS = 200;
@@ -50,11 +55,12 @@
     }
   }
 
-  function readRaw() {
+  /** 读单个存储段（不 sanitize；JSON 坏掉当空列表，不拖崩首页） */
+  function readSeg(key) {
     const s = storage();
     if (!s) return [];
     try {
-      const txt = s.getItem(STORAGE_KEY);
+      const txt = s.getItem(key);
       if (!txt) return [];
       const parsed = JSON.parse(txt);
       return Array.isArray(parsed) ? parsed : [];
@@ -63,14 +69,87 @@
     }
   }
 
+  /** 写单个存储段 */
+  function writeSeg(key, items) {
+    const s = storage();
+    if (!s) return false;
+    try {
+      s.setItem(key, JSON.stringify(items));
+      return true;
+    } catch (_) {
+      return false; // 最常见的是 QuotaExceededError
+    }
+  }
+
+  // 旧版只有 STORAGE_KEY 一个键、登录与匿名的记录混在一起。分键后要把里面
+  // 的匿名记录挪到匿名段，否则**迁移前的一次登录同步**就会把它们冲掉。
+  let migrated = false;
+  function migrateIfNeeded() {
+    if (migrated) return;
+    migrated = true;
+    const raw = readSeg(STORAGE_KEY);
+    const anonInUserSeg = raw.filter((it) => saverKeysOf(it).length === 0);
+    if (!anonInUserSeg.length) return;
+    const exist = readSeg(ANON_STORAGE_KEY);
+    const merged = exist.concat(anonInUserSeg.filter((x) => x && !exist.some((a) => a && a.id === x.id)));
+    try {
+      writeSeg(ANON_STORAGE_KEY, merged);
+      writeSeg(STORAGE_KEY, raw.filter((it) => saverKeysOf(it).length !== 0));
+    } catch (_) { /* 迁移失败不致命：下次写操作时 writeRaw 会按归属再分流一次 */ }
+  }
+
+  /**
+   * 合并视图 = 登录镜像段 + 匿名段。
+   * 2026-09-22 分键：登录时 syncFromServer 的 writeRaw(我的记录) 是**整段覆盖**，
+   * 单键时代会把「没登录时保存的」匿名记录一起冲掉（用户报）。
+   * 同 id 冲突时登录段优先 —— 认领会把记录从匿名段挪进登录段，理论上不会共存，防御一下。
+   */
+  function readRaw() {
+    migrateIfNeeded();
+    const mine = readSeg(STORAGE_KEY);
+    const anon = readSeg(ANON_STORAGE_KEY);
+    if (!anon.length) return mine;
+    // 段里是**未清洗**的原始 JSON，可能有 null / 非对象这类脏条目 ——
+    // 合并去重前先防御，脏的照原样带过去，交给 list() 的 sanitize 统一处理
+    const ids = new Set(mine.filter((x) => x && typeof x === 'object' && x.id).map((x) => x.id));
+    return mine.concat(anon.filter((x) => x && typeof x === 'object' && x.id && !ids.has(x.id)));
+  }
+
+  /**
+   * 写镜像：**按归属分流** —— 有归属人的进登录段（会被服务端同步整段覆盖），
+   * 匿名的进独立段（登录/退出都不碰它）。上层所有写操作（保存/改名/删除/导入/认领/同步）
+   * 都走这里，所以分流只需写对这一处。
+   */
   function writeRaw(list) {
     const s = storage();
     if (!s) return fail('浏览器存储不可用（隐私模式？），无法保存');
     try {
-      s.setItem(STORAGE_KEY, JSON.stringify(list));
+      const anon = list.filter((it) => saverKeysOf(it).length === 0);
+      const mine = list.filter((it) => saverKeysOf(it).length !== 0);
+      s.setItem(STORAGE_KEY, JSON.stringify(mine));
+      s.setItem(ANON_STORAGE_KEY, JSON.stringify(anon));
       return { ok: true };
     } catch (e) {
       // 最常见的是 QuotaExceededError
+      return fail('保存失败：浏览器存储空间不足或被禁用');
+    }
+  }
+
+  /**
+   * 只覆盖**登录镜像段**（服务端拉回的「我的列表」），匿名段原样不动。
+   *
+   * syncFromServer / pushToServer / getAsync 回填这类调用拿到的是「当前用户的」数据，
+   * **不是全量镜像** —— 不能走 writeRaw（全量替换两段），否则匿名段会被一起冲掉
+   *（2026-09-22 用户报「登录了再退出，未登录存的会被覆盖」的根因）。
+   */
+  function writeMineSeg(items) {
+    const s = storage();
+    if (!s) return fail('浏览器存储不可用（隐私模式？），无法保存');
+    try {
+      const mine = (Array.isArray(items) ? items : []).filter((it) => saverKeysOf(it).length !== 0);
+      s.setItem(STORAGE_KEY, JSON.stringify(mine));
+      return { ok: true };
+    } catch (e) {
       return fail('保存失败：浏览器存储空间不足或被禁用');
     }
   }
@@ -192,6 +271,10 @@
       id,
       page,
       name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '未命名查询',
+      // 「由筛选条件生成的默认名」——保存时弹窗里预填的那个（个人可改名，这个不会变）。
+      // 部门榜标题用它，这样谁改名都不会带歪整个部门的榜单（2026-09-22）。
+      // 服务端的列名是 auto_name，两种写法都认；旧记录没有这个字段就是空串。
+      autoName: String(item.autoName || item.auto_name || '').trim().slice(0, 60),
       summary: typeof item.summary === 'string' ? item.summary : '',
       labels,
       owner: cleanOwner(item.owner),
@@ -245,6 +328,92 @@
       return `${k}=${sv}`;
     }).join('&');
     return `${item.page}?${norm}`;
+  }
+
+  /**
+   * 这两条是不是**同一份查询**（保存判重、同步合并都用它）。
+   *
+   * 2026-09-22 用户报：把常用查询改个名，同一个查询就**多出一条**；匿名保存的认领之后
+   * 也会多出一条。根因就是判重比的是**名字** —— 名字是用户随手改的、不是身份。
+   * 正确的判据是「同一份筛选条件 + 同一个人」：
+   *   · id 相同 → 同一条（同步回来的老数据可能 id 对得上）
+   *   · fingerprint 相同（同一页面 + 同一套条件）且归属人相同 → 同一条
+   *   · 什么条件都没填时 fingerprint 是空串 → 退回「同页同名同人」的老口径
+   *    （空条件没有"同一份查询"可言，本来就该各自独立）
+   */
+  function sameQuery(a, b) {
+    if (!a || !b) return false;
+    if (a.id && b.id && a.id === b.id) return true;
+    if (a.page !== b.page) return false;
+    if (userKeyOf(a.owner) !== userKeyOf(b.owner)) return false;
+    const fa = fingerprintOf(a);
+    const fb = fingerprintOf(b);
+    if (fa && fb) return fa === fb;
+    return a.name === b.name;
+  }
+
+  /**
+   * 由**筛选条件**拼一个名字（部门榜的标题用它）。
+   *
+   * 为什么需要：部门高频榜是按「同一份条件」聚合出来的，但代表行的 `name` 是
+   * **个人保存时起的**（还可能被本人改过）—— 谁改了名，整个部门的榜单标题都跟着变
+   *（2026-09-22 用户报）。条件本身才是这份查询的身份，所以榜单标题只认 labels。
+   * labels 为空（没填任何条件）时返回空串，调用方自己退回 name。
+   */
+  /**
+   * 把「编号-中文名-英文编码」这种长编码截成**尾部那段英文编码**。
+   *
+   * 用户 2026-09-22 报：「E00301-互联网金融服务平台-BOCNET-G-IFS 命名太长了，
+   * 截断一下 BOCNET-G-IFS 这个就行，前面的编号和中文都不要」。
+   *
+   * 规则：按 `-` 分段，从**末尾往前**连续取「只含大写字母/数字」的段，遇到中文或小写就停。
+   *   E00301-互联网金融服务平台-BOCNET-G-IFS                      → BOCNET-G-IFS
+   *   E00406-网上银行服务前端-海外个人手机银行客户端-BOCNETC-O-MAPSN → BOCNETC-O-MAPSN
+   *   27年6月独立（没有英文编码）                                   → 原样返回
+   * 取不到就原样返回 —— 宁可长一点，也不要把人家填的值弄成空的。
+   */
+  function shortCode(text) {
+    const s = String(text == null ? '' : text).trim();
+    if (!s) return s;
+    // ⚠️ 关键：先按 `-` 分段，再对**每段取它尾部那串大写字母/数字**。
+    //   不能要求"整段都是大写" —— 「调用方系统：BOCNETC-O-MAPSN」里中文前缀与
+    //   编码是**粘在同一段**的（中间没有 -），那样只会取到尾巴的 `O-MAPSN`
+    //   （2026-09-22 用户截图报的正是这个：标题被截成了 O-MAPSN / O-WPSN）。
+    const parts = s.split('-').map((part) => {
+      const m = String(part).match(/([A-Z0-9]+)\s*$/);
+      return m ? m[1] : '';
+    });
+    const keep = [];
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+      if (!parts[i]) break;                      // 这段取不到英文 → 到头了
+      keep.unshift(parts[i]);
+    }
+    return keep.length ? keep.join('-') : s;     // 一个都取不到 → 原样返回
+  }
+
+  /**
+   * 部门榜的**标题**：优先用「保存时由条件生成的默认名」（autoName），
+   * 老记录没有这个字段就退回摘要前 30 字，再退回 labels 拼。
+   *
+   * 为什么不是 name：name 是使用者随手改的（2026-09-22 用户报「改了常用查询的名字，
+   * 下面部门高频查询的名字也跟着改」）。为什么不是 labels 拼：各页面给的默认名规则不同
+   *（订阅页是「调用方系统：xxx」、发布页是「批次 编号」），榜单自己拼会与"我的"对不上
+   *（同日用户又报「命名规则怎么不一样」）。所以：**保存时算什么就用什么**。
+   */
+  function condNameOf(item) {
+    const own = String((item && (item.autoName || item.auto_name)) || '').trim();
+    if (own) return shortCode(own);
+    const sum = String((item && item.summary) || '').trim();
+    if (sum) return shortCode(sum.slice(0, 30));
+    return shortCode(nameFromLabels(item && item.labels));
+  }
+
+  function nameFromLabels(labels) {
+    const o = cleanLabels(labels);
+    return Object.keys(o)
+      .map((k) => String(o[k] || '').trim())
+      .filter(Boolean)
+      .join(' ');
   }
 
   /**
@@ -318,14 +487,66 @@
    */
   function listForUser(user, limit) {
     const key = userKeyOf(user);
-    if (!key) return [];
     const mine = list()
       // 用 saverKeysOf 而不是 owner：owner 只是「最早保存的那个人」，
       // 经服务端往返后可能不是我（见 saverKeysOf 的注释）。
-      .filter((it) => saverKeysOf(it).includes(key))
+      .filter((it) => (key
+        ? saverKeysOf(it).includes(key)          // 有身份：按人过滤
+        // 2026-09-22 用户报「没登录时保存的也应该显示在常用查询里」：
+        // 那时保存的记录 owner 为空，旧写法直接 return [] → 存下来了却看不到，
+        // 空态还让用户"设好用户再去查询页重新保存一次"（等于白存）。
+        // 现在没身份就把这些**无人认领的本机记录**列出来。
+        // ⚠️ 这不等于"没设用户就显示全部"：有归属人的（同事的）一条都不会露出来，
+        //    「宁可不显示，也不把同事的查询说成我的」这条旧口径依然成立。
+        : saverKeysOf(it).length === 0))
       .sort((a, b) => ((b.lastAt || b.at) - (a.lastAt || a.at)) || (b.at - a.at));
     const n = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
     return n ? mine.slice(0, n) : mine;
+  }
+
+  /**
+   * 把本机「无人认领」的记录认领给某个人（owner 为空 → owner = 当前用户）。
+   *
+   * 为什么需要：用户在**没设「当前用户」**时保存的查询，owner 是空的。
+   * 等 ta 后来填了工号，那些记录既进不了「我的」（按人过滤不匹配），也不会自己消失 ——
+   * 以前的做法是空态里让用户"去查询页重新保存一次"，等于白存。
+   * 这里直接认领：改本机镜像 + 推给服务端，用户感知上就是「登录之后东西还在」。
+   *
+   * 幂等：没有匿名记录时什么都不做（返回 claimed: 0），反复调用安全。
+   * 推送是 fire-and-forget：调用方（首页 renderSaved）要靠 markLocalWrite 的 5 秒保护
+   * 挡住「GET 跑赢 POST、用认领前的旧数据覆盖镜像」的竞态。
+   *
+   * @param {object} user 当前用户 {userId,userName,teamId,...}
+   * @returns {{ok:boolean, claimed:number, error?:string}}
+   */
+  function claimAnonymous(user) {
+    const key = userKeyOf(user);
+    if (!key) return fail('未设置当前用户');
+    const items = list();
+    const orphanIds = items.filter((it) => saverKeysOf(it).length === 0).map((it) => it.id);
+    if (!orphanIds.length) return { ok: true, claimed: 0 };
+
+    const owner = cleanOwner(user);
+    const next = items.map((it) => (orphanIds.includes(it.id)
+      ? { ...it, owner, saverKeys: [key], saverNames: [String(user.userName || key)] }
+      : it));
+    const w = writeRaw(next);
+    if (!w.ok) return w;
+
+    // 推服务端（fire-and-forget）：失败就只留本机，下一次同步/写操作会再带上它
+    if (canSync()) {
+      const claimed = orphanIds.map((id) => next.find((x) => x.id === id)).filter(Boolean);
+      try {
+        window.fetch(SERVER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items: claimed, deletedIds: readPendingDeletes() }),
+        }).then(() => {
+          if (readPendingDeletes().length) writePendingDeletes([]);
+        }).catch(() => { /* 离线：本机已经认领了，够渲染 */ });
+      } catch (_) { /* 同上 */ }
+    }
+    return { ok: true, claimed: orphanIds.length };
   }
 
   /** 从首页点开一次 → 计一次打开（「高频」的依据）。async：镜像里没有就去服务端找 */
@@ -382,6 +603,42 @@
   }
 
   /**
+   * 记一次「**我**用了这份查询」—— 部门高频查询的**时间衰减排序**要用
+   * （方案见 publish/docs/部门高频查询排序方案.md；服务端落在 saved_query_uses 表）。
+   *
+   * ⚠️ **只在落地页调用，别在首页点卡片时调**：那一刻 `<a>` 已经开始跳转，
+   * 浏览器会中断在途 fetch —— 实测点一次卡片，`hits` 和 `lastAt` 都没变，上报基本没成功过。
+   * 落地页上报时跳转已经完成，而且语义更准：记的是「真打开并加载了」，不是「手滑点了一下」。
+   *
+   * 与 `hit()` 的分工：`hit()` 维护的是**整条记录**的打开次数（hits / lastAt）；
+   * `markUsed()` 记的是**「这个人在这个部门」**用过它 —— 后者才是部门排行要的按人数据。
+   *
+   * @param {string} id 常用查询 id（URL 上 `?saved=` 的那个）
+   * @returns {Promise<{ok:boolean, error?:string}>}
+   */
+  async function markUsed(id) {
+    if (!id) return fail('缺少 id');
+    const cu = window.CurrentUser && window.CurrentUser.get();
+    const key = userKeyOf(cu);
+    if (!key) return fail('未设置当前用户（不知道是谁用的，记了没意义）');
+    if (!canSync()) return fail('当前环境没有同步端点');
+    try {
+      const r = await window.fetch(SERVER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [],
+          uses: [{ queryId: String(id), userKey: key, deptKey: deptKeyOf(cu), at: Date.now() }],
+        }),
+      });
+      if (!r.ok) return fail('使用上报失败：HTTP ' + r.status);
+      return { ok: true };
+    } catch (e) {
+      return fail('使用上报失败：' + ((e && e.message) || String(e)));
+    }
+  }
+
+  /**
    * get() 的 async 版：镜像里没有就去服务端找（先「我的」，再全集）。
    * 为什么要它：?saved=<id> 深链回填时，换电脑/清过缓存的本机镜像可能是空的——
    * 记录在共享库里，按 id 捞得到就照样回填（2026-09-20 架构改版配套）。
@@ -434,7 +691,7 @@
    * 判重口径不变：同名同页**只对同一个人**算更新——两个人各自保存同名查询
    * 是两条记录（默认名由筛选条件生成，同一份条件两人保存必然同名）。
    */
-  async function save({ page, name, fields, summary, labels, owner }) {
+  async function save({ page, name, fields, summary, labels, owner, autoName }) {
     if (!page || !PAGES[page]) return fail('未知的页面类型');
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
@@ -455,7 +712,7 @@
 
     // ── 服务端路径 ──
     if (canSync() && myKey) {
-      const srv = await saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey });
+      const srv = await saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey, autoName });
       if (srv.ok) return { ok: true, item: srv.item, updated: !!srv.updated, server: true };
       // 服务端失败不拦人：退回本地兜底，让用户先把东西存下来（错误留在角标里）
     }
@@ -463,16 +720,19 @@
     // ── 本地兜底路径（离线 / 服务端失败 / 没有归属人）──
     const serverTried = canSync() && !!myKey;   // true = 服务端试过但失败，提示语要说「仅本机」
     const items = list();
-    const exists = items.find((it) => it.page === page && it.name === title
-      && userKeyOf(it.owner) === myKey);
+    // 判重按「同一份筛选条件 + 同一个人」（sameQuery），**不是**按名字 ——
+    // 否则用户一改名就等于又存了一条（2026-09-22 报的）。
+    const probe = { page, name: title, fields: cleanedFields, owner: ownerInfo };
+    const exists = items.find((it) => sameQuery(it, probe));
     const item = {
       id: exists ? exists.id : newId(),
       page,
       name: title,
+      autoName: String(autoName || '').trim().slice(0, 60),
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
       owner: ownerInfo,
-      // 同名同页覆盖时累加保存次数，而不是重置——「高频」既看打开也看保存
+      // 同一份条件重复保存时累加保存次数，而不是重置——「高频」既看打开也看保存
       saves: exists ? (exists.saves || 1) + 1 : 1,
       hits: exists ? (exists.hits || 0) : 0,
       lastAt: exists ? (exists.lastAt || 0) : 0,
@@ -502,15 +762,17 @@
    * 判重数据来自服务端而不是本机镜像 —— 本机镜像可能陈旧甚至混着别人的旧记录，
    * 而服务端才是唯一真相源。任何一步失败返回 {ok:false,...}，由 save() 落回本地。
    */
-  async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey }) {
+  async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey, autoName }) {
     const mine = await mineFromServer(ownerInfo);
     if (!mine.ok) return { ok: false, error: mine.error };
-    const exists = mine.items.find((it) => it.page === page && it.name === title
-      && userKeyOf(it.owner) === myKey);
+    // 与本地兜底同一套判据：同条件 + 同人 = 同一条（改名不该产生新记录）
+    const probe = { page, name: title, fields: cleanedFields, owner: ownerInfo };
+    const exists = mine.items.find((it) => sameQuery(it, probe));
     const item = {
       id: exists ? exists.id : newId(),
       page,
       name: title,
+      autoName: String(autoName || '').trim().slice(0, 60),
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
       owner: ownerInfo,
@@ -648,11 +910,17 @@
    * 至少能一键导出、对方一键导入合并。
    */
   function exportJson() {
+    // ⚠️ 口径必须与列表一致（listForUser），**不能**直接导 `list()`：
+    // 镜像是「我的」离线镜像，**清除登录态并不会清掉它** —— 里面还残留着上一个登录的人
+    // 的记录。直接导 list() 的话，没设用户的人导出文件里就会混进别人的查询
+    //（2026-09-22 用户实测：清了登录态导出，文件里带着吴树海的两条）。
+    // 有身份 = 导 ta 的；没身份 = 只导本机匿名的 —— 「导出的就是你看到的」。
+    const items = listForUser(window.CurrentUser && window.CurrentUser.get());
     return JSON.stringify({
       app: 'spider-saved-queries',
       v: SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
-      items: list(),
+      items,
     }, null, 2);
   }
 
@@ -662,23 +930,27 @@
    * 而团队库本来就该是导出的主体（换电脑对齐用的）。
    */
   async function exportJsonAsync() {
-    if (canSync()) {
-      try {
-        const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
-        if (r.ok) {
-          const json = await r.json();
-          const data = json && json.data;
-          if (data && Array.isArray(data.items)) {
-            return JSON.stringify({
-              app: 'spider-saved-queries',
-              v: SCHEMA_VERSION,
-              exportedAt: new Date().toISOString(),
-              items: data.items.map(sanitize).filter(Boolean),
-            }, null, 2);
-          }
-        }
-      } catch (_) { /* 退本机镜像 */ }
+    // 2026-09-21 用户拍板：导出**只导当前用户自己的**。
+    // 以前这里直接拉 SERVER_URL（团队库全集）—— 实测导出文件里 12 条跨了 6 个人
+    // （郑梓辉/李胜华/吴树海/贾星玥…），用户报「怎么导出了这么多人的」。
+    // 跨机器搬运的实际场景是「我（或同事）导出 → 再导入」，本来就用不到别人的记录；
+    // 要看别人的有首页的「部门常用查询」。所以这里改用按人查询的口径。
+    const cu = window.CurrentUser && window.CurrentUser.get();
+    if (cu) {
+      const mine = await mineFromServer(cu);
+      if (mine.ok) {
+        return JSON.stringify({
+          app: 'spider-saved-queries',
+          v: SCHEMA_VERSION,
+          exportedAt: new Date().toISOString(),
+          items: mine.items,
+        }, null, 2);
+      }
+      // 按人拉失败（存储后端不支持 ?user= 等）→ 退本机镜像。镜像本来就只含「我的」，
+      // 退它不会把别人的记录混进来，正是这里想要的。
     }
+    // 没设「当前用户」：没有归属人就没有服务端记录，导出本机镜像里那几份
+    // （用户拍板：没设用户时的常用查询就存在 localStorage，不进库）
     return exportJson();
   }
 
@@ -699,15 +971,15 @@
     let added = 0;
     let merged = 0;
     (incoming || []).forEach((inc) => {
-      const same = items.find((it) => it.id === inc.id
-        || (it.page === inc.page && it.name === inc.name
-          && userKeyOf(it.owner) === userKeyOf(inc.owner)));
+      const same = items.find((it) => sameQuery(it, inc));
       if (same) {
         same.hits = Math.max(same.hits || 0, inc.hits || 0);
         same.saves = Math.max(same.saves || 1, inc.saves || 1);
         same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
         if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
         if (!same.labels && inc.labels && Object.keys(inc.labels).length) same.labels = inc.labels;
+        // 默认名同理：本机的旧记录没有它，从服务端同步回来时补上（部门榜要用）
+        if (!same.autoName && inc.autoName) same.autoName = inc.autoName;
         // 「谁保存过」取并集：合并后两个人的名单都要留着，
         // 否则并过来的那一位又看不见这条了（与 owner 只看最早的那位是同一个坑）。
         same.saverKeys = Array.from(new Set([...(same.saverKeys || []), ...(inc.saverKeys || [])]));
@@ -742,6 +1014,14 @@
     const valid = incoming.map(sanitize).filter(Boolean);
     if (!valid.length) return fail('文件里没有可用的常用查询');
 
+    // 2026-09-21 用户拍板：导入进来的记录**归当前用户**（有当前用户时）。
+    // 以前保留文件里的原 owner —— 后果是把同事导出的文件导入后，那些记录归同事，
+    // 自己在「我的常用查询」里根本看不见（用户实测报的）。
+    // 判重口径（同页面 + 同名 + 同一个人）随之按「我」来算：与我已有的同名记录会合并。
+    // 没设当前用户时不动 owner —— 那种记录只落本机镜像（与 save 的本地兜底路径同理）。
+    const me = cleanOwner(window.CurrentUser && window.CurrentUser.get());
+    if (me) valid.forEach((it) => { it.owner = me; });
+
     if (canSync()) {
       try {
         const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
@@ -766,7 +1046,7 @@
               let total = items.length;
               if (cu) {
                 const mine = await mineFromServer(cu);
-                if (mine.ok) { writeRaw(mine.items); total = mine.items.length; }
+                if (mine.ok) { writeMineSeg(mine.items); total = mine.items.length; }   // 只覆盖登录段
               }
               recordSync({ ok: true, total, file: pd.file, storage: pd.storage, people: pd.people });
               return { ok: true, added, merged, total, server: true };
@@ -810,6 +1090,8 @@
   //
   // state：'shared' 连上了共享库 / 'local' 没有端点（静态部署、离线）
   //        / 'fail' 端点在但这次失败 / 'pending' 还没同步过
+  //        / 'nouser' 没设「当前用户」—— 没有「我的列表」可同步，首页角标对它隐藏
+  //          （2026-09-21 加：以前这种情况也报 'shared'，等于说了一句空话）
   const syncState = { state: 'pending', total: 0, file: '', storage: '', people: 0, error: '', at: 0 };
   const syncListeners = new Set();
 
@@ -847,7 +1129,10 @@
     if (!r || r.beacon) return r;
     syncState.at = Date.now();
     if (r.ok) {
-      syncState.state = r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local');
+      // 'nouser'：没设当前用户时只是探活，没有「我的列表」可同步 —— 不许谎报「已同步」
+      syncState.state = r.noUser
+        ? 'nouser'
+        : (r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local'));
       syncState.total = Number(r.total) || 0;
       // 只留文件名，不把代理机器的绝对路径摆到页面上（代理默认监听所有网卡，
       // 角标是每个打开首页的人都会看的；真要看全路径，title 里的文件名足够定位）
@@ -949,17 +1234,19 @@
     const cu = window.CurrentUser && window.CurrentUser.get();
     try {
       if (!cu) {
-        // 没有归属人：拉全集没有意义（也不会被写进镜像），只探一下端点活着没
+        // 没有归属人：没有「我的列表」可同步（也不会被写进镜像），只探一下端点活着没。
+        // ⚠️ 但要标 noUser —— 那时**什么都没同步**，不能把角标说成「已同步」
+        //（2026-09-21 用户报：「没设用户时那个已同步的角标是不是也在乱说」）。
         const r = await window.fetch(SERVER_URL, { headers: { Accept: 'application/json' }, cache: 'no-store' });
         if (!r.ok) return recordSync(fail('同步失败：HTTP ' + r.status));
         const json = await r.json();
         const data = (json && json.data) || {};
-        return recordSync({ ok: true, total: list().length, file: data.file, storage: data.storage, people: data.people });
+        return recordSync({ ok: true, noUser: true, total: list().length, file: data.file, storage: data.storage, people: data.people });
       }
       const mine = await mineFromServer(cu);
       if (!mine.ok) return recordSync(fail(mine.error));
       const meta = { file: mine.storage, storage: mine.storage };
-      writeRaw(mine.items);
+      writeMineSeg(mine.items);   // 只覆盖登录段：匿名段独立存活，不能被同步冲掉
       return recordSync({ ok: true, added: 0, merged: 0, total: mine.items.length, ...meta });
     } catch (e) {
       return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
@@ -1014,7 +1301,7 @@
       const cu = window.CurrentUser && window.CurrentUser.get();
       if (cu) {
         const mine = await mineFromServer(cu);
-        if (mine.ok) writeRaw(mine.items);
+        if (mine.ok) writeMineSeg(mine.items);   // 只覆盖登录段，匿名段不动
         return recordSync({ ok: true, total: mine.ok ? mine.items.length : list().length, ...meta });
       }
       return recordSync({ ok: true, total: list().length, ...meta });
@@ -1107,10 +1394,16 @@
     userKeyOf,
     saverKeysOf,
     fingerprintOf,
+    sameQuery,
+    nameFromLabels,
+    condNameOf,
+    shortCode,
     exportJson,
     exportJsonAsync,
     importJson,
     getAsync,
+    markUsed,
+    claimAnonymous,
     syncFromServer,
     pushToServer,
     lastSyncState,

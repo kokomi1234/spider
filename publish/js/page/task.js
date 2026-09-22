@@ -514,20 +514,30 @@
    * 摘要是给首页卡片上的人看的，写「2611批次 / 需求」而不是内部编码；
    * 只有拿不到 label 时才回落到编号本身。
    */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function collectSavedLabels(fields) {
     const labels = {};
     const ss = { t_leadDept: deptSelect, t_projectType: projectTypeSelect, t_reviewerRole: reviewerRoleSelect };
     Object.keys(ss).forEach((id) => {
       if (!fields[id]) return;
       const t = (ss[id] && typeof ss[id].getLabel === 'function')
-        ? String(ss[id].getLabel() || '').trim() : '';
+        ? sc(String(ss[id].getLabel() || '').trim()) : '';
       if (t) labels[id] = t;
     });
     const ms = { msel_batch: multiSelects.batch, msel_classify: multiSelects.classify };
     Object.keys(ms).forEach((id) => {
       if (!fields[id]) return;
       const arr = (ms[id] && typeof ms[id].getLabels === 'function')
-        ? ms[id].getLabels().filter(Boolean) : [];
+        ? ms[id].getLabels().map((x) => sc(String(x))).filter(Boolean) : [];
       if (arr.length) labels[id] = arr.join('、');
     });
     return labels;
@@ -583,7 +593,11 @@
     if (!name) { toast('⚠️ 名称不能为空', 2000); return; }
     // 2026-09-20 架构改版：save 是 async 的（服务端优先）。这里必须 await——
     // 否则读到的是 Promise，res.ok 恒为 undefined → 弹「保存失败」但东西其实存进去了。
-    const res = await SQ.save({ page: 'task', name, fields, summary, labels: collectSavedLabels(fields) });
+    const res = await SQ.save({
+      page: 'task', name, fields, summary,
+      labels: collectSavedLabels(fields),
+      autoName: summary ? summary.slice(0, 30) : '',   // 与弹窗预填的一致，部门榜用它
+    });
     if (!res.ok) { toast('⚠️ 保存失败：' + (res.error || '未知错误'), 3000); return; }
     toast('已保存到首页' + (res.localOnly ? '（仅本机，连上共享库后会自动补上去）' : '')
       + (typeof SQ.syncSuffix === 'function' ? SQ.syncSuffix() : '')
@@ -617,6 +631,9 @@
     // 会静默拿不到 → 不回填 → 页面照常跑默认查询（有概率 = 点到自己的查询则成功）。
     const item = await SQ.getAsync(id);
     if (!item || !item.fields) return;
+    // 「我用了这份查询」上报（部门高频的时间衰减排序要用）。
+    // 放在落地页而不是首页点卡片时：那一刻 <a> 在跳转，在途 fetch 会被中断。失败不影响回填。
+    if (typeof SQ.markUsed === 'function') Promise.resolve(SQ.markUsed(id)).catch(() => {});
     const f = item.fields;
     // 1) 原生文本输入
     ['t_taskNo', 't_taskName', 't_demandNo', 't_leadProduct', 't_relationProducts',
@@ -831,6 +848,9 @@
     // 首屏就是空态：显示宽表空态浮层并对齐到表头下沿。
     // （静态 HTML 里浮层是 hidden 的 —— 表头高度要等布局完成才测得准，先不显示。）
     if (window.TableUtils && window.TableUtils.syncEmptyOverlay) window.TableUtils.syncEmptyOverlay();
+
+    // Token 管理浮窗：三个查询页都要能改 token（2026-09-21 补，与发布页同一支）
+    if (window.TokenManager && typeof window.TokenManager.init === 'function') window.TokenManager.init();
   }
 
   if (document.readyState === 'loading') {

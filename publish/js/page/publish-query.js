@@ -180,7 +180,7 @@
   }
 
   // ── 核心：发起查询 ──────────────────────────────────
-  async function doQuery({ focusMissing = true } = {}) {
+  async function doQuery() {
     const state = ctx.state;
     const apiBody    = ctx.collectApiBody();
     const localConds = ctx.collectLocalFilters();
@@ -199,24 +199,28 @@
       }
     }
 
-    // 1. 基础验证 — 必填项检查
-    // 提供方系统 / 批次都可能是 input 或 searchable-select，取值口径由页面提供
-    const fCompNum = ctx.getProviderValue();
-    const fBatch   = ctx.getBatchValue();
+    // 1. 基础验证 —— 「提供方系统」「批次」自 2026-09-21 起都**非必选**（用户拍板）：
+    //    只选了系统、或什么条件都没选，也允许查 —— 但这种查询没有批次这个强筛选，
+    //    后端会跨批次回数据、结果集可能很大，所以**先让用户确认一次**再发请求。
+    //    用户点「取消」就停在这一步，可以回去继续加条件；点「继续查询」才真的查。
+    //    唯一直接拦下（不给确认机会）的是「选了批次却解析不出 label」（批次字典还没加载完）：
+    //    放行会让请求体与前端过滤双双丢掉批次条件，静默返回全批次数据，比明确报错更坏。
+    const fBatch = ctx.getBatchValue();
 
-    if (!fCompNum) {
-      ctx.showToast('⚠️ 请输入提供方系统', 2000, 'warn');
-      if (focusMissing) ctx.focusProvider();
-      return;
-    }
     if (!fBatch) {
-      ctx.showToast('⚠️ 请选择或输入提供方最新变更批次', 2000, 'warn');
-      // 仅点击“查询”时主动聚焦；输入框按回车不抢焦点
-      if (focusMissing) ctx.focusBatch();
-      return;
+      const goOn = ctx.confirm
+        ? await ctx.confirm({
+          title: '数据量可能过大',
+          message: '当前查询结果数据量可能过大，请增加更多筛选条件以缩小查询范围。\n\n仍要继续查询吗？',
+          okText: '继续查询',
+        })
+        : true;   // 页面没注入确认框时保守放行（由测试守住「必须注入」）
+      if (!goOn) {
+        ctx.debugLog('用户取消了「未限定批次」的查询');
+        return;
+      }
     }
     // 选了批次但解析不出 label（批次列表没加载完成）时必须拦下来。
-    // 放行的结果是请求体与前端过滤双双丢掉批次条件，静默返回全批次数据。
     if (fBatch && !ctx.resolveBatchLabel().ok) {
       ctx.showToast('⚠️ 批次列表尚未加载完成，无法解析所选批次。请刷新页面后重试', 4000, 'warn');
       return;
@@ -416,7 +420,9 @@
    *   getDeptValue()         当前选中的部门值（仅调试日志用）
    *   getProviderValue()     提供方系统当前值（instance 或原生 input）
    *   getBatchValue()        批次当前值（instance 或原生 select）
-   *   focusProvider() / focusBatch()   校验失败时聚焦对应控件
+   *   confirm({title,message,okText}) => Promise<boolean>
+   *                          「没限定批次」时的二次确认（页面用 DialogUtils.confirmBox 注入）；
+   *                          返回 false 则这次查询直接放弃（2026-09-21 起系统/批次都非必选）
    *   fillDeptListFromRows(rows)       用结果兜底填充部门下拉
    *   showToast(msg, ms, type) / showLoading() / hideLoading() / debugLog(...)
    */

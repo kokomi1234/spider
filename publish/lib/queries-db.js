@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS saved_queries (
   id            TEXT PRIMARY KEY,
   page          TEXT NOT NULL,
   name          TEXT NOT NULL,
+  -- auto_name：**由筛选条件生成的默认名**（保存时弹窗里预填的那个）。
+  -- name 是使用者可以随手改的，所以部门榜不能拿它当标题（2026-09-22 用户报
+  -- 「改了名字，部门榜跟着变」/「两处命名规则不一样」）。这个字段专门留给榜单。
+  auto_name     TEXT NOT NULL DEFAULT '',
   summary       TEXT NOT NULL DEFAULT '',
   fields        TEXT NOT NULL DEFAULT '{}',
   labels        TEXT NOT NULL DEFAULT '{}',
@@ -69,6 +73,23 @@ CREATE TABLE IF NOT EXISTS saved_query_tombstones (
 CREATE INDEX IF NOT EXISTS idx_savers_user  ON saved_query_savers (user_key);
 CREATE INDEX IF NOT EXISTS idx_savers_dept  ON saved_query_savers (dept_key);
 CREATE INDEX IF NOT EXISTS idx_savers_query ON saved_query_savers (query_id);
+
+-- ── 「谁**用过**这份查询」（与「谁保存过」分开）──────────────────────
+-- 2026-09-21 加，为「部门高频查询」的时间衰减排序攒数据（见 publish/docs/部门高频查询排序方案.md）。
+-- 为什么要单独一张表：
+--   · 打开别人分享的查询也算「在用」，但那个人没有保存关系 —— 塞进 savers 表会把
+--     「几个人保存过」这个现有口径搞乱（现在榜单就是按它排的，方案第 1 步不动排序）；
+--   · 将来算分数时按 user_key 与 savers 取并集、时间取 MAX 即可，两边语义互不污染。
+-- 只存「最后时间」不存每次访问的明细：衰减是时间的函数，明细既没必要又会无限膨胀。
+CREATE TABLE IF NOT EXISTS saved_query_uses (
+  query_id TEXT NOT NULL,
+  user_key TEXT NOT NULL,
+  dept_key TEXT NOT NULL DEFAULT '',
+  at       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (query_id, user_key)
+);
+CREATE INDEX IF NOT EXISTS idx_uses_dept  ON saved_query_uses (dept_key);
+CREATE INDEX IF NOT EXISTS idx_uses_query ON saved_query_uses (query_id);
 `;
 
 /** 部门的归并键，口径与前端 SavedQuery.deptKeyOf 一致：team 优先，org 兜底 */
@@ -106,6 +127,13 @@ function userKeyOf(owner) {
 const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : (d || 0));
 
 /**
+ * 部门高频查询的分数**半衰期**：30 天。
+ * 想让榜单更恋旧就调大（45~60 天），想更快换血就调小（14~21 天）—— 只改这一个常量。
+ * 30 天与业务节奏一致：批次是月度的（2607~2612），30 天 ≈ 一个批次周期。
+ */
+const DEPT_SCORE_HALFLIFE_MS = 30 * 24 * 3600 * 1000;
+
+/**
  * 打开（或新建）数据库。
  * @param {string} file SQLite 文件路径
  * @returns {object} store
@@ -125,14 +153,33 @@ function open(file) {
   // 那不是「这台 Node 不支持 SQLite」，不该冒泡成静默回落 JSON（两套后端会把数据分家）。
   try { db.exec('PRAGMA journal_mode = WAL'); } catch (_) { /* 保持库当前的日志模式 */ }
   db.exec(SCHEMA);
+  // 老库迁移（2026-09-22）：auto_name 是后加的列，已存在的库要补上。
+  // 补不了也不致命：读的时候回退到 summary / labels 拼（见前端 condNameOf）。
+  try {
+    const cols = db.prepare("PRAGMA table_info(saved_queries)").all().map((c) => c.name);
+    if (cols.indexOf('auto_name') < 0) {
+      db.exec("ALTER TABLE saved_queries ADD COLUMN auto_name TEXT NOT NULL DEFAULT ''");
+      console.log('[saved-queries] 已为旧库补上 auto_name 列');
+    }
+    // 老记录回填：auto_name 是刚加的列，历史行都是空的 —— 用它的 name 兜上。
+    // 为什么用 name 而不是 summary：旧记录的 name 多半就是"保存时那个默认名"
+    //（谁会没事改它），这样部门榜与「我的常用查询」立刻对得上；改过名的极少数
+    // 会显示成改后的名字，下次保存同一条时会被新的 autoName 覆盖回来。
+    const need = db.prepare("SELECT COUNT(*) AS c FROM saved_queries WHERE auto_name = '' AND name <> ''").get();
+    const n = need ? Number(need.c) || 0 : 0;
+    if (n > 0) {
+      db.exec("UPDATE saved_queries SET auto_name = name WHERE auto_name = ''");
+      console.log(`[saved-queries] 已为 ${n} 条老记录回填默认名（用原名字，仅供部门榜显示）`);
+    }
+  } catch (_) { /* 迁移失败不拦启动 */ }
 
   // ── 语句 ────────────────────────────────────────────────
   const insQuery = db.prepare(`
     INSERT INTO saved_queries
-      (id, page, name, summary, fields, labels, fingerprint, hits, saves, created_at, updated_at, last_opened_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, page, name, auto_name, summary, fields, labels, fingerprint, hits, saves, created_at, updated_at, last_opened_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      page=excluded.page, name=excluded.name, summary=excluded.summary,
+      page=excluded.page, name=excluded.name, auto_name=excluded.auto_name, summary=excluded.summary,
       fields=excluded.fields, labels=excluded.labels, fingerprint=excluded.fingerprint,
       hits=MAX(saved_queries.hits, excluded.hits),
       saves=MAX(saved_queries.saves, excluded.saves),
@@ -152,9 +199,35 @@ function open(file) {
   const delTomb = db.prepare('DELETE FROM saved_query_tombstones WHERE at < ?');
   const delSavers = db.prepare('DELETE FROM saved_query_savers WHERE query_id = ?');
   const delQuery = db.prepare('DELETE FROM saved_queries WHERE id = ?');
+  // 「用过」的记录：同一人重复上报只更新最后时间（幂等，反复提交同一个文件/重试不会刷时间）
+  const insUse = db.prepare(`
+    INSERT INTO saved_query_uses (query_id, user_key, dept_key, at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(query_id, user_key) DO UPDATE SET
+      dept_key=excluded.dept_key, at=MAX(saved_query_uses.at, excluded.at)
+  `);
+  const delUses = db.prepare('DELETE FROM saved_query_uses WHERE query_id = ?');
+  const selUsesOf = db.prepare('SELECT * FROM saved_query_uses WHERE query_id = ?');
   const selAll = db.prepare('SELECT * FROM saved_queries WHERE id NOT IN (SELECT query_id FROM saved_query_tombstones)');
   const selSaversOf = db.prepare('SELECT * FROM saved_query_savers WHERE query_id = ? ORDER BY saved_at ASC');
   const deptTotal = db.prepare('SELECT COUNT(DISTINCT user_key) AS c FROM saved_query_savers');
+  // ── 同一份条件 + 同一个人 = 同一条（2026-09-22）────────────────────
+  // 以前判重比的是**名字**：改个名就多出一条，匿名保存被认领后也多出一条。
+  // 这两条语句用于 upsert 里归并（一条找"该并到哪"，一条列"这个条件下的所有行"）。
+  const selSameByFp = db.prepare(`
+    SELECT q.id AS id
+    FROM saved_queries q
+    JOIN saved_query_savers s ON s.query_id = q.id
+    WHERE q.fingerprint = ? AND q.fingerprint <> '' AND s.user_key = ?
+    ORDER BY q.updated_at DESC LIMIT 1
+  `);
+  const selRowsByFp = db.prepare(`
+    SELECT q.id AS id, q.hits AS hits, q.saves AS saves, q.updated_at AS updated_at, q.created_at AS created_at
+    FROM saved_queries q
+    WHERE q.fingerprint = ?
+    ORDER BY q.updated_at DESC
+  `);
+  const updQueryCounts = db.prepare('UPDATE saved_queries SET hits = MAX(hits, ?), saves = MAX(saves, ?) WHERE id = ?');
 
   const TOMB_KEEP_MS = 30 * 24 * 3600 * 1000;   // 与前端/旧 JSON 实现一致：墓碑留 30 天
 
@@ -170,6 +243,11 @@ function open(file) {
       id: row.id,
       page: row.page,
       name: row.name,
+      // 由条件生成的默认名（保存时预填的那个）：部门榜的标题用它 ——
+      // name 是使用者随手改的，榜单不能跟着晃（2026-09-22）。
+      // ⚠️ toRecord 是**逐字段挑**的，新增列必须在这里显式带出来，否则前端永远收不到
+      //   （踩过一次：列加好了、也写进去了，但读出来是 undefined）。
+      autoName: row.auto_name || '',
       summary: row.summary || '',
       fields,
       labels,
@@ -226,19 +304,35 @@ function open(file) {
           if (!it || typeof it !== 'object' || !it.id || !it.page) return;
           const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
           const at = num(it.at, now) || now;
+          const uk = userKeyOf(owner);
+          // ⚠️ 没有归属人的记录**不入服务端**（2026-09-22 用户报「未登录存的会变成重复」）：
+          // 服务端的用户视图是按 savers 表 join 出来的（byUser / deptTop 都靠它），
+          // 没有 saver 的行走进去只会变成**孤儿行** —— 谁的用户视图都看不见它，
+          // 但它确实占着一个 id、还会在镜像刷新后冒出来，表现就是"同一条查询出现两遍"。
+          // 未登录时保存的东西本来就只属于那台机器（本机镜像是它的家，见 user-token 那套思路）。
+          if (!uk) return;
+          const fp = fingerprintOf(it);
+          // 同条件 + 同人已有记录 → **并到它上面**（用它的 id），而不是新增一条。
+          // 前端已经按同一口径判过了，这里再兜一层：前端镜像可能陈旧、或那次提交
+          // 根本没带上老记录（2026-09-22 用户报的两个重复来源正是这两类）。
+          let id = String(it.id);
+          if (fp && uk) {
+            const hit = selSameByFp.get(fp, uk);
+            if (hit && hit.id) id = String(hit.id);
+          }
           insQuery.run(
-            String(it.id), String(it.page), String(it.name || '未命名查询'),
+            id, String(it.page), String(it.name || '未命名查询'),
+            String(it.autoName || ''),
             String(it.summary || ''),
             JSON.stringify(it.fields && typeof it.fields === 'object' ? it.fields : {}),
             JSON.stringify(it.labels && typeof it.labels === 'object' ? it.labels : {}),
-            fingerprintOf(it),
+            fp,
             num(it.hits, 0), Math.max(1, num(it.saves, 1)),
             at, num(it.at, at), num(it.lastAt, 0),
           );
-          const uk = userKeyOf(owner);
           if (uk) {
             insSaver.run(
-              String(it.id), uk,
+              id, uk,
               String(owner.userId || ''), String(owner.userName || uk),
               String(owner.teamId || ''), String(owner.teamName || ''),
               String(owner.orgId || ''), String(owner.orgName || ''),
@@ -246,11 +340,61 @@ function open(file) {
             );
           }
         });
+        // 归并历史重复：同一份条件 + 同一个人只留一条。
+        // 旧判重按名字，改名/认领时攒下的重复就在库里；这里对「本批涉及的 fingerprint」
+        // 顺手收干净（不额外扫全库）。计数取 MAX 而不是累加 —— 累加会把"存了 3 次"
+        // 算成 6 次，虚高。只删「仅属于这一个人」的重复行，别人也存过的行不动。
+        const touchedFp = new Set();
+        (Array.isArray(items) ? items : []).forEach((it) => {
+          const fp = fingerprintOf(it);
+          if (fp) touchedFp.add(fp);
+        });
+        touchedFp.forEach((fp) => {
+          const rows = selRowsByFp.all(fp);
+          const byUser = new Map();   // user_key → 该人在这个条件下的行（已按 updated_at 降序）
+          rows.forEach((r) => {
+            selSaversOf.all(r.id).forEach((s) => {
+              if (!byUser.has(s.user_key)) byUser.set(s.user_key, []);
+              byUser.get(s.user_key).push(r);
+            });
+          });
+          byUser.forEach((list) => {
+            if (list.length < 2) return;
+            // 保留哪一条：重复行的条件完全一样，差别只在名字与计数 ——
+            // 按「更常用」定：hits 多的 → saves 多的 → 创建更早的。
+            // ⚠️ **别按 updated_at**：改名产生的那条副本才是"最新更新"的，
+            //    按它会留下副本、删掉正主（2026-09-22 实测：用户改名留下的"2"就是这样）。
+            const sorted = list.slice().sort((a, b) => (num(b.hits, 0) - num(a.hits, 0))
+              || (num(b.saves, 0) - num(a.saves, 0))
+              || (num(a.created_at, 0) - num(b.created_at, 0)));
+            const keep = sorted[0];
+            updQueryCounts.run(num(keep.hits, 0), num(keep.saves, 1), keep.id);
+            sorted.slice(1).forEach((dup) => {
+              if (dup.id === keep.id) return;
+              if (selSaversOf.all(dup.id).length > 1) return;      // 别人也存过 → 不动它
+              updQueryCounts.run(num(dup.hits, 0), num(dup.saves, 1), keep.id);
+              delSavers.run(dup.id);
+              delUses.run(dup.id);
+              delQuery.run(dup.id);
+            });
+          });
+          // 孤儿行（没有任何 saver）：同条件下还有别的行时删掉它。
+          // 未登录保存的记录曾被推成这种（见上面 !uk 那段注释），老库里已经攒下了 ——
+          // 不清掉的话，用户镜像刷新后它还会以"重复的一条"冒出来。
+          if (rows.length < 2) return;
+          rows.forEach((r) => {
+            if (selSaversOf.all(r.id).length > 0) return;
+            delSavers.run(r.id);
+            delUses.run(r.id);
+            delQuery.run(r.id);
+          });
+        });
         (Array.isArray(deletedIds) ? deletedIds : []).forEach((id) => {
           const key = String(id || '');
           if (!key) return;
           insTomb.run(key, now);
           delSavers.run(key);
+          delUses.run(key);      // 「用过」的记录一起清，否则墓碑之外的残留会一直留在表里
           delQuery.run(key);
         });
         delTomb.run(now - TOMB_KEEP_MS);
@@ -260,6 +404,110 @@ function open(file) {
         throw e;   // 如实抛给调用方 → 代理回 400/500，前端角标显示失败，而不是"成功但数据不全"
       }
       return { items: this.all(), deleted: this.tombstones() };
+    },
+
+    /**
+     * 全库归并「同一份条件 + 同一个人」的历史重复（2026-09-22）。
+     *
+     * 由代理启动时调一次。为什么要专门扫一遍：旧的判重比的是**名字**，
+     * 改名 / 匿名保存被认领都会攒下重复；upsert 里的归并只在"这份条件又被保存时"
+     * 才收敛 —— 用户不动它，重复就一直摆在首页上（用户截图里那条改名留下的"2"就是）。
+     *
+     * 安全性：只删「**仅属于这一个人**」的重复行；别人也存过的行一字不动
+     *（那种是两个人各存了一份，部门榜靠聚合，不该合并）。
+     *
+     * @returns {{removed:number}} 归并掉的行数
+     */
+    dedupeAll() {
+      const rows = db.prepare(
+        "SELECT id, fingerprint, hits, saves, updated_at, created_at FROM saved_queries WHERE fingerprint <> ''",
+      ).all();
+      const byFp = new Map();
+      rows.forEach((r) => {
+        if (!byFp.has(r.fingerprint)) byFp.set(r.fingerprint, []);
+        byFp.get(r.fingerprint).push(r);
+      });
+      let removed = 0;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        byFp.forEach((list) => {
+          if (list.length < 2) return;
+          const byUser = new Map();   // user_key → 该人在这个条件下的行
+          list.forEach((r) => {
+            selSaversOf.all(r.id).forEach((sv) => {
+              if (!byUser.has(sv.user_key)) byUser.set(sv.user_key, []);
+              byUser.get(sv.user_key).push(r);
+            });
+          });
+          byUser.forEach((dups) => {
+            if (dups.length < 2) return;
+            // 保留策略同 upsert：按「更常用」而不是「更新更晚」
+            //（改名副本的 updated_at 最新，按它会留副本删正主）。
+            dups.sort((a, b) => (num(b.hits, 0) - num(a.hits, 0))
+              || (num(b.saves, 0) - num(a.saves, 0))
+              || (num(a.created_at, 0) - num(b.created_at, 0))
+              || String(a.id).localeCompare(String(b.id)));
+            const keep = dups[0];
+            dups.slice(1).forEach((d) => {
+              if (d.id === keep.id) return;
+              if (selSaversOf.all(d.id).length > 1) return;   // 别人也存过 → 不动
+              updQueryCounts.run(num(d.hits, 0), num(d.saves, 1), keep.id);
+              delSavers.run(d.id);
+              delUses.run(d.id);
+              delQuery.run(d.id);
+              removed += 1;
+            });
+          });
+          // 没有任何 saver 记录的「孤儿行」：同条件下还有别的行时它就是历史残留
+          //（改名的中间产物曾被留成这种），删掉。只剩它一条时保留 ——
+          // 那可能是"刚 INSERT、saver 还没写"的中间态，不值得赌。
+          if (list.length < 2) return;
+          list.forEach((r) => {
+            if (selSaversOf.all(r.id).length > 0) return;
+            delSavers.run(r.id);
+            delUses.run(r.id);
+            delQuery.run(r.id);
+            removed += 1;
+          });
+        });
+        db.exec('COMMIT');
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch (_) { /* 已经回滚掉了 */ }
+        throw e;
+      }
+      return { removed };
+    },
+
+    /**
+     * 记一次「这个人用了这份查询」（部门高频的时间衰减排序要用）。
+     *
+     * 为什么单独一个入口而不是塞进 upsert：upsert 写的是**保存关系**（savers 表），
+     * 而「用过但没保存」的人没有保存关系 —— 混进去会把「几个人保存过」这个现有口径搞乱。
+     *
+     * 幂等：同一人重复上报只把时间往后推（MAX），反复重试/重复提交不会刷时间。
+     *
+     * @param {Array<{queryId:string, userKey:string, deptKey?:string, at?:number}>} uses
+     * @returns {number} 实际写入/更新的条数
+     */
+    markUsed(uses) {
+      const arr = Array.isArray(uses) ? uses : [];
+      let n = 0;
+      try {
+        db.exec('BEGIN');
+        arr.forEach((u) => {
+          if (!u || typeof u !== 'object') return;
+          const qid = String(u.queryId || u.id || '').trim();
+          const uk = String(u.userKey || '').trim();
+          if (!qid || !uk) return;
+          insUse.run(qid, uk, String(u.deptKey || '').trim(), num(u.at, Date.now()));
+          n += 1;
+        });
+        db.exec('COMMIT');
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch (_) { /* 已回滚 */ }
+        throw e;
+      }
+      return n;
     },
 
     /**
@@ -292,14 +540,42 @@ function open(file) {
       const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 10;
       // 聚合口径：同一份条件（fingerprint 相同）算同一个查询；没填条件的各自成组。
       // 代表行取「最近有人保存的那条」，名字/摘要用它 —— 也就是当前大家在用的那份。
+      // ── 排序：指数时间衰减的「按人贡献求和」（2026-09-21 改，方案见 docs/部门高频查询排序方案.md）──
+      //   分数 = Σ（本部门每个人） 2 ^ ( −(现在 − 这个人最后活跃时间) / 半衰期 )
+      //   其中「最后活跃时间」= MAX(这个人保存它的时间, 这个人最近一次使用它的时间)。
+      //   老查询没人用 → 每个人的贡献都趋近 0 → 自然下沉，不需要额外的过期/淘汰规则。
+      const nowMs = Date.now();
       const rows = db.prepare(`
+        -- rn = 组内第几行（按保存时间倒序）。用来挑「代表行」——
+        -- ⚠️ 原来靠 agg.last_saved = scoped.saved_at 挑，组内若有两人 saved_at 相同
+        --    （批量导入 / 同一毫秒保存）会同时匹配上，榜单里同一条查询出现两行。
+        --    （注意：SQL 注释里别用反引号 —— 这一段是 JS 模板字符串，反引号会提前截断它。）
         WITH scoped AS (
-          SELECT q.*, s.user_key, s.user_name, s.saved_at,
-                 CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid
-          FROM saved_queries q
-          JOIN saved_query_savers s ON s.query_id = q.id
-          WHERE s.dept_key = ?
-            AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY gid ORDER BY saved_at DESC, id ASC) AS rn
+          FROM (
+            SELECT q.*, s.user_key, s.user_name, s.saved_at,
+                   CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid
+            FROM saved_queries q
+            JOIN saved_query_savers s ON s.query_id = q.id
+            WHERE s.dept_key = ?
+              AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          )
+        ),
+        -- 每个人的最后活跃时间：保存过的人（scoped）与用过的人（uses）取并集，时间取 MAX。
+        -- 分成两段再 UNION ALL 是因为「用过但没保存」的人根本不在 savers 表里。
+        activity AS (
+          SELECT gid, user_key, MAX(t) AS t
+          FROM (
+            SELECT gid, user_key, saved_at AS t FROM scoped
+            UNION ALL
+            SELECT CASE WHEN q.fingerprint <> '' THEN q.fingerprint ELSE 'solo:' || q.id END AS gid,
+                   u.user_key AS user_key, u.at AS t
+            FROM saved_query_uses u
+            JOIN saved_queries q ON q.id = u.query_id
+            WHERE u.dept_key = ?
+              AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
+          )
+          GROUP BY gid, user_key
         ),
         agg AS (
           SELECT gid,
@@ -308,17 +584,30 @@ function open(file) {
                  GROUP_CONCAT(user_name, '"|;"') AS people
           FROM scoped
           GROUP BY gid
+        ),
+        score AS (
+          SELECT gid,
+                 -- ⚠️ 必须 * 1.0 转 REAL：SQLite 的 / 是整数除法，否则指数被截断成 0、
+                 -- 不足一个半衰期的时间差全算成「就在今天」，衰减会静默失效（实测确认）。
+                 SUM(POW(2.0, -(? - t) * 1.0 / ?)) AS score
+          FROM activity
+          GROUP BY gid
         )
-        SELECT scoped.id, scoped.page, scoped.name, scoped.summary, scoped.fields,
+        SELECT scoped.id, scoped.page, scoped.name, scoped.auto_name, scoped.summary, scoped.fields,
                scoped.labels, scoped.hits, scoped.saves, scoped.created_at,
                scoped.updated_at, scoped.last_opened_at, scoped.user_key,
                scoped.user_name, scoped.saved_at,
-               agg.savers AS savers, agg.last_saved AS last_saved, agg.people AS people
+               agg.savers AS savers, agg.last_saved AS last_saved, agg.people AS people,
+               COALESCE(score.score, 0) AS score
         FROM scoped
-        JOIN agg ON agg.gid = scoped.gid AND agg.last_saved = scoped.saved_at
-        ORDER BY agg.savers DESC, agg.last_saved DESC
+        JOIN agg ON agg.gid = scoped.gid
+        LEFT JOIN score ON score.gid = scoped.gid
+        WHERE scoped.rn = 1          -- 每组只出一行（组内 saved_at 相同也不会重复）
+        -- 主排序改成分数；分数相同时再按「保存人数 → 最近保存时间」，
+        -- 保证任何情况下顺序都是确定的（不会因为并列而每次查询抖一下）。
+        ORDER BY score DESC, agg.savers DESC, agg.last_saved DESC
         LIMIT ?
-      `).all(key, n);
+      `).all(key, key, nowMs, DEPT_SCORE_HALFLIFE_MS, n);
       // people 已经是**整个组**（同一份条件）的本部门人员名单：
       // 只取代表行那一条的话，会把同组其它人的名字埋掉。
       // 不用 GROUP_CONCAT 的默认逗号：姓名里带逗号会被拆成两个人（实测「王,五」→ 两人）。
@@ -332,6 +621,9 @@ function open(file) {
           savers: Number(r.savers) || rec.savers,
           saverNames: names.length ? names : rec.saverNames,
           recentUser: r.user_name || rec.recentUser,
+          // 衰减后的分数（诊断用：业务问「它凭什么排第一」时能当场给出数字）。
+          // 前端不拿它排序 —— 排序在 SQL 里已经做完了。
+          score: Number(r.score) || 0,
         };
       });
     },

@@ -51,7 +51,9 @@ function setup() {
 
   const rec = {
     toasts: [], stats: [], retryBars: [], replay: [], errors: [], empty: [],
-    loading: [], focused: [], deptRows: [], requests: [],
+    loading: [], deptRows: [], requests: [],
+    confirms: [],            // 「没限定批次」的二次确认（2026-09-21 起取代原来的必填拦截）
+    confirmAnswer: true,     // 用例可置 false 模拟用户点「取消」
     retryBtn: { disabled: false, textContent: '重试失败分页' },
   };
   win.PublishView = {
@@ -80,8 +82,8 @@ function setup() {
     getDeptValue: () => '',
     getProviderValue: () => 'E001',
     getBatchValue: () => '2609pc',
-    focusProvider: () => rec.focused.push('provider'),
-    focusBatch: () => rec.focused.push('batch'),
+    // 未限定批次时的二次确认：默认「继续查询」，用例可改成 false 试「取消」
+    confirm: (opts) => { rec.confirms.push(opts); return Promise.resolve(rec.confirmAnswer); },
     fillDeptListFromRows: (rows) => rec.deptRows.push(rows.length),
     showToast: (msg, ms, type) => rec.toasts.push({ msg, ms, type }),
     showLoading: () => rec.loading.push(true),
@@ -185,7 +187,7 @@ test('doQuery：首页 total 决定扇出页数，按页码序拼全量并写回
   const t = setup();
   installBackend(t, (p) => okResp(pageData(p, TOTAL).records, TOTAL));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   // 首页 + 第 2、3 页
   assert.deepStrictEqual(t.rec.requests.map((r) => r.pageNum), [1, 2, 3]);
@@ -210,7 +212,7 @@ test('doQuery：去重（后端忽略 pageNum 重复返回同一批）', async (
   // 每页都返回第 1 页那 200 条 → 去重后只剩 200
   installBackend(t, () => okResp(pageData(1, TOTAL).records, TOTAL));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.strictEqual(t.state.rawRows.length, FETCH);
   assert.strictEqual(
@@ -231,7 +233,7 @@ test('doQuery：前端兜底过滤生效并提示被丢掉的条数', async () =
     return okResp(records, TOTAL);
   });
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.strictEqual(t.state.rawRows.length, 225);
   assert.ok(toastOf(t, '过滤掉 225 条'), '应提示兜底过滤丢了多少条');
@@ -241,7 +243,7 @@ test('doQuery：空结果 → 空态渲染 + state 复位 + 关掉 loading', asy
   const t = setup();
   installBackend(t, () => okResp([], 0));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.strictEqual(t.rec.empty.length, 1);
   assert.strictEqual(t.state.rawRows.length, 0);
@@ -250,31 +252,54 @@ test('doQuery：空结果 → 空态渲染 + state 复位 + 关掉 loading', asy
   assert.ok(toastOf(t, '📭'));
 });
 
-test('doQuery：必填缺失 / 批次 label 解析不出 → 拦在本前端，一个请求都不发', async () => {
+test('doQuery：系统/批次非必选 —— 未限定批次要先确认，批次解析不出仍直接拦', async () => {
+  // ① 没选批次 + 用户点「取消」→ 一个请求都不发，可以回去继续加条件
   const t1 = setup();
-  t1.ctx.getProviderValue = () => '';
-  await t1.Q.doQuery({ focusMissing: true });
-  assert.strictEqual(t1.rec.requests.length, 0);
-  assert.deepStrictEqual(t1.rec.focused, ['provider']);
-  assert.ok(toastOf(t1, '请输入提供方系统'));
+  installBackend(t1, () => okResp([], 0));
+  t1.ctx.getBatchValue = () => '';
+  t1.rec.confirmAnswer = false;
+  await t1.Q.doQuery();
+  assert.strictEqual(t1.rec.confirms.length, 1, '未限定批次必须先弹一次确认');
+  assert.ok(String(t1.rec.confirms[0].message).includes('数据量可能过大'),
+    '确认文案要说明数据量问题，实际：' + JSON.stringify(t1.rec.confirms[0]));
+  assert.strictEqual(t1.rec.requests.length, 0, '用户取消后不得发请求');
 
+  // ② 没选批次 + 用户点「继续查询」→ 照常查
   const t2 = setup();
+  installBackend(t2, () => okResp([], 0));
   t2.ctx.getBatchValue = () => '';
-  await t2.Q.doQuery({ focusMissing: true });
-  assert.strictEqual(t2.rec.requests.length, 0);
-  assert.deepStrictEqual(t2.rec.focused, ['batch']);
+  t2.rec.confirmAnswer = true;
+  await t2.Q.doQuery();
+  assert.strictEqual(t2.rec.confirms.length, 1);
+  assert.ok(t2.rec.requests.length >= 1, '确认后应照常发请求，实际 ' + t2.rec.requests.length);
 
+  // ③ 连提供方系统也没选（完全没条件）→ 同样只确认、不再报「请输入提供方系统」
   const t3 = setup();
-  t3.ctx.resolveBatchLabel = () => ({ value: '2609pc', label: '', ok: false });
-  await t3.Q.doQuery({ focusMissing: true });
-  assert.strictEqual(t3.rec.requests.length, 0, '解析不出 label 必须阻断查询');
-  assert.ok(toastOf(t3, '批次列表尚未加载完成'));
+  installBackend(t3, () => okResp([], 0));
+  t3.ctx.getProviderValue = () => '';
+  t3.ctx.getBatchValue = () => '';
+  t3.rec.confirmAnswer = false;
+  await t3.Q.doQuery();
+  assert.strictEqual(t3.rec.confirms.length, 1);
+  assert.strictEqual(t3.rec.requests.length, 0);
+  assert.ok(!toastOf(t3, '请输入提供方系统'), '系统已非必选，不该再报必填');
 
+  // ④ 选了批次但解析不出 label → 仍然直接拦（不给确认机会：那是数据一致性问题）
   const t4 = setup();
-  t4.ctx.collectApiBody = () => ({ compNum: '非法编号!' });
-  await t4.Q.doQuery({ focusMissing: false });
-  assert.strictEqual(t4.rec.requests.length, 0, '格式校验不通过不得发请求');
-  assert.ok(toastOf(t4, '提供方系统编号格式不正确'));
+  installBackend(t4, () => okResp([], 0));
+  t4.ctx.resolveBatchLabel = () => ({ value: '2609pc', label: '', ok: false });
+  await t4.Q.doQuery();
+  assert.strictEqual(t4.rec.confirms.length, 0, '解析失败不该弹「数据量」确认');
+  assert.strictEqual(t4.rec.requests.length, 0, '解析不出 label 必须阻断查询');
+  assert.ok(toastOf(t4, '批次列表尚未加载完成'));
+
+  // ⑤ 格式校验不通过 → 照旧拦在本前端
+  const t5 = setup();
+  installBackend(t5, () => okResp([], 0));
+  t5.ctx.collectApiBody = () => ({ compNum: '非法编号!' });
+  await t5.Q.doQuery();
+  assert.strictEqual(t5.rec.requests.length, 0, '格式校验不通过不得发请求');
+  assert.ok(toastOf(t5, '提供方系统编号格式不正确'));
 });
 
 // ── doQuery：竞态 / 错误 ──────────────────────────────
@@ -290,9 +315,9 @@ test('doQuery：旧查询晚归不得覆盖新查询的结果（querySeq 竞态�
   };
 
   // 两次查询：第一次是「旧」，第二次是「新」
-  const oldRun = t.Q.doQuery({ focusMissing: false });
+  const oldRun = t.Q.doQuery();
   t.ctx.collectApiBody = () => ({ compNum: 'E002', batch: '2611批次' });
-  const newRun = t.Q.doQuery({ focusMissing: false });
+  const newRun = t.Q.doQuery();
   assert.strictEqual(deferred.length, 2);
 
   // 新查询先落地
@@ -313,7 +338,7 @@ test('doQuery：后端报错 → 错误文案 toast + 结果区复位，loading 
   const t = setup();
   installBackend(t, () => errResp(500));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.strictEqual(t.rec.errors.length, 1);
   assert.ok(toastOf(t, '❌ 服务器内部错误，请稍后重试'));
@@ -327,7 +352,7 @@ test('doQuery：页数封顶 MAX_FETCH_PAGES=20，并明确告知只取了前 20
   const HUGE = 100000;   // ceil(100000/200) = 500 页
   installBackend(t, (p) => okResp(p === 1 ? pageData(1, HUGE).records : [{ id: 1000 + p }], HUGE));
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.strictEqual(t.rec.requests.length, 20, '首页 + 2~20 页，共 20 次请求');
   assert.strictEqual(t.rec.requests[t.rec.requests.length - 1].pageNum, 20);
@@ -343,7 +368,7 @@ test('doQuery：部分分页失败 → 重试条给页码、结果不完整提�
     return okResp(pageData(p, TOTAL).records, TOTAL);
   });
 
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
 
   assert.deepStrictEqual(t.rec.retryBars[t.rec.retryBars.length - 1], [2]);
   assert.strictEqual(t.Q.hasFailedPages(), true);
@@ -379,7 +404,7 @@ test('cancel：作废在途查询并丢掉重试上下文', async () => {
   const t = setup();
   let failPage2 = true;
   installBackend(t, (p) => (p === 2 && failPage2 ? errResp(500) : okResp(pageData(p, TOTAL).records, TOTAL)));
-  await t.Q.doQuery({ focusMissing: false });
+  await t.Q.doQuery();
   assert.strictEqual(t.Q.hasFailedPages(), true);
 
   t.Q.cancel();

@@ -104,9 +104,13 @@
   }
 
   /**
-   * 「近 12 个月」批次 label：从（基准月 −2）到（基准月 +9），含两端，共 12 个。
-   * 例：基准 2026-09 ⇒ [2607批次, …, 2706批次]。label 与抓包一致（YYMM批次），
+   * 批次窗口 label：从（基准月 −2）到（基准月 +3），含两端，共 **6 个**。
+   * 例：基准 2026-09 ⇒ [2607批次 … 2612批次]。label 与抓包一致（YYMM批次），
    * 直接作为 prodBatch 的过滤值发给后端。
+   *
+   * ⚠️ **2026-09-21 用户拍板：从原来的 12 个月（−2 ~ +9）收成 6 个月（−2 ~ +3）**。
+   * 这一份定义同时供「订阅页默认查询」「批量修改批次时间的弹窗行」「优先级窗口」三处使用，
+   * 是刻意保持**单一口径** —— 要再改就改这里，别在页面里另起一套窗口。
    *
    * 月份安全的两个要点（改这个函数时别破坏）：
    *   · **一律用 1 号构造再 setMonth(+1)**：若拿当天日期（比如 31 号）去加一个月，
@@ -123,7 +127,7 @@
       : (Fmt && typeof Fmt.businessToday === 'function' ? Fmt.businessToday() : new Date());
 
     const start = new Date(base.getFullYear(), base.getMonth() - 2, 1);
-    const end = new Date(base.getFullYear(), base.getMonth() + 9, 1);
+    const end = new Date(base.getFullYear(), base.getMonth() + 3, 1);
     const out = [];
     const cur = new Date(start.getFullYear(), start.getMonth(), 1);
     while (cur <= end) {
