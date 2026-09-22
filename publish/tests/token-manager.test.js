@@ -392,6 +392,73 @@ test('token-manager：没设「当前用户」时不许改 token（免得动到�
   );
 });
 
+test('token-manager：普通用户能在同一个弹窗里清除自己的 token（回到回落状态）', async () => {
+  // 2026-09-22 用户要求：重置也走右上角那个「🔑 Token」弹窗 —— 在哪儿录入就在哪儿撤销。
+  const btn = fakeEl('button');
+  const calls = [];
+  const STATUS_MINE = {
+    code: 200, hasToken: true, tokenPreview: 'abcd1234...wxyz', envPath: '/mock/.env',
+    adminUserId: '4711510', isAdmin: false, expiryHour: 5,
+    mine: { has: true, preview: 'mine...1234', issuedAt: Date.now(), expired: false },
+    source: 'user', reason: '本人的 token',
+  };
+  await withFakeDom(
+    { btnTokenManager: btn },
+    fakeFetch(calls, (url) => (/\/admin\/token\?|\/admin\/token$/.test(String(url))
+      ? { code: 200, msg: 'token removed', scope: 'user' }
+      : STATUS_MINE)),
+    async (doc) => {
+      const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+      const toasts = [];
+      loadTokenManager(win, doc);
+      win.toast = (msg) => toasts.push(msg);
+      // 确认框本身有独立用例覆盖；这里只验证「清除」这条链走通
+      win.DialogUtils.confirmBox = () => Promise.resolve(true);
+
+      win.TokenManager.init();
+      btn.click();
+      await flush();
+
+      const overlay = overlayOf(doc);
+      const wrap = findIn(overlay, (e) => e.id === 'tm-clear-wrap');
+      assert.ok(wrap, '弹窗里要有「清除我的 token」容器');
+      assert.notStrictEqual(wrap.hidden, true, '已录入过 → 应该显示出来');
+
+      findIn(overlay, (e) => e.id === 'tm-clear-mine').click();
+      await flush();
+
+      const post = calls.find((c) => c.init && c.init.method === 'POST');
+      assert.ok(post, '应发出 POST');
+      assert.deepStrictEqual(
+        JSON.parse(post.init.body),
+        { userKey: '6464402', remove: true },
+        '要带 userKey + remove，代理据此只清他自己的那条',
+      );
+      assert.ok(toasts.some((t) => /已清除/.test(t)), `应提示已清除，实际：${JSON.stringify(toasts)}`);
+    },
+  );
+});
+
+test('token-manager：没录入过 / 管理员身份时，不显示「清除我的 token」', async () => {
+  const btn = fakeEl('button');
+  const calls = [];
+  // 未录入
+  const STATUS_NONE = {
+    code: 200, hasToken: true, tokenPreview: 'abcd1234...wxyz', envPath: '/mock/.env',
+    adminUserId: '4711510', isAdmin: false, expiryHour: 5,
+    mine: { has: false }, source: 'fallback', reason: '本人未录入 token',
+  };
+  await withFakeDom({ btnTokenManager: btn }, fakeFetch(calls, () => STATUS_NONE), async (doc) => {
+    const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+    loadTokenManager(win, doc);
+    win.TokenManager.init();
+    btn.click();
+    await flush();
+    const wrap = findIn(overlayOf(doc), (e) => e.id === 'tm-clear-wrap');
+    assert.strictEqual(wrap.hidden, true, '没录过就没什么可清的');
+  });
+});
+
 test('token-manager：页面带 ?token= 时透传给管理端点（代理已不鉴权，但参数继续带着——将来要收紧时还用得上）', async () => {
   const btn = fakeEl('button');
   const calls = [];

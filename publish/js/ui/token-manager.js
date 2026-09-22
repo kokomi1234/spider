@@ -29,6 +29,9 @@
   var currentReason = '';
   var currentExpiryHour = 5;
   var adminKeyCache = '4711510';
+  // 清除自己的 token 之后要就地刷新弹窗，所以把这两个引用留住（onReady 里赋值）
+  var statusElRef = null;
+  var ctxRef = null;
 
   /** 当前登录用户（决定这次改的是谁的 token） */
   function meNow() {
@@ -229,6 +232,10 @@
     var boxWrap = box && box.closest ? box.closest('label') : null;
     if (boxWrap) boxWrap.style.display = admin ? '' : 'none';
 
+    // 「清除我的 token」：只有"本人身份 + 确实录过"才显示（没录过没什么可清的）
+    var clearWrap = ctx.body.querySelector('#tm-clear-wrap');
+    if (clearWrap) clearWrap.hidden = !(k && !admin && currentMine && currentMine.has);
+
     var hint = ctx.body.querySelector('#tm-role-hint');
     if (hint) {
       if (admin) {
@@ -245,6 +252,53 @@
     }
   }
 
+  /**
+   * 把自己的 token 撤掉（2026-09-22）：回到「回落管理员 token」的状态。
+   * 用户要求走同一个「🔑 Token」弹窗 —— 在哪儿录入，就在哪儿撤销，不另开入口。
+   */
+  function clearMyToken() {
+    var DU = window.DialogUtils;
+    var k = meKey();
+    // 管理员那条在 .env 里，不从这里清（他的 token 由运维工具维护）
+    if (!k || isAdminNow()) return Promise.resolve(false);
+
+    var ask = (DU && typeof DU.confirmBox === 'function')
+      ? DU.confirmBox({
+        title: '清除我的 token？',
+        message: '清除后你的查询会回落到管理员 token（只剩查询权限，订阅会被禁），直到你重新录入自己的。',
+        okText: '清 除',
+        danger: true,
+      })
+      : Promise.resolve(true);   // 拿不到确认组件时直接执行：这是可逆操作，不值得卡住
+
+    return ask.then(function (yes) {
+      if (!yes) return false;
+      return fetch(adminUrl('/admin/token'), {
+        method: 'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({ userKey: k, remove: true }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data || data.code !== 200) {
+            toast('清除失败：' + ((data && data.msg) || '未知错误'), 2500, 'warn');
+            return false;
+          }
+          toast('已清除：查询会回落到管理员 token（只有查询权限）', 3200, 'success');
+          // 就地刷新：状态区与「清除」按钮的显隐都要跟着变
+          return loadStatus().then(function (ok) {
+            renderStatus(statusElRef, !ok);
+            applyIdentityChrome(ctxRef);
+            return true;
+          });
+        })
+        .catch(function () {
+          toast('请求失败：代理未启动或 /admin/token 不可达', 2500, 'warn');
+          return false;
+        });
+    });
+  }
+
   function openDialog() {
     var DU = window.DialogUtils;
     if (!DU || typeof DU.openUtilDialog !== 'function') return;
@@ -255,7 +309,9 @@
       title: 'Token 管理',
       // 先开弹窗再拉状态：不用等网络，也不靠 setTimeout 猜请求什么时候回来
       onReady: function (ctx) {
-        statusEl = ctx.body.querySelector('#tm-status');
+        statusElRef = ctx.body.querySelector('#tm-status');
+        ctxRef = ctx;
+        statusEl = statusElRef;
         loadStatus().then(function (ok) {
           renderStatus(statusEl, !ok);
           applyIdentityChrome(ctx);   // 管理员工号来自 status，得等它回来才能定文案
@@ -321,6 +377,23 @@
         // 那是在把后端实现（代理进程、.env 落盘、文件监听）讲给使用者听，界面上没必要，
         // 记在这里就够了。勾选框自己的 label「覆盖 .env 文件（持久生效）」已经表达了
         // 用户需要知道的那点区别：勾上 = 写文件、重启后还在。
+
+        // 「清除我的 token」（2026-09-22）：在哪儿录入就在哪儿撤销。
+        // 只在「本人确实录过」时出现，显隐由 applyIdentityChrome 控制 ——
+        // 它要等 status 回来才知道录没录过。
+        var clearWrap = document.createElement('div');
+        clearWrap.id = 'tm-clear-wrap';
+        clearWrap.hidden = true;
+        clearWrap.style.cssText = 'margin-bottom:var(--sp2);';
+        var clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.id = 'tm-clear-mine';
+        clearBtn.className = 'outlined btn-sm';
+        clearBtn.textContent = '清除我的 token';
+        // 用 createElement + addEventListener（与勾选框同一手法）：测试里能真点到
+        clearBtn.addEventListener('click', clearMyToken);
+        clearWrap.appendChild(clearBtn);
+        body.appendChild(clearWrap);
       },
       footButtons: [
         { text: '取 消', cls: 'outlined btn-sm', value: null },
