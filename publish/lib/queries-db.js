@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS saved_queries (
   id            TEXT PRIMARY KEY,
   page          TEXT NOT NULL,
   name          TEXT NOT NULL,
+  -- auto_name：**由筛选条件生成的默认名**（保存时弹窗里预填的那个）。
+  -- name 是使用者可以随手改的，所以部门榜不能拿它当标题（2026-09-22 用户报
+  -- 「改了名字，部门榜跟着变」/「两处命名规则不一样」）。这个字段专门留给榜单。
+  auto_name     TEXT NOT NULL DEFAULT '',
   summary       TEXT NOT NULL DEFAULT '',
   fields        TEXT NOT NULL DEFAULT '{}',
   labels        TEXT NOT NULL DEFAULT '{}',
@@ -149,14 +153,33 @@ function open(file) {
   // 那不是「这台 Node 不支持 SQLite」，不该冒泡成静默回落 JSON（两套后端会把数据分家）。
   try { db.exec('PRAGMA journal_mode = WAL'); } catch (_) { /* 保持库当前的日志模式 */ }
   db.exec(SCHEMA);
+  // 老库迁移（2026-09-22）：auto_name 是后加的列，已存在的库要补上。
+  // 补不了也不致命：读的时候回退到 summary / labels 拼（见前端 condNameOf）。
+  try {
+    const cols = db.prepare("PRAGMA table_info(saved_queries)").all().map((c) => c.name);
+    if (cols.indexOf('auto_name') < 0) {
+      db.exec("ALTER TABLE saved_queries ADD COLUMN auto_name TEXT NOT NULL DEFAULT ''");
+      console.log('[saved-queries] 已为旧库补上 auto_name 列');
+    }
+    // 老记录回填：auto_name 是刚加的列，历史行都是空的 —— 用它的 name 兜上。
+    // 为什么用 name 而不是 summary：旧记录的 name 多半就是"保存时那个默认名"
+    //（谁会没事改它），这样部门榜与「我的常用查询」立刻对得上；改过名的极少数
+    // 会显示成改后的名字，下次保存同一条时会被新的 autoName 覆盖回来。
+    const need = db.prepare("SELECT COUNT(*) AS c FROM saved_queries WHERE auto_name = '' AND name <> ''").get();
+    const n = need ? Number(need.c) || 0 : 0;
+    if (n > 0) {
+      db.exec("UPDATE saved_queries SET auto_name = name WHERE auto_name = ''");
+      console.log(`[saved-queries] 已为 ${n} 条老记录回填默认名（用原名字，仅供部门榜显示）`);
+    }
+  } catch (_) { /* 迁移失败不拦启动 */ }
 
   // ── 语句 ────────────────────────────────────────────────
   const insQuery = db.prepare(`
     INSERT INTO saved_queries
-      (id, page, name, summary, fields, labels, fingerprint, hits, saves, created_at, updated_at, last_opened_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, page, name, auto_name, summary, fields, labels, fingerprint, hits, saves, created_at, updated_at, last_opened_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      page=excluded.page, name=excluded.name, summary=excluded.summary,
+      page=excluded.page, name=excluded.name, auto_name=excluded.auto_name, summary=excluded.summary,
       fields=excluded.fields, labels=excluded.labels, fingerprint=excluded.fingerprint,
       hits=MAX(saved_queries.hits, excluded.hits),
       saves=MAX(saved_queries.saves, excluded.saves),
@@ -220,6 +243,11 @@ function open(file) {
       id: row.id,
       page: row.page,
       name: row.name,
+      // 由条件生成的默认名（保存时预填的那个）：部门榜的标题用它 ——
+      // name 是使用者随手改的，榜单不能跟着晃（2026-09-22）。
+      // ⚠️ toRecord 是**逐字段挑**的，新增列必须在这里显式带出来，否则前端永远收不到
+      //   （踩过一次：列加好了、也写进去了，但读出来是 undefined）。
+      autoName: row.auto_name || '',
       summary: row.summary || '',
       fields,
       labels,
@@ -294,6 +322,7 @@ function open(file) {
           }
           insQuery.run(
             id, String(it.page), String(it.name || '未命名查询'),
+            String(it.autoName || ''),
             String(it.summary || ''),
             JSON.stringify(it.fields && typeof it.fields === 'object' ? it.fields : {}),
             JSON.stringify(it.labels && typeof it.labels === 'object' ? it.labels : {}),
@@ -564,7 +593,7 @@ function open(file) {
           FROM activity
           GROUP BY gid
         )
-        SELECT scoped.id, scoped.page, scoped.name, scoped.summary, scoped.fields,
+        SELECT scoped.id, scoped.page, scoped.name, scoped.auto_name, scoped.summary, scoped.fields,
                scoped.labels, scoped.hits, scoped.saves, scoped.created_at,
                scoped.updated_at, scoped.last_opened_at, scoped.user_key,
                scoped.user_name, scoped.saved_at,

@@ -691,7 +691,12 @@
     } catch (_) { name = ''; }
     if (!name || !String(name).trim()) return;   // 取消 / 空输入：什么都不做
 
-    const r = await S.save({ page: 'publish', name: String(name).trim(), fields, summary, labels: snapshotLabels(fields) });
+    const r = await S.save({
+      page: 'publish', name: String(name).trim(), fields, summary,
+      labels: snapshotLabels(fields),
+      // 默认名（弹窗里预填的那个）一起存下来：部门榜的标题用它，不随个人改名变
+      autoName: suggest.trim(),
+    });
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
     // 2026-09-20 架构改版后 save 是双态的：server=true 表示已直接写进共享库；
     // localOnly=true 表示只落在本机（代理没连上 / 服务端失败），措辞要说清。

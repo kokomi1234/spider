@@ -271,6 +271,10 @@
       id,
       page,
       name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '未命名查询',
+      // 「由筛选条件生成的默认名」——保存时弹窗里预填的那个（个人可改名，这个不会变）。
+      // 部门榜标题用它，这样谁改名都不会带歪整个部门的榜单（2026-09-22）。
+      // 服务端的列名是 auto_name，两种写法都认；旧记录没有这个字段就是空串。
+      autoName: String(item.autoName || item.auto_name || '').trim().slice(0, 60),
       summary: typeof item.summary === 'string' ? item.summary : '',
       labels,
       owner: cleanOwner(item.owner),
@@ -356,6 +360,23 @@
    *（2026-09-22 用户报）。条件本身才是这份查询的身份，所以榜单标题只认 labels。
    * labels 为空（没填任何条件）时返回空串，调用方自己退回 name。
    */
+  /**
+   * 部门榜的**标题**：优先用「保存时由条件生成的默认名」（autoName），
+   * 老记录没有这个字段就退回摘要前 30 字，再退回 labels 拼。
+   *
+   * 为什么不是 name：name 是使用者随手改的（2026-09-22 用户报「改了常用查询的名字，
+   * 下面部门高频查询的名字也跟着改」）。为什么不是 labels 拼：各页面给的默认名规则不同
+   *（订阅页是「调用方系统：xxx」、发布页是「批次 编号」），榜单自己拼会与"我的"对不上
+   *（同日用户又报「命名规则怎么不一样」）。所以：**保存时算什么就用什么**。
+   */
+  function condNameOf(item) {
+    const own = String((item && (item.autoName || item.auto_name)) || '').trim();
+    if (own) return own;
+    const sum = String((item && item.summary) || '').trim();
+    if (sum) return sum.slice(0, 30);
+    return nameFromLabels(item && item.labels);
+  }
+
   function nameFromLabels(labels) {
     const o = cleanLabels(labels);
     return Object.keys(o)
@@ -639,7 +660,7 @@
    * 判重口径不变：同名同页**只对同一个人**算更新——两个人各自保存同名查询
    * 是两条记录（默认名由筛选条件生成，同一份条件两人保存必然同名）。
    */
-  async function save({ page, name, fields, summary, labels, owner }) {
+  async function save({ page, name, fields, summary, labels, owner, autoName }) {
     if (!page || !PAGES[page]) return fail('未知的页面类型');
     const title = (name || '').trim();
     if (!title) return fail('请填写查询名称');
@@ -660,7 +681,7 @@
 
     // ── 服务端路径 ──
     if (canSync() && myKey) {
-      const srv = await saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey });
+      const srv = await saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey, autoName });
       if (srv.ok) return { ok: true, item: srv.item, updated: !!srv.updated, server: true };
       // 服务端失败不拦人：退回本地兜底，让用户先把东西存下来（错误留在角标里）
     }
@@ -676,10 +697,11 @@
       id: exists ? exists.id : newId(),
       page,
       name: title,
+      autoName: String(autoName || '').trim().slice(0, 60),
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
       owner: ownerInfo,
-      // 同名同页覆盖时累加保存次数，而不是重置——「高频」既看打开也看保存
+      // 同一份条件重复保存时累加保存次数，而不是重置——「高频」既看打开也看保存
       saves: exists ? (exists.saves || 1) + 1 : 1,
       hits: exists ? (exists.hits || 0) : 0,
       lastAt: exists ? (exists.lastAt || 0) : 0,
@@ -709,7 +731,7 @@
    * 判重数据来自服务端而不是本机镜像 —— 本机镜像可能陈旧甚至混着别人的旧记录，
    * 而服务端才是唯一真相源。任何一步失败返回 {ok:false,...}，由 save() 落回本地。
    */
-  async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey }) {
+  async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey, autoName }) {
     const mine = await mineFromServer(ownerInfo);
     if (!mine.ok) return { ok: false, error: mine.error };
     // 与本地兜底同一套判据：同条件 + 同人 = 同一条（改名不该产生新记录）
@@ -719,6 +741,7 @@
       id: exists ? exists.id : newId(),
       page,
       name: title,
+      autoName: String(autoName || '').trim().slice(0, 60),
       summary: typeof summary === 'string' ? summary : '',
       labels: cleanLabels(labels),
       owner: ownerInfo,
@@ -924,6 +947,8 @@
         same.lastAt = Math.max(same.lastAt || 0, inc.lastAt || 0);
         if (!same.owner && inc.owner) same.owner = inc.owner;   // 本地没归属就补上
         if (!same.labels && inc.labels && Object.keys(inc.labels).length) same.labels = inc.labels;
+        // 默认名同理：本机的旧记录没有它，从服务端同步回来时补上（部门榜要用）
+        if (!same.autoName && inc.autoName) same.autoName = inc.autoName;
         // 「谁保存过」取并集：合并后两个人的名单都要留着，
         // 否则并过来的那一位又看不见这条了（与 owner 只看最早的那位是同一个坑）。
         same.saverKeys = Array.from(new Set([...(same.saverKeys || []), ...(inc.saverKeys || [])]));
@@ -1340,6 +1365,7 @@
     fingerprintOf,
     sameQuery,
     nameFromLabels,
+    condNameOf,
     exportJson,
     exportJsonAsync,
     importJson,

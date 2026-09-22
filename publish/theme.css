@@ -1277,11 +1277,13 @@ tbody tr.unsubscribed-row:hover td {
 /* ── Toast 提示 ───────────────────────────────────── */
 .toast {
   position: fixed;
-  /* 提醒放页面**顶部**居中：原先在底部，用户常常根本没看到（尤其结果区一屏放不下时）。
-     从上方滑入（translateY 取负），与「顶部」的位置呼应。 */
-  top: 24px;
+  /* 提醒放页面**中下**：2026-09-22 用户反馈顶部会挡住工具栏/操作区，
+     连续操作时"挡住太久"。改到底部偏上一点（bottom: 84px）——
+     比贴底高一点，避免压住分页栏之类的底部元素，视线也仍然够得着。
+     从下方滑入（translateY 取正），与位置呼应。 */
+  bottom: 84px;
   left: 50%;
-  transform: translateX(-50%) translateY(-20px);
+  transform: translateX(-50%) translateY(16px);
   background: var(--on-surface);
   color: var(--surface);
   padding: 10px 24px;

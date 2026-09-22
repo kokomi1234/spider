@@ -116,7 +116,7 @@
     // labels 为空（没填任何条件）时退回 name —— 那种记录本来就没"条件"可拼。
     const condTitle = o.titleFromLabels && window.SavedQuery
       && typeof window.SavedQuery.nameFromLabels === 'function'
-      ? window.SavedQuery.nameFromLabels(item.labels) : '';
+      ? window.SavedQuery.condNameOf(item) : '';
     nameText.textContent = condTitle || item.name;
     nameRow.appendChild(badge);
     nameRow.appendChild(nameText);
