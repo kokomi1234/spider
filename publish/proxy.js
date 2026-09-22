@@ -96,7 +96,10 @@ const PORT = process.env.PROXY_PORT || 3000;
 // 跑在内网"。要收窄的话设 PROXY_HOST=127.0.0.1 就行（只绑本机）。
 const HOST = process.env.PROXY_HOST || '0.0.0.0';
 const TARGET = process.env.PROXY_TARGET || 'http://itamp.bocsys.cn';
-const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
+// ⚠️ `let` 而不是 `const`：转发超时要能被 `/reload` 与 1.5s 的 .env 轮询改到。
+//   原来是启动时定死的 const，而启动横幅承诺「修改后自动生效（约 1.5 秒）」、
+//   `/reload` 还回 `keys:["PROXY_TIMEOUT"]` —— 改了不生效 + 谎报（2026-09-22 复测 D-7）。
+let TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
 
 
 function refreshConfig() {
@@ -106,6 +109,9 @@ function refreshConfig() {
   // 其他人在没录入自己 token / 录了但过期 / 没登录时**回落**到它。
   // 默认写死 4711510，.env 里配了就以 .env 为准。
   ADMIN_USER_ID_REFRESHED = String(process.env.ADMIN_USER_ID || '4711510').trim();
+  // 转发超时一起跟着热更新（复测 D-7）；非法值/0/负数退回默认 20000，别把请求挂死。
+  const nextTimeout = Number(process.env.PROXY_TIMEOUT);
+  TIMEOUT = nextTimeout > 0 ? nextTimeout : 20000;
   for (const [name, envKey] of [
     ['systemId', 'PROXY_SYSTEM_ID'],
     ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
@@ -781,10 +787,16 @@ function handleQueriesSqlite(req, res, store) {
         if (uses.length) {
           try { used = store.markUsed(uses); } catch (e) { useErr = String((e && e.message) || e); }
         }
+        const skipped = Number(r.skipped) || 0;   // 字段不全 / 没有归属人 → 库层如实报数（复测 D-5）
+        const dropNotes = [
+          truncated ? `超出 2000 条上限，丢弃 ${truncated} 条` : '',
+          skipped ? `${skipped} 条字段不全或没有归属人，未入库` : '',
+        ].filter(Boolean);
         sendJson(res, 200, {
-          code: 200, msg: truncated ? `已合并保存（超出 2000 条上限，丢弃 ${truncated} 条）` : '已合并保存',
+          code: 200, msg: dropNotes.length ? `已合并保存（${dropNotes.join('；')}）` : '已合并保存',
           data: { items: r.items, deleted: r.deleted, file: store.file, storage: 'sqlite',
-            people: store.peopleCount(), mode: 'all', truncated, used, ...(useErr ? { useError: useErr } : {}) },
+            people: store.peopleCount(), mode: 'all', truncated, skipped, used,
+            ...(useErr ? { useError: useErr } : {}) },
         });
       } catch (e) {
         sendJson(res, 400, { code: 400, msg: '保存失败（需合法 JSON）: ' + e.message });
@@ -833,14 +845,20 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // 本地端点一律按**去掉查询串的路径**判定（下面 /cache/list、/local/*、/admin/* 都是这么写的）。
+  // ⚠️ 必须先于 /health 定义：/health 原来用 `req.url === '/health'` 精确匹配，
+  //   于是 `/health?t=1` 判不上、一路掉到转发层去打内网（502 还要等满 20s，2026-09-22 复测 D-8）。
+  const cachePath = (() => { try { return new URL(req.url, 'http://localhost').pathname; } catch (_) { return req.url; } })();
+
   // 健康检查：快速判断代理是否还活着（也被前端用来提示「代理未启动」）
-  if (req.url === '/health') {
+  if (cachePath === '/health') {
     sendJson(res, 200, {
       code: 200,
       msg: 'proxy ok',
       target: TARGET,
       offline: OFFLINE_REFRESHED,
       record: RECORD,
+      timeout: TIMEOUT,               // 如实播报：PROXY_TIMEOUT 改没改，这里一眼能核对（复测 D-7）
       cacheDir: CACHE_DIR,
       cacheCount: Object.keys(readIndex()).length,
       apiCache: { ttlMs: API_CACHE_TTL, size: apiCache.size, paths: API_CACHE_PATHS },
@@ -851,7 +869,6 @@ const server = http.createServer((req, res) => {
   // 缓存管理。这些是**内网自用**的管理端点，不做鉴权。
   // （2026-09-20 用户拍板：整台服务器只有他一个人部署、数据也只落这一台，
   //   原来那层 PROXY_ADMIN_TOKEN 的 token 校验一并去掉，别再加回来。）
-  const cachePath = (() => { try { return new URL(req.url, 'http://localhost').pathname; } catch (_) { return req.url; } })();
 
   if (cachePath === '/cache/list') {
     // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
@@ -1270,6 +1287,16 @@ const server = http.createServer((req, res) => {
 });
 
 function handle(req, res, bodyBuf) {
+  // 能走到这里就说明没有任何本地端点接住它 —— **本地前缀必须当场 404，不许进转发层**
+  //（2026-09-22 复测 D-8：`/local/unknown-x`、`/admin/unknown-x`、`/cache/unknown-x`
+  //  原来被原样转发去打内网，非离线环境要等满 TIMEOUT 才回一个 502，还顺带把内网地址暴露在前端）。
+  let pathname = req.url;
+  try { pathname = new URL(req.url, 'http://localhost').pathname; } catch (_) { /* 保留原串 */ }
+  if (/^\/(local|admin|cache|health|reload)(\/|$)/.test(pathname)) {
+    sendJson(res, 404, { code: 404, msg: '未知的本地端点：' + pathname });
+    return;
+  }
+
   const key = cacheKey(req.method, req.url, bodyBuf);
   const meta = {
     method: req.method,
