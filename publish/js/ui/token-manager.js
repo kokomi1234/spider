@@ -77,7 +77,9 @@
 
   /** 拉一次当前状态；失败不抛，留给调用方决定怎么显示 */
   function loadStatus() {
-    return fetch(adminUrl('/admin/token/status'), { headers: apiHeaders(), cache: 'no-store' })
+    // 只拉**代理侧**的状态（管理员 token / .env 位置 / 管理员工号）。
+    // 本机 token 的状态不从这里来 —— 它就在 localStorage 里，直接读（见 localStatus）。
+    return fetch(adminUrl('/admin/token/status'), { headers: { 'Content-Type': 'application/json' }, cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (!data || data.code !== 200) return false;
@@ -86,16 +88,25 @@
         // envPath 照旧接住（它是接口契约的一部分），但**刻意不往界面上渲染** ——
         // 那是本机绝对路径、属于实现细节，原因见 renderStatus 里的注释。
         currentEnvPath = data.envPath || '';
-        // 2026-09-22 新增：我自己那条的状态 + 本次实际会用谁的 token（代理算好的，
-        // 与转发时同一套判定 —— 弹窗说的和实际用的必须一致）
-        currentMine = data.mine || { has: false };
-        currentSource = String(data.source || '');
-        currentReason = String(data.reason || '');
         currentExpiryHour = Number(data.expiryHour) || 5;
-        if (data.adminUserId) adminKeyCache = String(data.adminUserId);
+        if (data.adminUserId) {
+          adminKeyCache = String(data.adminUserId);
+          // 让 api-client 也用同一份「谁是管理员」——前端判源要用它
+          if (window.API && typeof window.API.setAdminUserId === 'function') {
+            window.API.setAdminUserId(data.adminUserId);
+          }
+        }
         return true;
       })
       .catch(function () { return false; });
+  }
+
+  /** 本机 token 的状态（localStorage；模块没加载时当成"没有"） */
+  function localStatus() {
+    try {
+      if (window.UserToken && typeof window.UserToken.status === 'function') return window.UserToken.status();
+    } catch (_) { /* 读坏了就当没有 */ }
+    return { has: false, expired: false, preview: '', ownerKey: '', ownerName: '' };
   }
 
   /** 把「当前 token 预览 + 是否已配置」画进状态区（用 textContent，不拼 HTML） */
@@ -104,48 +115,30 @@
     el.textContent = '';
 
     if (failed) {
-      el.textContent = '⚠️ 状态获取失败（代理未启动或 /admin/token/status 不可达）';
+      el.textContent = '⚠️ 读不到代理状态（代理未启动？）';
       return;
     }
 
-    var k = meKey();
+    var mine = localStatus();
     var admin = isAdminNow();
 
-    // 第一行：管理员 token（.env 那个）—— 全局口径，照旧显示
-    var label = document.createElement('span');
-    label.textContent = admin ? '管理员 token：' : '管理员 token（兜底用）：';
+    // 第一行：管理员 token（.env 那个，兜底用）
+    var line1 = document.createElement('div');
+    line1.textContent = '管理员 token：' + (currentPreview || NOT_SET) + (currentHasToken ? '  ●' : '  ○');
+    el.appendChild(line1);
 
-    var code = document.createElement('code');
-    code.style.cssText = 'padding:2px 6px;background:var(--surface-2);border-radius:4px;font-size:var(--fs-xs);font-family:monospace;';
-    code.textContent = currentPreview || NOT_SET;
-
-    var state = document.createElement('span');
-    state.textContent = currentHasToken ? ' ● 已配置' : ' ○ 未配置';
-    state.style.color = currentHasToken ? 'var(--success)' : 'var(--red-c)';
-
-    el.appendChild(label);
-    el.appendChild(code);
-    el.appendChild(state);
-
-    // 第二行（2026-09-22）：我自己那条 + 本次实际会用谁的。
-    // 用 resolveToken 的结论（status 回传的 source）而不是前端自己猜 ——
-    // 弹窗说的和实际用的必须一致，否则"明明录了却还在用管理员的"这种问题无从排查。
+    // 第二行：本机 token（2026-09-22 起 token 只存本机、不上传）
     var line2 = document.createElement('div');
-    line2.style.cssText = 'margin-top:6px;';
-    if (!k) {
-      line2.textContent = '未设置「当前用户」：本次请求都用管理员 token（只有查询权限），录入自己的 token 前请先在首页设好身份。';
+    line2.style.marginTop = '6px';
+    if (mine.has && mine.expired) {
+      line2.textContent = '本机 token：已过期（每天 ' + currentExpiryHour + ':00 失效），请重新录入';
+    } else if (mine.has) {
+      line2.textContent = '本机 token：' + mine.preview + '（' + (mine.ownerName || '未记名') + '）';
+    } else if (admin) {
+      line2.textContent = '本机 token：未录入（你是管理员，用上面那个）';
     } else {
-      var mineTxt;
-      if (!currentMine || !currentMine.has) mineTxt = '未录入';
-      else if (currentMine.expired) mineTxt = '已过期（每天 ' + currentExpiryHour + ':00 失效，需重新录入）';
-      else mineTxt = '已录入 ' + (currentMine.preview || '');
-      var using;
-      if (currentSource === 'user') using = '本人在用（可订阅等写操作）';
-      else if (currentSource === 'admin') using = '管理员本人（就是上面这个全局 token，全套操作）';
-      else using = '回落到管理员 token' + (currentReason ? '（' + currentReason + '）' : '') + '：只有查询权限';
-      line2.textContent = '我的 token：' + mineTxt + '　·　本次用：' + using;
+      line2.textContent = '本机 token：未录入 → 查询用管理员 token（只有查询权限）';
     }
-    if (currentSource === 'fallback' && k) line2.style.color = 'var(--muted)';
     el.appendChild(line2);
 
     // 2026-09-21 用户拍板：这里原来还会渲染一行「写入位置：<本机绝对路径>」。
@@ -161,32 +154,33 @@
 
     var token = String(input.value || '').trim();
     if (!token) return Promise.resolve(false);
-    // 勾选框取不到时按界面默认（勾选）处理，避免误判成「不落盘」
+
+    // 普通用户（**包括没登录的**）：只存本机、不上传 —— 2026-09-22 用户拍板。
+    // 有的同事 token 权限较高，不愿交给后端；代理因此完全不需要存用户凭证。
+    if (!isAdminNow()) {
+      var UT = window.UserToken;
+      if (!UT || typeof UT.set !== 'function') {
+        toast('本机 token 模块未加载，无法保存', 2800, 'warn');
+        return Promise.resolve(false);
+      }
+      var r = UT.set(token, meNow());
+      if (!r.ok) {
+        toast(r.error || '保存失败', 2800, 'warn');
+        return Promise.resolve(false);
+      }
+      toast('已存在本机：查询将用它（每天 ' + currentExpiryHour + ':00 失效）', 3200, 'success');
+      if (window.API && typeof window.API.notifyTokenSource === 'function') window.API.notifyTokenSource();
+      renderStatus(statusElRef, false);
+      applyIdentityChrome(ctxRef);
+      return Promise.resolve(true);
+    }
+
+    // 管理员：改的是**全局** token（其他人没录入时兜底用它），可写回 .env
     var saveToEnv = saveEl ? !!saveEl.checked : true;
-
-    // 2026-09-22：没设「当前用户」就不能改 —— 没有身份既绑不了「我的 token」，
-    // 更不该让他改到**全局**的管理员 token（那会影响所有人）。
-    if (!meKey()) {
-      toast('请先在首页设置「当前用户」，再回来录入你自己的 token', 3200, 'warn');
-      return Promise.resolve(false);
-    }
-
-    // 2026-09-22：按身份决定这次改的是谁的 token。
-    // 管理员 → 全局 token（可写 .env，由运维工具持续刷新）；
-    // 普通用户 → **他自己的**（存代理的 token 库、绑到他的工号；不写 .env）。
-    var k = meKey();
-    var admin = isAdminNow();
-    var me = meNow();
-    var payload = { token: token, saveToEnv: admin ? saveToEnv : false };
-    if (k && !admin) {
-      payload.userKey = k;
-      payload.userName = (me && me.userName) || '';
-    }
-
     return fetch(adminUrl('/admin/token'), {
       method: 'POST',
-      headers: apiHeaders(),
-      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, saveToEnv: saveToEnv }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -194,13 +188,12 @@
           toast('更新失败：' + ((data && data.msg) || '未知错误'), 2500, 'warn');
           return false;
         }
-        if (admin) {
-          toast('管理员 token 已更新' + (saveToEnv ? ' 并写入 .env' : '（仅当次有效）'), 2000, 'success');
-        } else {
-          toast('已录入你自己的 token：后续查询将用它；每天 ' + currentExpiryHour + ':00 失效，重录即可', 3600, 'success');
-        }
-        // 用服务端返回的真值刷新缓存，下次打开弹窗直接是最新的
-        return loadStatus();
+        toast('管理员 token 已更新' + (saveToEnv ? '（已写入 .env）' : '（仅当次有效）'), 2200, 'success');
+        return loadStatus().then(function (ok) {
+          renderStatus(statusElRef, !ok);
+          applyIdentityChrome(ctxRef);
+          return true;
+        });
       })
       .catch(function () {
         toast('请求失败：代理未启动或 /admin/token 不可达', 2500, 'warn');
@@ -215,39 +208,33 @@
    */
   function applyIdentityChrome(ctx) {
     if (!ctx) return;
-    var k = meKey();
     var admin = isAdminNow();
+    var mine = localStatus();
 
     var h2 = ctx.overlay ? ctx.overlay.querySelector('.sub-head h2') : null;
-    if (h2) h2.textContent = admin ? '管理员 Token' : (k ? '我的 Token' : 'Token');
+    if (h2) h2.textContent = admin ? '管理员 Token' : '本机 Token';
 
     var label = ctx.body.querySelector('#tm-token-label');
-    if (label) label.textContent = admin ? '管理员 Token' : '我的 Token';
+    if (label) label.textContent = admin ? '管理员 Token' : '本机 Token';
 
     var input = ctx.body.querySelector('#tm-token-input');
-    if (input) input.placeholder = admin ? '粘贴管理员（PROXY_TOKEN）的值' : '粘贴你自己在内网取的 token';
+    if (input) input.placeholder = admin ? '粘贴管理员 token' : '粘贴你的 token';
 
-    // 「覆盖 .env」只对管理员成立：普通用户的 token 存在代理的 token 库里，不碰 .env
+    // 「覆盖 .env」只对管理员成立：本机 token 存在浏览器里，不碰 .env
     var box = ctx.body.querySelector('#tm-save-env');
     var boxWrap = box && box.closest ? box.closest('label') : null;
     if (boxWrap) boxWrap.style.display = admin ? '' : 'none';
 
-    // 「清除我的 token」：只有"本人身份 + 确实录过"才显示（没录过没什么可清的）
+    // 「清除本机 token」：录过才显示（没录过没什么可清的）
     var clearWrap = ctx.body.querySelector('#tm-clear-wrap');
-    if (clearWrap) clearWrap.hidden = !(k && !admin && currentMine && currentMine.has);
+    if (clearWrap) clearWrap.hidden = !mine.has;
 
+    // 一句说明就够（2026-09-22 用户：「提示文字太多了」）
     var hint = ctx.body.querySelector('#tm-role-hint');
     if (hint) {
-      if (admin) {
-        hint.textContent = '你是管理员：这里改的是**全局** token（其他人没录入自己的 token 时兜底用它），'
-          + '可勾选写入 .env —— 平时由你的运维工具自动刷新，手改一般只在排查问题时。';
-      } else if (k) {
-        hint.textContent = '录入你自己的 token 后，你的查询就用它（订阅等写操作也能用）；'
-          + '它每天 ' + currentExpiryHour + ':00 失效，失效后会自动回落到管理员 token（只剩查询权限），重录即可。';
-      } else {
-        hint.textContent = '还没设置「当前用户」：请先回首页设好身份，再回来录入你自己的 token。'
-          + '在那之前，所有请求都用管理员 token（只有查询权限）。';
-      }
+      hint.textContent = admin
+        ? '全局 token：其他人没录入自己的时兜底用它。'
+        : '只存在这台机器上，不会上传。';
       hint.hidden = false;
     }
   }
@@ -258,44 +245,30 @@
    */
   function clearMyToken() {
     var DU = window.DialogUtils;
-    var k = meKey();
-    // 管理员那条在 .env 里，不从这里清（他的 token 由运维工具维护）
-    if (!k || isAdminNow()) return Promise.resolve(false);
+    var UT = window.UserToken;
+    if (!UT || typeof UT.clear !== 'function' || !UT.status().has) return Promise.resolve(false);
 
     var ask = (DU && typeof DU.confirmBox === 'function')
       ? DU.confirmBox({
-        title: '清除我的 token？',
-        message: '清除后你的查询会回落到管理员 token（只剩查询权限，订阅会被禁），直到你重新录入自己的。',
+        title: '清除本机 token？',
+        message: '清除后查询会用管理员 token（只有查询权限），直到你重新录入。',
         okText: '清 除',
         danger: true,
       })
-      : Promise.resolve(true);   // 拿不到确认组件时直接执行：这是可逆操作，不值得卡住
+      : Promise.resolve(true);   // 拿不到确认组件时直接执行：这是本机可逆操作
 
     return ask.then(function (yes) {
       if (!yes) return false;
-      return fetch(adminUrl('/admin/token'), {
-        method: 'POST',
-        headers: apiHeaders(),
-        body: JSON.stringify({ userKey: k, remove: true }),
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data || data.code !== 200) {
-            toast('清除失败：' + ((data && data.msg) || '未知错误'), 2500, 'warn');
-            return false;
-          }
-          toast('已清除：查询会回落到管理员 token（只有查询权限）', 3200, 'success');
-          // 就地刷新：状态区与「清除」按钮的显隐都要跟着变
-          return loadStatus().then(function (ok) {
-            renderStatus(statusElRef, !ok);
-            applyIdentityChrome(ctxRef);
-            return true;
-          });
-        })
-        .catch(function () {
-          toast('请求失败：代理未启动或 /admin/token 不可达', 2500, 'warn');
-          return false;
-        });
+      var r = UT.clear();
+      if (!r.ok) {
+        toast(r.error || '清除失败', 2500, 'warn');
+        return false;
+      }
+      toast('已清除本机 token', 2200, 'success');
+      if (window.API && typeof window.API.notifyTokenSource === 'function') window.API.notifyTokenSource();
+      renderStatus(statusElRef, false);
+      applyIdentityChrome(ctxRef);
+      return true;
     });
   }
 

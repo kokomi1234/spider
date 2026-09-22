@@ -50,6 +50,38 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-22 13:20] 主会话 —— token 改回**只存浏览器本机**（撤掉代理侧数据库）
+
+**用户**：「提示文字太多了，然后如果没登录可以输入 token 吗，如果可以我希望是存在 localStorage，
+然后发请求的时候带过去，要不所有的都别放数据库吧，因为有的高层的 token 比较敏感，不好发后端。」
+
+**改动**（撤掉 12:40 那版的代理侧存储）
+- 新增 `js/core/user-token.js`：本机 token 存 `localStorage['spider.userToken.v1']`，
+  含「每天 5:00 过期」判定（`isExpired` / `lastResetAt`）。**没登录也能录**（不绑身份，
+  只顺带记 ownerName 供显示）。
+- `proxy.js`：`resolveToken` 大幅简化 —— 请求头带 `x-user-token` 就用它，否则回落管理员 token；
+  **代理不再有任何用户凭证落盘**。`/admin/token` 的两条用户分支、`/admin/token/status` 的
+  `mine/source/reason` 一并删掉（status 只回管理员 token + `adminUserId` + `expiryHour`）。
+  CORS 的 `x-user-key` 换成 `x-user-token`。
+- **删除** `lib/user-tokens.js`、`tests/user-tokens.test.js`、`shared/user-tokens.db*`。
+- 前端判源改为**自己算**（`API.tokenSource()`）：本机 token 可用 → `user`；管理员本人 → `admin`；
+  否则 → `fallback`。不再依赖响应头往返 —— 离线回放时也算得准（代理仍回 `x-token-source`，仅诊断）。
+- Token 弹窗：录入/清除都只动本机（清除走 `confirmBox` 二次确认），标题「本机 Token / 管理员 Token」，
+  状态区收成两行；说明文字从三段长句压成**一句**（用户说「提示文字太多了」）。
+
+**实测（真机）**
+- 无本机 token（未登录）→ `fallback`、按钮「🔑 管理员 token」、**10 个订阅按钮全禁用**；
+  录入一条本机 token → `user`、「🔑 我的 token」、订阅按钮**全部可用**；清除 → 回到 `fallback` 且再次禁用。
+- `localStorage` 里的 `spider.*` 键**只有** `spider.userToken.v1` 一个（token 确实只在本机、只有一处）。
+- 非离线实例验证转发：带 `x-user-token` → `x-token-source: user`；不带 → `fallback`。
+
+**门禁**：`637/637`（user-token 新增 7 条；token-manager 的 4 条按新架构重写：
+录入只存本机 / 未登录也能录 / 清除本机 / 没录过不显示清除）+ 冒烟 `ALL PASS`。
+
+**⚠️ 给后来的自己**：这一版把 12:40 那版的「按人存代理侧 + 三值 source」整体推翻了。
+别再"顺手把它加回来"——用户否掉它的理由（token 敏感、不发后端）是明确的。
+`.gitignore` 里 `shared/user-tokens.db*` 那三条留着无妨（防将来误提交）。
+
 ### [2026-09-22 12:45] 主会话 —— 用户重置 token 也走「🔑 Token」弹窗
 
 **用户**：「用户重置 token 也是走的右上角我的 token 就好了。」

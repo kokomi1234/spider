@@ -36,32 +36,67 @@
    */
   const DEFAULT_TIMEOUT = 20000; // ms，与代理层 PROXY_TIMEOUT 对齐，避免网络异常时无限等待
 
-  // ── 「这次用的是谁的 token」（2026-09-22）──────────────────────────
-  // 代理按请求头 x-user-key 决定用谁的 token：本人录入过且没过期 → 用本人的；
-  // 否则回落管理员 token（内网只给查询权限）。结果随响应头 x-token-source 回来
-  //（'user' / 'admin'），页面据此禁掉「用管理员 token 时不该给做」的写操作。
-  let lastTokenSource = '';
+  // ── 「这次用的是谁的 token」（2026-09-22 改：token 只在**本机**）──────────
+  // 用户拍板：token 不交给后端存（有的同事 token 权限高），只留 localStorage，
+  // 发请求时带给代理转发。所以「用谁的」这件事**前端自己就能算**：
+  //   本机 token 可用 → 'user'；否则 → 'fallback'（代理会用管理员 token，只有查询权限）；
+  //   管理员本人没录本机 token 时算 'admin'（他用的就是那个全局 token，但**全套权限**）。
+  let adminUserId = '4711510';   // 代理 .env 里的 ADMIN_USER_ID，status 接口回来后会校正
   const tokenSourceListeners = new Set();
 
-  function rememberTokenSource(resp) {
-    try {
-      const s = resp && resp.headers && typeof resp.headers.get === 'function'
-        ? String(resp.headers.get('x-token-source') || '')
-        : '';
-      if (!s || s === lastTokenSource) return;
-      lastTokenSource = s;
-      tokenSourceListeners.forEach((fn) => { try { fn(s); } catch (_) { /* 订阅方炸了不影响请求 */ } });
-    } catch (_) { /* 读不到响应头（跨域没 Expose / 老浏览器）就当不知道，不影响请求本身 */ }
-  }
-
-  /** 当前用户工号（代理的 token 归属判定读它）。未登录返回空串 = 代理走管理员 token */
-  function currentUserKey() {
+  function currentUserNow() {
     try {
       const u = (typeof window !== 'undefined' && window.CurrentUser) ? window.CurrentUser.get() : null;
-      return String((u && (u.userId || u.userName)) || '').trim();
+      return u || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function userKeyNow() {
+    const u = currentUserNow();
+    return String((u && (u.userId || u.userName)) || '').trim();
+  }
+
+  /** 当前用户是不是管理员（前端算：与代理用同一份 ADMIN_USER_ID，由 status 校正） */
+  function isAdminUser() {
+    const k = userKeyNow();
+    return !!k && k === adminUserId;
+  }
+
+  /** 本机 token 可用时给明文，否则空串（空 = 代理回落管理员 token） */
+  function localToken() {
+    try {
+      const t = (typeof window !== 'undefined' && window.UserToken) ? window.UserToken.active() : null;
+      return (t && t.token) || '';
     } catch (_) {
       return '';
     }
+  }
+
+  /**
+   * 本次会用谁的 token：'user' | 'admin' | 'fallback'。
+   * ⚠️ 三种取值别混：'admin'（管理员本人）和 'fallback'（别人回落）都在用管理员 token，
+   * 但前者有全套权限、后者只读 —— 混起来会把管理员自己也锁掉。
+   */
+  function tokenSource() {
+    if (localToken()) return 'user';
+    if (isAdminUser()) return 'admin';
+    return 'fallback';
+  }
+
+  /** 改过本机 token / 换过当前用户之后喊一声，界面上「🔑」的文案要跟着变 */
+  function notifyTokenSource() {
+    try {
+      const s = tokenSource();
+      tokenSourceListeners.forEach((fn) => { try { fn(s); } catch (_) { /* 订阅方炸了不影响调用方 */ } });
+    } catch (_) { /* 同上 */ }
+  }
+
+  /** 用代理 status 回的管理员工号校正本地那份（默认 4711510，配过 .env 的部署可能不同） */
+  function setAdminUserId(id) {
+    const v = String(id || '').trim();
+    if (v) adminUserId = v;
   }
 
   async function call(path, opts = {}) {
@@ -104,8 +139,9 @@
       headers: {
         'Content-Type': 'application/json',
         ...(TOKEN ? { 'token': TOKEN } : {}),
-        // 带上「我是谁」：代理据此选 token（本人录入的 / 管理员兜底）。未登录就不带。
-        ...(currentUserKey() ? { 'x-user-key': currentUserKey() } : {}),
+        // 带上本机 token（若有）：代理原样用它转发。没带 = 代理回落管理员 token。
+        // 2026-09-22 用户拍板 token 只留本机，所以这里直接带、不经任何服务端存储。
+        ...(localToken() ? { 'x-user-token': localToken() } : {}),
         ...headers,
       },
       ...(abortController ? { signal: abortController.signal } : (signal ? { signal } : {})),
@@ -113,9 +149,7 @@
     if (body !== undefined) fetchOpts.body = JSON.stringify(body);
 
     try {
-      const resp = await fetch(url, fetchOpts);
-      rememberTokenSource(resp);   // 记下这次代理用的是谁的 token（界面要据此限制功能）
-      return resp;
+      return await fetch(url, fetchOpts);
     } catch (e) {
       // 调用方主动中止（发起新查询 / 重置表单）时不算失败：照实抛 AbortError，
       // 别谎报成「超时」—— 查询层靠 err.name === 'AbortError' / signal.aborted 判定中止。
@@ -249,9 +283,13 @@
       call,
       fetchSubscribePayload,
       createRequester,
-      // 「当前用的是谁的 token」：'user' = 本人录入且有效；'admin' = 回落管理员（只读口径）。
-      // 空串 = 还没有请求过 / 读不到响应头。
-      tokenSource: () => lastTokenSource,
+      // 「本次会用谁的 token」：'user' = 本机 token 可用；'admin' = 管理员本人；
+      // 'fallback' = 都没有 → 代理会用管理员 token（只有查询权限，订阅会被禁）。
+      // 前端自己算（token 就在本机），不依赖响应头 —— 离线回放时也能正常工作。
+      tokenSource,
+      isAdminUser,
+      setAdminUserId,
+      notifyTokenSource,
       onTokenSourceChange(fn) {
         tokenSourceListeners.add(fn);
         return () => tokenSourceListeners.delete(fn);

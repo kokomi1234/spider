@@ -42,7 +42,9 @@ require('./current-user.test');
 require('./home-page.test');
 // 2026-09-19：常用查询改落 SQLite（回答「这份条件被几个人保存过」）
 require('./queries-db.test');
-require('./user-tokens.test');
+// （2026-09-22 移除）user-tokens.test：用户 token 改存浏览器本机后，代理侧的 token 库
+// 与模块已整体删除；本机存储的用例在 user-token.test.js。
+require('./user-token.test');
 // 2026-09-20：.env 加载顺序防线（PROXY_HOST/PORT 写在 .env 里曾静默失效）
 require('./proxy-env-order.test');
 // 2026-09-21：发布查询页结果行两个弹窗的纯逻辑（编码映射 / 列定义 / 排序 / 分页口径）

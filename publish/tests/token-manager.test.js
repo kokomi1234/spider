@@ -118,8 +118,21 @@ async function withFakeDom(ids, fetchImpl, fn) {
 }
 
 /** 加载 dialog-utils + token-manager 到同一个 window（模拟页面里的加载顺序） */
+/** localStorage 替身：本机 token 就存在这里（2026-09-22 起 token 只存本机、不上传） */
+function fakeStorage(initial) {
+  const data = { ...(initial || {}) };
+  return {
+    _data: data,
+    getItem(k) { return Object.prototype.hasOwnProperty.call(data, k) ? data[k] : null; },
+    setItem(k, v) { data[k] = String(v); },
+    removeItem(k) { delete data[k]; },
+  };
+}
+
 function loadTokenManager(win, doc) {
   loadScript('js/ui/dialog-utils.js', { document: doc }, win);
+  // token-manager 现在要读 window.UserToken（本机 token 的存取），先把它加载进同一个 win
+  loadScript('js/core/user-token.js', {}, win);
   loadScript('js/ui/token-manager.js', { document: doc }, win);
   return win;
 }
@@ -238,14 +251,12 @@ test('token-manager：点「🔑 Token」真的打开弹窗（回归：未导出
 
     await flush();
 
-    // 状态回来后要显示真实预览 + 已配置（不能停在「加载中」）。
-    // 假 DOM 不会把子节点文本拼到父节点上，所以直接在子树里找那两个节点。
-    const code = findIn(status, (e) => e.tagName === 'CODE');
-    assert.ok(code, '状态区应渲染出 <code> 预览');
-    assert.strictEqual(code.textContent, 'abcd1234...wxyz');
-
-    const stateEl = findIn(status, (e) => /配置/.test(e.textContent));
-    assert.ok(stateEl && /已配置/.test(stateEl.textContent), 'hasToken=true 时应显示「已配置」');
+    // 状态回来后要显示管理员 token 的预览（不能停在「加载中」）。
+    // 2026-09-22 起状态区简化成两行纯文本（原来那套 <code> 卡片太占地方），
+    // 所以直接找含预览文字的节点。
+    const previewEl = findIn(status, (e) => e.textContent && e.textContent.indexOf('abcd1234...wxyz') >= 0);
+    assert.ok(previewEl, '状态区应显示管理员 token 的预览');
+    assert.ok(/已配置|●/.test(previewEl.textContent), 'hasToken=true 时要看得出来是配好的');
 
     // 状态请求的 URL 要对得上 proxy 的端点
     assert.strictEqual(calls[0].url, '/admin/token/status', `首次请求应为状态接口，实际：${calls[0].url}`);
@@ -337,9 +348,8 @@ test('token-manager：管理员填上 token 点确认 → POST /admin/token 并�
   );
 });
 
-test('token-manager：普通用户录入自己的 token → 带 userKey 且不写 .env', async () => {
-  // 2026-09-22：非管理员录入的是**他自己的** token（绑到工号、存代理侧），
-  // 不能顺手把 .env 里的管理员 token 改掉。
+test('token-manager：普通用户录入 → 只存本机，不发任何请求', async () => {
+  // 2026-09-22 用户改口径：token 只留在本机（有的同事 token 权限高，不愿交给后端）。
   const btn = fakeEl('button');
   const calls = [];
   await withFakeDom(
@@ -347,6 +357,7 @@ test('token-manager：普通用户录入自己的 token → 带 userKey 且不�
     fakeFetch(calls, () => STATUS_OK),
     async (doc) => {
       const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+      win.localStorage = fakeStorage();
       const toasts = [];
       loadTokenManager(win, doc);
       win.toast = (msg) => toasts.push(msg);
@@ -354,21 +365,20 @@ test('token-manager：普通用户录入自己的 token → 带 userKey 且不�
       btn.click();
       await flush();
       const overlay = overlayOf(doc);
-      findIn(overlay, (e) => e.id === 'tm-token-input').value = 'MY-OWN-TOKEN';
+      findIn(overlay, (e) => e.id === 'tm-token-input').value = '  MY-OWN-TOKEN  ';
       confirmBtnOf(overlay).click();
       await flush();
 
-      const post = calls.find((c) => c.init && c.init.method === 'POST');
-      assert.ok(post, '应有 POST');
-      const body = JSON.parse(post.init.body);
-      assert.strictEqual(body.userKey, '6464402', '要带上「这是谁的 token」');
-      assert.strictEqual(body.token, 'MY-OWN-TOKEN');
-      assert.strictEqual(body.saveToEnv, false, '普通用户的 token 不写 .env');
+      assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '不该发 POST：token 不上传');
+      assert.strictEqual(win.UserToken.get().token, 'MY-OWN-TOKEN', '要 trim 后存进本机');
+      assert.strictEqual(win.UserToken.get().ownerKey, '6464402', '顺带记下是谁录的');
+      assert.ok(toasts.some((t) => /本机/.test(t)), `应提示存在本机，实际：${JSON.stringify(toasts)}`);
     },
   );
 });
 
-test('token-manager：没设「当前用户」时不许改 token（免得动到全局那个）', async () => {
+test('token-manager：没设「当前用户」也能录入（本机就是本机，不绑身份）', async () => {
+  // 用户明确要求：没登录也可以输入 token。
   const btn = fakeEl('button');
   const calls = [];
   await withFakeDom(
@@ -376,6 +386,7 @@ test('token-manager：没设「当前用户」时不许改 token（免得动到�
     fakeFetch(calls, () => STATUS_OK),
     async (doc) => {
       const win = {};                 // 未设当前用户
+      win.localStorage = fakeStorage();
       const toasts = [];
       loadTokenManager(win, doc);
       win.toast = (msg) => toasts.push(msg);
@@ -383,37 +394,33 @@ test('token-manager：没设「当前用户」时不许改 token（免得动到�
       btn.click();
       await flush();
       const overlay = overlayOf(doc);
-      findIn(overlay, (e) => e.id === 'tm-token-input').value = 'NEW-TOKEN-VALUE';
+      findIn(overlay, (e) => e.id === 'tm-token-input').value = 'ANON-TOKEN';
       confirmBtnOf(overlay).click();
       await flush();
-      assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '未登录不该发出 POST');
-      assert.ok(toasts.some((t) => /当前用户/.test(t)), `要提示先设身份，实际：${JSON.stringify(toasts)}`);
+
+      assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '不发请求');
+      assert.strictEqual(win.UserToken.get().token, 'ANON-TOKEN', '没登录也要能录');
+      assert.strictEqual(win.UserToken.get().ownerKey, '', '没身份就记空，不猜');
     },
   );
 });
 
-test('token-manager：普通用户能在同一个弹窗里清除自己的 token（回到回落状态）', async () => {
-  // 2026-09-22 用户要求：重置也走右上角那个「🔑 Token」弹窗 —— 在哪儿录入就在哪儿撤销。
+test('token-manager：清除本机 token（确认后清掉，按钮随之消失）', async () => {
+  // 用户要求：重置也走这个弹窗 —— 在哪儿录入就在哪儿撤销。
   const btn = fakeEl('button');
   const calls = [];
-  const STATUS_MINE = {
-    code: 200, hasToken: true, tokenPreview: 'abcd1234...wxyz', envPath: '/mock/.env',
-    adminUserId: '4711510', isAdmin: false, expiryHour: 5,
-    mine: { has: true, preview: 'mine...1234', issuedAt: Date.now(), expired: false },
-    source: 'user', reason: '本人的 token',
-  };
   await withFakeDom(
     { btnTokenManager: btn },
-    fakeFetch(calls, (url) => (/\/admin\/token\?|\/admin\/token$/.test(String(url))
-      ? { code: 200, msg: 'token removed', scope: 'user' }
-      : STATUS_MINE)),
+    fakeFetch(calls, () => STATUS_OK),
     async (doc) => {
       const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+      win.localStorage = fakeStorage();
       const toasts = [];
       loadTokenManager(win, doc);
       win.toast = (msg) => toasts.push(msg);
       // 确认框本身有独立用例覆盖；这里只验证「清除」这条链走通
       win.DialogUtils.confirmBox = () => Promise.resolve(true);
+      win.UserToken.set('mine-1234', { userId: '6464402', userName: '吴树海' });
 
       win.TokenManager.init();
       btn.click();
@@ -421,35 +428,25 @@ test('token-manager：普通用户能在同一个弹窗里清除自己的 token�
 
       const overlay = overlayOf(doc);
       const wrap = findIn(overlay, (e) => e.id === 'tm-clear-wrap');
-      assert.ok(wrap, '弹窗里要有「清除我的 token」容器');
-      assert.notStrictEqual(wrap.hidden, true, '已录入过 → 应该显示出来');
+      assert.ok(wrap, '弹窗里要有「清除本机 token」容器');
+      assert.notStrictEqual(wrap.hidden, true, '录过 → 应该显示出来');
 
       findIn(overlay, (e) => e.id === 'tm-clear-mine').click();
       await flush();
 
-      const post = calls.find((c) => c.init && c.init.method === 'POST');
-      assert.ok(post, '应发出 POST');
-      assert.deepStrictEqual(
-        JSON.parse(post.init.body),
-        { userKey: '6464402', remove: true },
-        '要带 userKey + remove，代理据此只清他自己的那条',
-      );
+      assert.strictEqual(win.UserToken.get(), null, '本机那条要被清掉');
       assert.ok(toasts.some((t) => /已清除/.test(t)), `应提示已清除，实际：${JSON.stringify(toasts)}`);
+      assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '纯本机操作，不发请求');
     },
   );
 });
 
-test('token-manager：没录入过 / 管理员身份时，不显示「清除我的 token」', async () => {
+test('token-manager：没录过时不显示「清除本机 token」', async () => {
   const btn = fakeEl('button');
   const calls = [];
-  // 未录入
-  const STATUS_NONE = {
-    code: 200, hasToken: true, tokenPreview: 'abcd1234...wxyz', envPath: '/mock/.env',
-    adminUserId: '4711510', isAdmin: false, expiryHour: 5,
-    mine: { has: false }, source: 'fallback', reason: '本人未录入 token',
-  };
-  await withFakeDom({ btnTokenManager: btn }, fakeFetch(calls, () => STATUS_NONE), async (doc) => {
+  await withFakeDom({ btnTokenManager: btn }, fakeFetch(calls, () => STATUS_OK), async (doc) => {
     const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+    win.localStorage = fakeStorage();   // 空的：没录过
     loadTokenManager(win, doc);
     win.TokenManager.init();
     btn.click();
