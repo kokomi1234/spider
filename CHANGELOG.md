@@ -11,10 +11,12 @@
 （无锁定）
 ```
 
-> 两轮锁定均已收口：**复测轮**（20:40→21:22，产出 `docs/前端与代理复测报告-20260922.md`）与
-> **修复轮**（21:35→22:36，同一份报告「七之二」节）。探针分两批移入
-> `~/.Trash/spider-retest-probes-20260922-212211`（33 个）与
-> `~/.Trash/spider-fixprobes-20260922-223519`（2 个），都没用 `rm`。
+> 本轮锁定（2026-09-23 00:3x 起：把订阅页的「折行 + 点击复制 + 键盘漫游」抽成三页共用）
+> **已完成并解锁**，见下面第一条交接记录；探针 `_fx-copy.js` 移入
+> `~/.Trash/spider-fixprobes-20260922-223519`，临时实例 3044 已停。
+
+> 上一轮锁定（2026-09-22 20:40 起：五路只读智能体复测）与
+> **修复轮**（21:35 起）均已完成并解锁，见下面的交接记录。
 
 > 上一轮锁定（2026-09-21 20:30 起：清理 md 里的过时信息）
 > **已于 2026-09-21 20:40 完成并解锁**，见下面第一条交接记录。
@@ -54,6 +56,56 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-23 00:5x] 主会话 —— 订阅页那套「折行 + 点击复制 + 键盘漫游」抽成三页共用，22 处内容 title 删掉
+
+**为什么这么改**：用户对复测报告里那条 §1 遗留（`publish-view.js` 等 22 处 `title="…"` 用来说「被截断的全文」）
+给的方向是「**参照订阅关系查询页面的做法：分行、然后可以复制**」。订阅页早就有这一套（清单 B9），
+另两页没有，才退化成靠悬停看全文 —— 所以不是"删提示"，是**换一种给全文的方式**。
+
+**做了什么**：
+1. 新建 `js/ui/copy-cells.js`（`window.CopyCells`）：点击复制 + 整张表只占**一个 Tab 停靠点** +
+   方向键漫游（左右不跨行、上下不越表）+ `execCommand` 兜底。
+   ⚠️ 兜底那段是硬要求：内网是 HTTP 非安全上下文，`navigator.clipboard` 在那里就是 undefined，
+   直接 `.then()` 会在同步阶段抛、连兜底都走不到（`subscribe-ui.js` 踩过同样的坑）。
+   读的是 `window.navigator`（与仓库其他模块一致，也才能在单测里注入）。
+2. `subscription-view.js` 里那 70 行本地实现**删掉，改成调共用模块**（不留第二套）；
+   `publish-view.js`、`task.js` 的数据格改成 `cell-wrap copy-cell` + `data-copy`，渲染后各 `bind` 一次。
+3. 样式收进 `theme.css`（§7「样式只走 theme.css」）：`.cell-wrap` / `.cell-clamp` / `.copy-cell*`，
+   `subscription.html` 里那三段删除。**两个必须知道的坑**（都是实测逼出来的）：
+   - 各页自己的 `<表格> td { white-space: nowrap }` 与 `.cell-primary-code { display: block }` 写在页面内联
+     `<style>` 里，**在 theme.css 之后加载、同特异度页面赢** → 共用规则必须多带一个类（`.tbl-scroll .cell-wrap`、
+     `.cell-wrap .cell-clamp`）才压得住。探针第一版就是量出「`white-space` 生效但 `-webkit-line-clamp` 没生效」。
+   - Chromium 把 `display:-webkit-box` 的**计算值报成 `flow-root`**，断言 display 字符串没有判别意义
+     → 探针改成量「实际折了几行 + 超出有没有被裁」。
+4. 三处登记全补（`AGENTS.md` §6.2）：三个 HTML 的 `<script>` 顺序（在 `table-utils.js` 之后、页面脚本之前）、
+   `bootstrap.js` 三页 PRESETS、`smoke-browser.js` 三页 globals。
+   **变异检验**：把 `copy-cells.js` 从 `publish.html` 删掉 → 冒烟立刻 `有 FAIL`；恢复后 ALL PASS。
+5. 新增 `tests/copy-cells.test.js`（5 条，已在 `run.js` 注册）；顺带把两条既有守卫改成认新现实：
+   `subscription-table.test.js` 的「CSS 与渲染必须成套」现在跨 `theme.css` + 页面内联查，
+   并新增「`.copy-cell` 要有 cursor、键盘格要有焦点环」两条；
+   `boundary-core.test.js` 的引号转义断言从 `title=` 改到 `data-copy=`（**转义风险跟着属性搬家了，不是变弱**）。
+6. `publish-view.js` 的编码格两段 span 补了 `cell-clamp`（一个 709px 长的接口编码能撑到七八行把整行撑高）。
+
+**真浏览器取证**（临时实例 3044 + `/tmp/px3044.db`，9/9 PASS）：发布页 50 个数据格全部可复制、
+整表 `tabStops=1`、文档横向溢出 0、格子 `white-space: normal` + `line-clamp: 2` 生效；
+点击 → `toast="✅ 已复制到剪贴板"` 且 `navigator.clipboard.readText()` 读回来**就是那一格的值**
+（`oneClickCardReplacement/oneClickCardRepl…`，正是原来要靠悬停才看得全的东西）；
+方向键把焦点移到下一格并高亮；回车复制且**不被「回车即查询」抢走**（toast 累加成 `×2`）；
+三页 `CopyCells` 都已装载、bootstrap 无缺依赖报警、无 pageerror。
+
+**门禁原话**：`658/658 通过`；`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**没做 / 下一步**：
+- 订阅页**本轮离线没查出结果行**，所以只验到「脚本装载 + 样式在 theme.css 里成套」，
+  没验到订阅页真点击复制 —— 它的漫游逻辑与发布页是同一份代码，但**下次连内网时要顺手在订阅页点一次**。
+- 还留着的 `title` 都是**解释性提示**而不是"看全文"（§1 另一类冲突，等用户定口径）：
+  `subscription-view.js` 的优先级格 `title=为什么紧急` 与「查 看」按钮、
+  `publish-view.js` 订阅按钮置灰原因、`searchable-select.js` 清除按钮「清除选择」、
+  `token-manager` 等若干处。这属于 D-19 那一族的延续话题，**没动**。
+- `publish.html` 里原有的 `.result-table .cell-clamp` 与 theme.css 新规则重复（不冲突，页面那份更特异），
+  想彻底单源的话下一轮清掉。
+- 3014 那份代理仍未关；`/task` 成功态与订阅页真数据仍等内网抓包。
 
 ### [2026-09-23 00:1x] 主会话 —— 走查后追加：D-17 收窄、D-20 改成"只报不拦"、代理端报告 8 处结论已同步
 

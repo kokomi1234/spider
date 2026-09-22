@@ -230,12 +230,13 @@ test('✗ renderRows：XSS —— data-code 含引号/< 不被截断、不产生
   assert.ok(html.includes('data-code="&quot;'), '引号被转义后仍保持属性完整');
 });
 
-test('✗ renderRows：字段含 " 与 \' —— title 属性不被截断', () => {
+test('renderRows：字段含 " 与 \' —— data-copy 属性不被截断（2026-09-23 起不再有内容 title）', () => {
   const html = PV.renderRows(
     [{ serverCoding: 'S', serviceName: 'a"b\'c' }],
     { pageNum: 1, pageSize: 20, checkSubscribe: () => 'unknown' },
   );
-  assert.ok(html.includes('title="a&quot;b&#39;c"'), '双/单引号应被转义，属性不被截断');
+  assert.ok(html.includes('data-copy="a&quot;b&#39;c"'), '双/单引号应被转义，属性不被截断');
+  assert.ok(!/title="a&quot;/.test(html), '被截断内容的全文不再走 title（memory.md §1）');
 });
 
 test('✗ renderRows：超长字段（~1000 字）不畸形 HTML，单行结构完整', () => {

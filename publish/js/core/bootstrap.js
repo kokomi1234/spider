@@ -44,6 +44,9 @@
       ['CsvExporter', () => has(window.CsvExporter, 'exportRows')],
       ['PublishResponse', () => has(window.PublishResponse, 'parse')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['Fmt', () => has(window.Fmt, 'esc')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
@@ -73,6 +76,9 @@
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['Priority', () => has(window.Priority, 'evaluate')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['SubscriptionBatchTimes', () => has(window.SubscriptionBatchTimes, 'load')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
@@ -89,6 +95,9 @@
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],

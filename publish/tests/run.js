@@ -49,5 +49,7 @@ require('./user-token.test');
 require('./proxy-env-order.test');
 // 2026-09-21：发布查询页结果行两个弹窗的纯逻辑（编码映射 / 列定义 / 排序 / 分页口径）
 require('./publish-dialog-model.test');
+// 2026-09-23：结果表「折行 + 点击复制 + 键盘漫游」三页共用的那一层（原订阅页私有）
+require('./copy-cells.test');
 
 runAll();

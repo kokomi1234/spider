@@ -99,12 +99,20 @@ test('左固定列在 <th> 上也带同一套类名，且 JS 侧登记齐全', (
 test('长内容单元格：CSS 与渲染代码必须成套出现', () => {
   const { html, js, style, viewJs } = parsePage();
 
-  assert.match(style, /\.subq-table\s+td\.cell-wrap\s*\{[^}]*white-space:\s*normal/,
-    '缺少 .subq-table td.cell-wrap（该规则负责放开换行）');
-  assert.match(style, /\.subq-table\s+\.cell-clamp\s*\{[^}]*display:\s*-webkit-box/,
-    '缺少 .subq-table .cell-clamp（限 2 行靠 -webkit-line-clamp + display:-webkit-box）');
-  assert.match(style, /\.subq-table\s+\.cell-clamp\s*\{[^}]*line-clamp:\s*2/,
-    '.cell-clamp 必须是 2 行截断');
+  // 2026-09-23：折行与「点击复制」的样式从 subscription.html 收进了 theme.css（三页共用一份），
+  // 所以这里查的是「页面内联样式 + theme.css」两处，缺一样都算断链。
+  const themeCss = fs.readFileSync(path.join(ROOT, 'theme.css'), 'utf8');
+  const allCss = style + '\n' + themeCss;
+  assert.match(allCss, /td\.cell-wrap\s*\{[^}]*white-space:\s*normal/,
+    '缺少 td.cell-wrap { white-space: normal }（该规则负责放开换行）');
+  // [^{]* 而不是 \s*：theme.css 里是 `.cell-clamp, .cell-wrap .cell-clamp {` 这样的并列选择器，
+  // 类名与花括号之间还夹着另一个选择器，写 \s* 会漏判成"样式缺失"（2026-09-23）。
+  assert.match(allCss, /\.cell-clamp[^{]*\{[^}]*display:\s*-webkit-box/,
+    '缺少 .cell-clamp 的 display:-webkit-box（限 2 行靠它 + line-clamp）');
+  assert.match(allCss, /\.cell-clamp[^{]*\{[^}]*line-clamp:\s*2/, '.cell-clamp 必须是 2 行截断');
+  // 可复制格必须自带指针与角标样式（title 提示已按 memory.md §1 删掉， affordance 全靠这套）
+  assert.match(allCss, /\.copy-cell\s*\{[^}]*cursor:\s*pointer/, '缺少 .copy-cell 的 cursor:pointer');
+  assert.match(allCss, /\.copy-cell:focus\s*\{[^}]*outline/, '键盘漫游格必须有可见焦点环');
   // 表头要能折行，否则长表头会把短内容列撑宽（就是本轮要治的病）
   assert.match(style, /\.subq-table\s+thead\s+th\s*\{[^}]*white-space:\s*normal/,
     '表头必须允许折行：列宽按内容定，不能再让表头字数撑宽整列');

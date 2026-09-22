@@ -307,17 +307,17 @@
       const no = r.taskApplicationTaskNo || '';
       return `<tr data-index="${i}">
         <td class="col-index">${start + i + 1}</td>
-        <td class="cell-no" title="${esc(no)}">${esc(no || '—')}</td>
-        <td class="cell-name" title="${esc(r.taskApplicationTaskName || '')}">${esc(r.taskApplicationTaskName || '—')}</td>
-        <td title="${esc(r.taskApplicationTaskType ?? '')}">${esc(r.taskApplicationTaskType ?? '—')}</td>
-        <td title="${esc(r.leadDept || '')}">${esc(r.leadDept || '—')}</td>
-        <td class="cell-demand" title="${esc(r.softCenterDemandNo || '')}">${esc(r.softCenterDemandNo || '—')}</td>
-        <td class="cell-prod" title="${esc(r.leadProduct || '')}">${esc(r.leadProduct || '—')}</td>
-        <td class="cell-rel" title="${esc(r.relationProducts || '')}">${esc(r.relationProducts || '—')}</td>
-        <td title="${esc(r.schedulingAgreeBatch || '')}">${esc(r.schedulingAgreeBatch || '—')}</td>
-        <td title="${esc(r.taskStateId ?? '')}">${esc(r.taskStateId ?? '—')}</td>
-        <td title="${esc(r.taskPerformStatue ?? '')}">${esc(r.taskPerformStatue ?? '—')}</td>
-        <td title="${esc(shortDate(r.upUpSchAgreedPutProdDate))}">${esc(shortDate(r.upUpSchAgreedPutProdDate))}</td>
+        <td class="cell-no cell-wrap copy-cell" data-copy="${esc(no)}">${esc(no || '—')}</td>
+        <td class="cell-name cell-wrap copy-cell" data-copy="${esc(r.taskApplicationTaskName || '')}">${esc(r.taskApplicationTaskName || '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(r.taskApplicationTaskType ?? '')}">${esc(r.taskApplicationTaskType ?? '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(r.leadDept || '')}">${esc(r.leadDept || '—')}</td>
+        <td class="cell-demand cell-wrap copy-cell" data-copy="${esc(r.softCenterDemandNo || '')}">${esc(r.softCenterDemandNo || '—')}</td>
+        <td class="cell-prod cell-wrap copy-cell" data-copy="${esc(r.leadProduct || '')}">${esc(r.leadProduct || '—')}</td>
+        <td class="cell-rel cell-wrap copy-cell" data-copy="${esc(r.relationProducts || '')}">${esc(r.relationProducts || '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(r.schedulingAgreeBatch || '')}">${esc(r.schedulingAgreeBatch || '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(r.taskStateId ?? '')}">${esc(r.taskStateId ?? '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(r.taskPerformStatue ?? '')}">${esc(r.taskPerformStatue ?? '—')}</td>
+        <td class="cell-wrap copy-cell" data-copy="${esc(shortDate(r.upUpSchAgreedPutProdDate))}">${esc(shortDate(r.upUpSchAgreedPutProdDate))}</td>
         <td><button class="text-btn" data-detail="${i}" type="button">详情</button></td>
       </tr>`;
     }).join('');
@@ -325,6 +325,9 @@
     body.querySelectorAll('button[data-detail]').forEach((b) => {
       b.addEventListener('click', () => openDetail(Number(b.dataset.detail)));
     });
+    // 数据格「折行 + 点击复制 + 键盘漫游」：与订阅页/发布页共用 js/ui/copy-cells.js。
+    // 原来这 11 格靠 title 悬停看全文（2026-09-23 按用户指定的做法改掉）。
+    if (window.CopyCells) window.CopyCells.bind(body);
   }
 
   function renderPagination() {
