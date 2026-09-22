@@ -208,6 +208,12 @@
     const fBatch = ctx.getBatchValue();
 
     if (!fBatch) {
+      // 已经有一个弹窗挂着就不再叠第二个：连点两下「查 询」会叠两层「数据量可能过大」，
+      // 处理完上层还留一层压在结果上，再点会继续查一次（2026-09-22 复测 D-13）。
+      // 判据用 `.overlay.show` —— 全站弹窗都带这两个类，与 publish.js 那条回车快捷键的排除一致。
+      const alreadyOpen = typeof document !== 'undefined' && document
+        && typeof document.querySelector === 'function' && document.querySelector('.overlay.show');
+      if (alreadyOpen) return;
       const goOn = ctx.confirm
         ? await ctx.confirm({
           title: '数据量可能过大',

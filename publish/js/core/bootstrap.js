@@ -32,6 +32,7 @@
       // 只是降级成原生下拉（home.js 的 initUserSelect 里那条 warn），所以这里是点名登记
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
       ['toast', () => typeof window.toast === 'function'],
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     // 服务发布数据查询页（publish.html，旧 index.html 迁过来的）
     publish: [
@@ -63,6 +64,10 @@
       // 只引前者不引后者不会报错，但存出去的记录 owner 为空（2026-09-19 就是这么坏的）。
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     subscription: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
@@ -77,6 +82,10 @@
       ['SubscriptionModel', () => has(window.SubscriptionModel, 'rowKey')],
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
@@ -85,6 +94,10 @@
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
   };
 

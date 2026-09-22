@@ -205,6 +205,9 @@
   async function open(sourceRow) {
     const ov = overlay();
     if (!sourceRow || !ov) return;
+    // 连点同一行的「接口明细」不该每次都重发请求（实测连点 3 次 = 3 条 serviceChildList，
+    // 2026-09-22 复测 D-14）。弹窗已经开着、且是同一行 → 什么都不做（换行仍然重取）。
+    if (ov.classList.contains('show') && row === sourceRow && phase !== 'fail') return;
     ensureInit();
 
     row = sourceRow;

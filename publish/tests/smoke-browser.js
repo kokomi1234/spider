@@ -59,11 +59,11 @@ function startServer() {
 const PAGES = [
   // 2026-09-18：index.html 改成「首页」（三页入口 + 常用查询），
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
-  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition', 'createSearchableSelect'] },
+  { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition', 'createSearchableSelect', 'UserToken'] },
   { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser', 'PublishDialogModel', 'IntfDetailDialog', 'OpRecordDialog'] },
   // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
-  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser'] },
+  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken'] },
 ];
 
 (async () => {

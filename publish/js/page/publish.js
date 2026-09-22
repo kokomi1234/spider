@@ -905,6 +905,10 @@
     // 可搜索下拉 / 多选（Enter = 展开、选中）。它们的 keydown 只 preventDefault、
     // 不 stopPropagation，不排除的话会在展开面板的同时顺带发起一次全量查询。
     if (el.closest('.searchable-select, .dp-wrapper, .msel')) return;
+    // 数字 / 勾选类输入框自带回车语义：「跳至 N 页」里按回车只该翻页。
+    // 不排除的话改一次页码会**顺带重发一次全量查询**并弹「数据量可能过大」
+    //（2026-09-22 复测 D-11 —— task.js:688 与 subscription.js 早就排了，只有发布页漏）。
+    if (el.type === 'number' || el.type === 'checkbox' || el.type === 'radio') return;
     // 输入法组合态 / compositionend 后的短暂窗口，Enter 只用于确认中文候选词。
     if (imeComposing || e.isComposing || e.keyCode === 229 || Date.now() - imeEndedAt < 300) {
       e.preventDefault();

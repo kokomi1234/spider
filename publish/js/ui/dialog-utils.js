@@ -290,7 +290,14 @@
       }
     }
 
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) done(null); });
+    // ⚠️ 双击的**第二次**点击不认作「点遮罩 = 取消」：用户双击「查 询」时，第一次点击同步把
+    //   框弹出来、第二次正好落在遮罩上，于是变成「打开 → 立刻取消」，界面闪一下什么都没发生
+    //   （2026-09-22 复测 D-12：手快的用户每天都在踩这条）。
+    //   用 `detail`（浏览器给同一次连击的计数）而不是时间窗 —— 时间窗会把既有契约
+    //   「点遮罩关闭」的单测挂死（假 DOM 里 click 是立刻发生的，实测少跑 215 条）。
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay && !(e.detail >= 2)) done(null);
+    });
     document.addEventListener('keydown', onKey, true);
 
     dialog.append(head, body, foot);
@@ -360,7 +367,9 @@
       title: o.title || '请确认',
       buildBody(body) {
         const p = document.createElement('p');
-        p.textContent = o.message || '';
+        // 三个叫法都认：调用方写 `{ text }` / `{ body }` 时不该静默弹出空正文的确认框
+        //（2026-09-22 复测 D-1 —— 首页的删除确认框就这么空了一整天）。
+        p.textContent = o.message || o.text || o.body || '';
         body.appendChild(p);
       },
       footButtons: [

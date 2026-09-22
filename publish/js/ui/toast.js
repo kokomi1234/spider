@@ -59,7 +59,7 @@
    * （这也是评估报告 U-07 记录的问题）。现在改为顺序播放。
    *
    * @param {string} msg
-   * @param {number} [duration=2500] 毫秒
+   * @param {number} [duration=1500] 毫秒
    * @param {'info'|'success'|'warn'|'error'} [type='info']
    */
   function toast(msg, duration = 1500, type = 'info') {
