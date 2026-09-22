@@ -180,7 +180,8 @@ const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   // x-user-token：用户本机录入的 token（2026-09-22 起随请求带过来，代理不存）
-  'Access-Control-Allow-Headers': 'Content-Type, token, x-user-token',
+  // x-user-key：工号，**只用于日志/诊断**（让"用的谁的 token"能落到人）
+  'Access-Control-Allow-Headers': 'Content-Type, token, x-user-token, x-user-key',
   // ⚠️ 不 Expose 的话，跨域下前端 JS **读不到**响应头 —— 「这次用的是谁的 token」
   //    正是靠 x-token-source 传回去的（用管理员 token 时要禁掉订阅写操作）。
   'Access-Control-Expose-Headers': 'x-token-source',
@@ -464,7 +465,6 @@ function respondApiCache(res, hit) {
   headers['X-Api-Cache-Age'] = String(ageSec);
   res.writeHead(hit.status || 200, headers);
   res.end(hit.body);
-  console.log(`   ⚡ API 内存缓存命中（${ageSec}s 前的响应，X-Cache: HIT）`);
 }
 function storeApiCache(key, entry) {
   if (!API_CACHE_TTL) return;
@@ -480,7 +480,6 @@ function invalidateApiCache(reason) {
   if (!apiCache.size) return;
   const n = apiCache.size;
   apiCache.clear();
-  console.log(`   ♻️  已失效 API 内存缓存 ${n} 条（${reason}）`);
 }
 
 // ── 回放 ──────────────────────────────────────────────────────
@@ -498,11 +497,6 @@ function replay(res, entry, reason, loose) {
   res.writeHead(entry.status || 200, headers);
   res.end(entry.body);
 
-  console.log(`   📦 回放本地缓存（${reason}）· 录制于 ${entry.recordedAt || '未知'}`);
-  if (loose) {
-    console.log(`   ⚠️  宽松匹配：请求参数与录制时不一致，回放的是同接口最近一条记录，` +
-                `数据可能与当前筛选条件不符，仅供参考`);
-  }
 }
 
 function sendJson(res, status, payload) {
@@ -535,6 +529,7 @@ function forward(req, res, bodyBuf, key, meta) {
   const tk = resolveToken(req);
   if (tk.token) fwdHeaders['token'] = tk.token;
   res.setHeader('x-token-source', tk.source);
+  // （日志不在这里打：离线回放不走这个函数，会一条都看不到 —— 见 server 入口那段）
   Object.assign(fwdHeaders, EXTRA_HEADERS);    // systemId / ssopSessionId / authMethods
   fwdHeaders['Accept-Encoding'] = 'identity'; // 不压缩，便于调试与录制
   if (!fwdHeaders['content-type']) fwdHeaders['content-type'] = 'application/json';
@@ -572,7 +567,6 @@ function forward(req, res, bodyBuf, key, meta) {
       // API 内存缓存：字典响应存一份（带 TTL），下回同参数请求直接命中
       if (isApiCachePath(req.url) && proxyRes.statusCode === 200) {
         storeApiCache(key, { status: proxyRes.statusCode, headers: proxyRes.headers, body: body.toString('utf8') });
-        console.log('   ⚡ 已存入 API 内存缓存（下次同参数请求 X-Cache: HIT）');
       }
 
       // 只录 200：token 过期返回的 401 / 后端 500 不能被录进去，
@@ -585,9 +579,6 @@ function forward(req, res, bodyBuf, key, meta) {
           headers: proxyRes.headers,
           body: body.toString('utf8'),
         });
-        console.log(`   💾 已录制 (${key.slice(0, 8)}…)`);
-      } else {
-        console.log(`   ⚠️  HTTP ${proxyRes.statusCode}，未录制（只缓存 200）`);
       }
     });
   });
@@ -716,14 +707,23 @@ function getQueriesStore() {
 /**
  * 这次请求用谁的 token。
  *
- * @returns {{token:string, source:'user'|'fallback'}}
- *   source 随响应头 `x-token-source` 回去，**仅作诊断** —— 界面判定不依赖它：
- *   前端自己算得出来（token 就在本机 + 管理员工号来自 status），离线回放时也算得准。
+ * @returns {{token:string, source:'user'|'fallback', userKey:string, reason:string}}
+ *   source 随响应头 `x-token-source` 回去（仅作诊断：界面判定由前端自己算），
+ *   同时会打进日志 —— 排查「为什么订阅被禁 / 为什么用了管理员的」时一眼能看到。
  */
 function resolveToken(req) {
-  const own = String((req.headers && req.headers['x-user-token']) || '').trim();
-  if (own) return { token: own, source: 'user' };
-  return { token: TOKEN_REFRESHED, source: 'fallback' };
+  const h = req.headers || {};
+  const own = String(h['x-user-token'] || '').trim();
+  // 工号只用于**日志与诊断**，不参与选 token（token 本身就在请求里）。
+  // 没登录时前端不带，日志里就显示"未登录"。
+  const userKey = String(h['x-user-key'] || '').trim();
+  if (own) return { token: own, source: 'user', userKey, reason: '本人 token' };
+  return {
+    token: TOKEN_REFRESHED,
+    source: 'fallback',
+    userKey,
+    reason: userKey ? '本人没有可用 token（未录入或已过期）' : '未登录',
+  };
 }
 /**
  * SQLite 分支的请求处理。
@@ -802,6 +802,18 @@ const server = http.createServer((req, res) => {
   // 请求日志：记录来源 IP + 方法 + 路径，便于排查「外部访问进不来」
   const clientIp = (req.socket && req.socket.remoteAddress) || '?';
   console.log(`[req] ${clientIp} ${req.method} ${req.url}`);
+
+  // 「这次用谁的 token」（2026-09-22）：写在这里而不是转发函数里 ——
+  // 离线回放（PROXY_OFFLINE=1）根本不走转发，日志放那儿会一条都看不到。
+  // 只打**会转发到内网的**那些请求（静态资源、/local/*、/admin/* 不打），
+  // 因为只要"没带 x-user-* 头"就判定条件的话，未登录的查询反而会被漏掉。
+  const isLocalEndpoint = /^\/(local|admin|cache)\b/.test(req.url);
+  if (req.method !== 'OPTIONS' && !isLocalEndpoint && !isStaticRequest(req.url)) {
+    const tkLog = resolveToken(req);
+    console.log(tkLog.source === 'user'
+      ? `   🔑 用本人 token（工号 ${tkLog.userKey || '未带'}）`
+      : `   🔑 用管理员 token（${tkLog.reason}${tkLog.userKey ? ' · 工号 ' + tkLog.userKey : ''}）`);
+  }
 
   // CORS 预检
   if (req.method === 'OPTIONS') {
@@ -1345,8 +1357,6 @@ server.listen(PORT, HOST, () => {
   console.log(`   🔀 API 代理：→ ${TARGET}`);
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);
   console.log(`   模式：${OFFLINE_REFRESHED ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
-  console.log(`   录制：${RECORD ? '开启' : '关闭（PROXY_RECORD=0）'}`);
-  console.log(`   缓存目录：${CACHE_DIR}（已录 ${Object.keys(readIndex()).length} 条）`);
   console.log(`   🔑 .env 位置：${envPath}（前端「Token 管理」写入此处；可用 PROXY_ENV_PATH 改）`);
   if (!OFFLINE_REFRESHED) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
@@ -1356,7 +1366,6 @@ server.listen(PORT, HOST, () => {
     }
   }
   console.log(`   健康检查：http://localhost:${PORT}/health`);
-  console.log(`   缓存列表：http://localhost:${PORT}/cache/list`);
   console.log(`   热更新 .env：修改后自动生效（约 1.5 秒），也可 curl http://localhost:${PORT}/reload 立即生效`);
   console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面`);
   console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/publish.html?dryrun=1`);

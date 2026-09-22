@@ -142,6 +142,8 @@
         // 带上本机 token（若有）：代理原样用它转发。没带 = 代理回落管理员 token。
         // 2026-09-22 用户拍板 token 只留本机，所以这里直接带、不经任何服务端存储。
         ...(localToken() ? { 'x-user-token': localToken() } : {}),
+        // 工号：**只为日志/诊断**（代理据此把「用谁的 token」落到人），不参与选 token
+        ...(userKeyNow() ? { 'x-user-key': userKeyNow() } : {}),
         ...headers,
       },
       ...(abortController ? { signal: abortController.signal } : (signal ? { signal } : {})),
