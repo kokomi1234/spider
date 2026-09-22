@@ -51,5 +51,7 @@ require('./proxy-env-order.test');
 require('./publish-dialog-model.test');
 // 2026-09-23：结果表「折行 + 点击复制 + 键盘漫游」三页共用的那一层（原订阅页私有）
 require('./copy-cells.test');
+// 2026-09-23：弹窗「标题栏可拖动」的接线守卫（4 个弹窗漏接 makeDraggable 才补的）
+require('./dialog-drag.test');
 
 runAll();

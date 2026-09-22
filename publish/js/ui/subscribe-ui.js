@@ -31,6 +31,7 @@
   let btnSubscribePanel;
   let overlay;
   let dialog;
+  let dragHandle = null;   // 标题栏拖动（只绑一次；每次打开复位到居中）
 
   function init() {
     // 使用 HTML 中已存在的按钮
@@ -113,7 +114,12 @@
 
     // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
     // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况）
-    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(overlay, closeDialog);
+    if (window.DialogUtils) {
+      window.DialogUtils.bindBackdropDismiss(overlay, closeDialog);
+      // 标题栏可拖动（2026-09-23）：这个面板没有 .sub-head，之前没接 makeDraggable，
+      // 它挡住结果表时只能关掉重开。把手用标题 <h2>，面板内的按钮/输入框由 makeDraggable 排除。
+      dragHandle = window.DialogUtils.makeDraggable(dialog, dialog.querySelector('h2'));
+    }
   }
 
   /** 打开弹窗 */
@@ -122,6 +128,8 @@
     renderSubList();
     overlay.style.display = 'flex';
     overlay.classList.add('show');
+    // 每次打开回到居中：上次拖到哪不该影响下一次（与订阅弹窗 / 操作记录弹窗同口径）
+    if (dragHandle && dragHandle.reset) dragHandle.reset();
     $('#subSearch').value = '';
     $('#subSearch').focus();
   }

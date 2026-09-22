@@ -26,6 +26,7 @@
 
   let returnFocus = null;
   let seq = 0;   // 防止「上一次详情的接口比下一次慢返回」覆盖新内容
+  let dragHandle = null;   // 标题栏拖动（只绑一次；每次 open 都要复位到居中）
 
   function close() {
     if (!overlay) return;
@@ -63,7 +64,20 @@
     setStatus('loading', '正在加载详情…');
     renderFields(row);
     overlay.classList.add('show');
-    if (window.DialogUtils) window.DialogUtils.lockScroll();
+    if (window.DialogUtils) {
+      window.DialogUtils.lockScroll();
+      // 标题栏可拖动（2026-09-23）：这个弹窗是旧结构（没有 .sub-head，✕ 是绝对定位的），
+      // 之前压根没接 makeDraggable —— 它挡住结果表时只能关掉重开。
+      // 把手用 <h2 id="detailTitle">：块级、占满整行，语义上就是标题栏；
+      // 弹窗内的按钮/输入框由 makeDraggable 自己排除，不会误拖。
+      if (!dragHandle) {
+        dragHandle = window.DialogUtils.makeDraggable(
+          document.getElementById('detailDialog'), titleEl,
+        );
+      }
+      // 每次打开都回到居中：上次拖到哪不该影响下一次（与 op-record / subscribe-dialog 同口径）
+      if (dragHandle && dragHandle.reset) dragHandle.reset();
+    }
     const btn = document.getElementById('btnDetailClose');
     if (btn) btn.focus();
 

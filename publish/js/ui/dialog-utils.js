@@ -82,6 +82,10 @@
    */
   function makeDraggable(dialog, handle) {
     if (!dialog || !handle) return null;
+    // 单测的假 DOM 没有 window.addEventListener（2026-09-23）：通用弹窗也走 makeDraggable 之后，
+    // 不判这道就会在 openUtilDialog 里同步抛、把弹出来的框一起搞崩（实测挂掉 token-manager 那条）。
+    // 拖不动可以接受，弹不出来不行 —— 缺能力就安静跳过，与 copy-cells.js 同口径。
+    if (typeof window.addEventListener !== 'function') return null;
 
     let dragging = false;
     let startX = 0;
@@ -350,6 +354,11 @@
     document.body.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('show'));
     lockScroll();
+    // 标题栏可拖动（2026-09-23）：确认框 / 命名框 / Token 面板 / promptText 全都走这里，
+    // 之前只有订阅、接口明细、操作记录、文档选择、批次时间那几个弹窗接了 makeDraggable，
+    // 于是「保存查询的命名框挡住了底下那一行」只能关掉重开。
+    // 每次都是新建的 dialog，不用管 reset。
+    makeDraggable(dialog, head);
     dialog.focus();
     if (typeof cfg.onReady === 'function') cfg.onReady({ overlay, body, dialog });
 
