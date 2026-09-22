@@ -549,8 +549,12 @@
       togglePanel(event);
     }
 
-    function onDocumentClick(event) {
-      // 面板可能被升到 body 上（浮动模式），所以不能只判断 wrapper
+    // 「点外面收起」的判据用 mousedown（捕获阶段），不用 click —— 与 searchable-select /
+    // multi-select 保持同一口径。浏览器把 click 派发到 mousedown 与 mouseup 的共同祖先，
+    // 所以在日历里按下拖选、把指针滑到面板外松手，click.target 会落在 body 上，
+    // 用 click 判就成了「点了外面」→ 面板莫名收起（2026-09-23 D-22 同源问题）。
+    // 面板可能被升到 body 上（浮动模式），所以 wrapper 和 panel 都不包含目标时才算外面。
+    function onDocMouseDown(event) {
       if (!wrapper.contains(event.target) && !panel.contains(event.target)) closePanel();
     }
 
@@ -573,7 +577,7 @@
     inputWrapper.addEventListener('click', onWrapperClick);
     arrowButton.addEventListener('click', togglePanel);
     inputEl.addEventListener('keydown', onInputKeydown);
-    document.addEventListener('click', onDocumentClick);
+    document.addEventListener('mousedown', onDocMouseDown, true);
     document.addEventListener('keydown', onDocumentKeydown);
     // 面板浮动时按视口定位，任何滚动（弹窗主体内 / 页面）都要重定位；用 capture 才能收到容器滚动
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
@@ -608,7 +612,7 @@
       close: closePanel,
       destroy() {
         closePanel();
-        document.removeEventListener('click', onDocumentClick);
+        document.removeEventListener('mousedown', onDocMouseDown, true);
         document.removeEventListener('keydown', onDocumentKeydown);
         inputWrapper.removeEventListener('click', onWrapperClick);
         arrowButton.removeEventListener('click', togglePanel);

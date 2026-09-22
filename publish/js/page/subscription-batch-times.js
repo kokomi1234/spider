@@ -121,7 +121,7 @@
   }
 
   /** 弹窗内已创建的日期选择器实例。重渲染前必须先 destroy：
-      createDatePicker 会在 document 上挂 click / keydown 监听，直接覆盖 innerHTML
+      createDatePicker 会在 document 上挂 mousedown / keydown 监听，直接覆盖 innerHTML
       会把监听留在 document 上（旧 input 成了游离节点，越点越卡）。 */
   let datePickers = [];
 
