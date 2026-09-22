@@ -100,3 +100,26 @@ test('query-feedback：元素缺失时静默返回，不抛异常', () => {
   win.QueryFeedback.showFailText('x');
   win.QueryFeedback.hideFail();
 });
+
+test('query-feedback：401 只给文案指路，**不自动弹 Token 弹窗**（2026-09-22 用户拍板：回落管理员 token 是设计）', () => {
+  const bar = fakeEl();
+  const txt = fakeEl();
+  let opened = 0;
+  const win = { TokenManager: { openDialog() { opened += 1; } } };
+  loadScript('js/ui/query-feedback.js', {
+    document: { querySelector: (sel) => ({ '#failBar': bar, '#failText': txt }[sel] || null) },
+  }, win);
+
+  win.QueryFeedback.showQueryFail('认证失败', false);
+  if (opened !== 0) throw new Error(`没录入自己的 token 时回落管理员 token 是设计，不该弹模态框打断查询，实际弹了 ${opened} 次`);
+  if (!/🔑 Token/.test(txt.textContent)) throw new Error(`认证失败要给出去哪修的指路，实际：${txt.textContent}`);
+  if (bar.style.display === 'none') throw new Error('401 的常驻失败条要显示');
+
+  // 上游文案已经提到 Token 就不重复追加，免得同一句话说两遍
+  win.QueryFeedback.showQueryFail('认证失败，请检查 Token 是否有效', false);
+  if (/请点右上角/.test(txt.textContent)) throw new Error(`不该重复指路，实际：${txt.textContent}`);
+
+  // 非认证类失败不该带 Token 指路
+  win.QueryFeedback.showQueryFail('服务器内部错误', false);
+  if (/🔑 Token/.test(txt.textContent)) throw new Error(`500 不该出现 Token 指路，实际：${txt.textContent}`);
+});

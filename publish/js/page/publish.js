@@ -927,24 +927,29 @@
   /**
    * Token 按钮上的「归属」提示（2026-09-22）。
    *
-   * 'admin' = 本次用的是管理员 token（内网只给查询权限）—— 必须让用户一眼看到，
+   * 'fallback' = 本次回落用管理员 token（内网只给查询权限）—— 必须让用户一眼看到，
    * 否则他点「订阅」被拦会以为是自己的操作问题。'user' = 用的是他自己录入的。
-   * 数据来自 API.tokenSource()（代理的响应头 x-token-source）。
+   * 数据来自 API.tokenSource()，**前端自己算**（token 只存本机：本机有可用 token 就是
+   * 'user'，否则 'fallback'）—— 2026-09-22 `f4e939c` 之后代理不再保存任何用户凭证，
+   * 响应头 `x-token-source` 那套已经删了，别再往回改。
+   * ⚠️ 全文说明走 `aria-label`，不写 `title`（memory.md §1：悬停提示一律不写，
+   *   要看全文的需求由 aria-label 承担；`50472ac` 当时加回了 title，2026-09-22 复测 D-19 挪走）。
    */
   function updateTokenBadge() {
     const btn = document.getElementById('btnTokenManager');
     if (!btn) return;
     const src = (window.API && typeof window.API.tokenSource === 'function') ? window.API.tokenSource() : '';
+    const say = (text, detail) => {
+      btn.textContent = text;
+      btn.setAttribute('aria-label', detail);
+    };
     if (src === 'fallback') {
       // 回落用管理员 token：只有查询权限，订阅那类写操作会被禁 —— 必须让用户一眼看到原因
-      btn.textContent = '🔑 管理员 token';
-      btn.title = '当前用的是管理员 token（只有查询权限）：在弹窗里录入你自己的 token，即可解锁订阅等写操作';
+      say('🔑 管理员 token', '当前用的是管理员 token（只有查询权限）：在弹窗里录入你自己的 token，即可解锁订阅等写操作');
     } else if (src === 'admin') {
-      btn.textContent = '🔑 管理员';
-      btn.title = '你是管理员：本次用的是全局 token（其他人没录入自己的 token 时兜底用它）';
+      say('🔑 管理员', '你是管理员：本次用的是全局 token（其他人没录入自己的 token 时兜底用它）');
     } else if (src === 'user') {
-      btn.textContent = '🔑 我的 token';
-      btn.title = '当前用的是你自己录入的 token';
+      say('🔑 我的 token', '当前用的是你自己录入的 token');
     } else {
       btn.textContent = '🔑 Token';
       btn.title = '';
