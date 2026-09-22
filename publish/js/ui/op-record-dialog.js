@@ -295,9 +295,11 @@
 
     document.addEventListener('click', (e) => {
       const id = e.target && e.target.id;
-      if (id === 'btnOpRecordClose' || id === 'btnOpRecordCloseX') { close(); return; }
-      if (e.target === ov) close();
+      if (id === 'btnOpRecordClose' || id === 'btnOpRecordCloseX') close();
     });
+    // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
+    // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况）
+    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(ov, close);
 
     // 查询 / 重置：都回到第 1 页重新请求（重置 = 清空操作类型）
     const q = $('#btnOpQuery');

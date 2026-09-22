@@ -46,13 +46,26 @@
     }
   }
 
-  /** 「最近一次 5:00」的时间戳：早于它的 token 都算过期（5 点后录入的天然不算） */
+  /**
+   * 「最近一次 5:00」的时间戳：早于它的 token 都算过期（5 点后录入的天然不算）。
+   *
+   * ⚠️ 内网那句「每天早上 5:00 失效」指的是**北京时间**，与跑浏览器那台机器的时区无关。
+   *   原来写成 `new Date(t).setHours(5,0,0,0)`，读的是**机器本地时区** ——
+   *   你在 +8 机器上无感，换一台非 +8 的机器（或系统时区被改过）就会整体偏移：
+   *   偏早判过期 = 明明能用却提示重录，偏晚 = 明明过期了还照发、换来一次 401。
+   *   口径同 `AGENTS.md` §6.3「业务日期一律 UTC+8」（2026-09-22 复测 D-21）。
+   */
+  var BUSINESS_TZ_OFFSET_MS = 8 * 60 * 60 * 1000;   // 北京时间 = UTC+8
+  var DAY_MS = 24 * 60 * 60 * 1000;
+  var HOUR_MS = 60 * 60 * 1000;
+
   function lastResetAt(now) {
     var t = Number.isFinite(now) ? now : Date.now();
-    var d = new Date(t);
-    d.setHours(expiryHour, 0, 0, 0);
-    if (d.getTime() > t) d.setDate(d.getDate() - 1);   // 今天 5:00 还没到 → 用昨天那一次
-    return d.getTime();
+    // 先把时间轴平移到「按北京时间读数」，日界就能直接用 UTC 算法，最后再平移回真实时间戳
+    var shifted = t + BUSINESS_TZ_OFFSET_MS;
+    var cut = Math.floor(shifted / DAY_MS) * DAY_MS + expiryHour * HOUR_MS;   // 北京时间今天 5:00
+    if (cut > shifted) cut -= DAY_MS;                                        // 今天 5:00 还没到 → 用昨天那一次
+    return cut - BUSINESS_TZ_OFFSET_MS;
   }
 
   /** 这个 token 是不是已经过期（issuedAt 早于最近一次 5:00） */

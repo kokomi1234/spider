@@ -49,6 +49,24 @@ function test(name, fn) {
   registry.push({ name, fn });
 }
 
+/**
+ * 单个用例的挂起上限（毫秒）。为什么必须包这一层：
+ * 一个永不 resolve 的 async 用例会让 node 在事件循环空掉后**静默退出、exit code 仍是 0**，
+ * 连汇总行都不打印（2026-09-22 实测：645 条只跑了 430 条，`npm run test:all` 照样往下走）。
+ * 门禁最怕的就是这种「少跑了但看起来是绿的」。
+ */
+const TEST_TIMEOUT_MS = Number(process.env.TEST_TIMEOUT_MS) || 10000;
+
+function runOne(t) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(
+      `用例挂起超过 ${TEST_TIMEOUT_MS}ms（多半是 Promise 永不 resolve）`,
+    )), TEST_TIMEOUT_MS);
+    const done = (fn) => (v) => { clearTimeout(timer); fn(v); };
+    Promise.resolve().then(() => t.fn()).then(done(resolve), done(reject));
+  });
+}
+
 /** 跑全部已注册用例（支持 async）；有失败则设置 exitCode = 1 */
 async function runAll() {
   let pass = 0;
@@ -56,7 +74,7 @@ async function runAll() {
 
   for (const t of registry) {
     try {
-      await t.fn(); // 支持 async 用例
+      await runOne(t); // 支持 async 用例
       pass += 1;
       console.log('  ✓ ' + t.name);
     } catch (e) {

@@ -764,8 +764,12 @@ test('saved-query：合并后超过上限 → 拒绝并保留原数据', async (
 // ══════════════════════════════════════════════════════════
 
 /** 带同步能力的加载：注入 location + fetch 桩（模块从 window 上取，可替换） */
-function loadSync(storage, fetchStub) {
+function loadSync(storage, fetchStub, user) {
   const win = { localStorage: storage, location: { href: 'http://localhost:3000/' }, fetch: fetchStub };
+  // 第三参：给不给「当前用户」。2026-09-22 复测 D-3 之后，没用户时 push 也只许记 'nouser'
+  //（服务端本来就拒绝没有归属人的记录，`if (!uk) return`），所以那些讲「已同步」状态机的用例
+  // 必须显式带上身份，否则测的是匿客户端的行为。
+  if (user) win.CurrentUser = { get: () => user };
   loadScript('js/ui/saved-query.js', {}, win);
   return win.SavedQuery;
 }
@@ -880,14 +884,14 @@ test('sync：HTTP 500 与坏 JSON 都要被当成失败而不是崩', async () =
 // 用户看不出自己看的是团队库还是本机那一份，所以这套判定必须有用例钉住。
 
 test('同步状态：没同步过之前是 pending，不给任何结论', async () => {
-  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/saved-queries.db' }));
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/saved-queries.db' }), ME);
   assert.strictEqual(S.lastSyncState().state, 'pending');
 });
 
 test('同步状态：成功且代理报了库文件 → shared，file/storage/people/total 都记下来', async () => {
   const S = loadSync(fakeStorage(), okJson({
     items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 3,
-  }));
+  }), ME);
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.file, '/srv/shared/saved-queries.db', '返回值也要带 file，首页角标之外的人要用');
@@ -902,18 +906,18 @@ test('同步状态：成功且代理报了库文件 → shared，file/storage/pe
 });
 
 test('同步状态：端点 404（没起代理 / 静态部署）算「仅本机」，不算故障', async () => {
-  const S = loadSync(fakeStorage(), async () => ({ ok: false, status: 404, json: async () => ({}) }));
+  const S = loadSync(fakeStorage(), async () => ({ ok: false, status: 404, json: async () => ({}) }), ME);
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, false, '返回值照实说失败');
   assert.strictEqual(S.lastSyncState().state, 'local', '但状态是「仅本机」：没有端点不是谁的错');
 });
 
 test('同步状态：网络断了（Failed to fetch）也算「仅本机」，HTTP 500 才算故障', async () => {
-  const a = loadSync(fakeStorage(), async () => { throw new Error('Failed to fetch'); });
+  const a = loadSync(fakeStorage(), async () => { throw new Error('Failed to fetch'); }, ME);
   await a.pushToServer();
   assert.strictEqual(a.lastSyncState().state, 'local');
 
-  const b = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }));
+  const b = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }), ME);
   await b.syncFromServer();
   assert.strictEqual(b.lastSyncState().state, 'fail');
   assert.ok(/500/.test(b.lastSyncState().error), '故障要把原因留给角标的 title');
@@ -927,7 +931,7 @@ test('同步状态：压根没有 fetch 能力时是 local，不是 fail', async
 });
 
 test('同步状态：坏 JSON / 抛异常这类真故障要落 fail 并带上原因', async () => {
-  const S = loadSync(fakeStorage(), async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } }));
+  const S = loadSync(fakeStorage(), async () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token'); } }), ME);
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, false);
   assert.strictEqual(S.lastSyncState().state, 'fail');
@@ -938,6 +942,7 @@ test('同步状态：sendBeacon 那条路拿不到响应，不能把「已同步
   const win = {
     localStorage: fakeStorage(),
     location: { href: 'http://localhost:3000/' },
+    CurrentUser: { get: () => ME },
     fetch: okJson({ items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite' }),
   };
   loadScript('js/ui/saved-query.js', {}, win);
@@ -962,7 +967,7 @@ test('同步状态：save() 之后的顺手推送会自动更新状态，调用�
       code: 200,
       data: { items: [...JSON.parse(opts.body).items, peer], file: '/srv/shared/saved-queries.db', storage: 'sqlite', people: 2 },
     }),
-  }));
+  }), ME);
   assert.strictEqual(S.lastSyncState().state, 'pending');
   (await S.save({ page: 'publish', name: '我的', fields: {} }));   // autoPush 是 fire-and-forget
   await flush();
@@ -975,7 +980,7 @@ test('同步状态：save() 之后的顺手推送会自动更新状态，调用�
 });
 
 test('同步状态：订阅能收到变化，取消订阅后不再收到；返回值是副本', async () => {
-  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }), ME);
   const seen = [];
   const off = S.onSyncStateChange((st) => seen.push(st.state));
   await S.pushToServer();
@@ -991,7 +996,7 @@ test('同步状态：订阅能收到变化，取消订阅后不再收到；返�
 });
 
 test('同步状态：订阅方自己抛异常，不能把存储层的同步带崩', async () => {
-  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }));
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/shared/a.db' }), ME);
   // 故意保持**同步**回调：这条测的是「同步 throw 也要被 recordSync 接住」，
   // 不能被批量 async 化误伤（async throw 会变成 rejection，try/catch 接不住）
   S.onSyncStateChange(() => { throw new Error('订阅方炸了'); });
@@ -1002,7 +1007,7 @@ test('同步状态：订阅方自己抛异常，不能把存储层的同步带�
 
 test('同步状态：代理没报 file 就不能说「已同步」，要退回 local', async () => {
   // 角标的判据是「代理告诉我们在读写哪个库」；少了这句话，就不该给用户一个共享的结论
-  const S = loadSync(fakeStorage(), okJson({ items: [] }));
+  const S = loadSync(fakeStorage(), okJson({ items: [] }), ME);
   await S.pushToServer();
   assert.strictEqual(S.lastSyncState().state, 'local', '没 file 就没证据：不能报 shared');
 });
@@ -1045,7 +1050,7 @@ test('同步状态：已经 shared 过之后，一次拿不到 file 的成功不
   const S = loadSync(fakeStorage(), async (...a) => {
     n += 1;
     return { ok: true, status: 200, json: async () => ({ code: 200, data: n === 1 ? { items: [], file: '/srv/a.db' } : { items: [] } }) };
-  });
+  }, ME);
   await S.pushToServer();
   assert.strictEqual(S.lastSyncState().state, 'shared');
   await S.pushToServer();
@@ -1056,7 +1061,7 @@ test('同步状态：从失败恢复到成功后，要把上一次的 error 清�
   let fail = true;
   const S = loadSync(fakeStorage(), async () => (fail
     ? { ok: false, status: 500, json: async () => ({}) }
-    : { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [], file: '/srv/a.db', storage: 'sqlite' } }) }));
+    : { ok: true, status: 200, json: async () => ({ code: 200, data: { items: [], file: '/srv/a.db', storage: 'sqlite' } }) }), ME);
   await S.pushToServer();
   assert.strictEqual(S.lastSyncState().state, 'fail');
   fail = false;
@@ -1070,7 +1075,7 @@ test('同步状态：200 但回来的不是 JSON（静态站的 fallback 页）�
   const S = loadSync(fakeStorage(), async () => ({
     ok: true, status: 200,
     json: async () => { throw new Error('Unexpected token < in JSON at position 0'); },
-  }));
+  }), ME);
   const r = await S.pushToServer();
   assert.strictEqual(r.ok, false);
   assert.strictEqual(S.lastSyncState().state, 'local',
@@ -1081,21 +1086,21 @@ test('同步状态：后端明确不支持部门排行时（mode 缺失或不是
   // JSON 兜底分支以前不发 mode —— 旧防线 `data.mode && ...` 在 mode 缺失时放行，
   // 会把「全部门全量」当成本部门排行渲染到首页卡片上。现在要求**明确**是 dept。
   const ME = { userId: '1', userName: '甲', teamId: 'T1', teamName: '开发一部' };
-  const noMode = loadSync(fakeStorage(), okJson({ items: [{ id: 'x', page: 'publish', name: '别人的', fields: {} }] }));
+  const noMode = loadSync(fakeStorage(), okJson({ items: [{ id: 'x', page: 'publish', name: '别人的', fields: {} }] }), ME);
   const a = await noMode.deptTopFromServer(ME, 10);
   assert.strictEqual(a.ok, false, '没有 mode = 没证明自己按部门筛过，不能用');
-  const allMode = loadSync(fakeStorage(), okJson({ mode: 'all', items: [] }));
+  const allMode = loadSync(fakeStorage(), okJson({ mode: 'all', items: [] }), ME);
   assert.strictEqual((await allMode.deptTopFromServer(ME, 10)).ok, false);
-  const deptMode = loadSync(fakeStorage(), okJson({ mode: 'dept', items: [], people: 0 }));
+  const deptMode = loadSync(fakeStorage(), okJson({ mode: 'dept', items: [], people: 0 }), ME);
   assert.strictEqual((await deptMode.deptTopFromServer(ME, 10)).ok, true, 'mode=dept 才放行');
 });
 
 test('同步后缀：各页「已保存到首页」的提示与角标同一口径，没同步过时不加话', async () => {
-  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/a.db', storage: 'sqlite' }));
+  const S = loadSync(fakeStorage(), okJson({ items: [], file: '/srv/a.db', storage: 'sqlite' }), ME);
   assert.strictEqual(S.syncSuffix(), '', '还没同步过就别瞎猜');
   await S.pushToServer();
   assert.ok(/共享库已连上/.test(S.syncSuffix()), S.syncSuffix());
-  const bad = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }));
+  const bad = loadSync(fakeStorage(), async () => ({ ok: false, status: 500, json: async () => ({}) }), ME);
   await bad.pushToServer();
   assert.ok(/共享同步失败.*500.*先存本机/.test(bad.syncSuffix()), bad.syncSuffix());
 });
@@ -1333,8 +1338,13 @@ test('服务端优先：导入的记录归当前用户（2026-09-21 改）——
   // 镜像只刷「我的」：这条能出现在镜像里，就说明它已经归了张三（否则按人拉不回来）
   assert.strictEqual(S.list().length, 1, '导入后本机镜像（=我的列表）里应能看到它');
   assert.strictEqual(S.list()[0].owner.userId, '1001', '归属已改写成当前用户');
-  // 服务端库里那条同样归张三（合并后整份写回的）
-  assert.strictEqual((proxy.db.get('p1') || {}).owner.userId, '1001', '服务端库里也归当前用户');
+  // 服务端库里那条同样归张三（合并后整份写回的）。
+  // ⚠️ 2026-09-22 复测 D-4：导入换归属人的同时**换发新 id** —— 共享代理下文件里的 id
+  //   在服务端必然已存在（属于原主人），沿用会让 `sameQuery` 第一步按 id 短路判同，
+  //   结果导入变成静默空操作、归属仍是李四。所以这里按新 id 查，不能再查 'p1'。
+  const stored = [...proxy.db.values()].filter((x) => x.owner && x.owner.userId === '1001');
+  assert.strictEqual(stored.length, 1, '服务端库里应有且只有一条归当前用户的');
+  assert.notStrictEqual(stored[0].id, 'p1', '导入别人的文件要换发新 id，不与服务端同 id 的行相撞');
 });
 
 test('服务端优先：getAsync 镜像未命中 → 从服务端按 id 捞回（深链回填用）', async () => {
@@ -1404,4 +1414,75 @@ test('saved-query：长编码截断 shortCode —— 只留尾部英文编码（
   assert.strictEqual(S.shortCode(''), '');
   assert.strictEqual(S.shortCode(null), '');
   assert.strictEqual(S.shortCode('abc-def'), 'abc-def');
+});
+
+test('saved-query：shortCode 不许把名字截成一个字母/一个数字，也不许多值串截成假编码（2026-09-22 复测 D-2）', () => {
+  const S = load(fakeStorage());
+  // 真实团队库现例（只读跑出来的）：尾巴的 `-B` 是环境标识不是编码，修复前首页与部门榜都显示成「B」
+  const FULL_B = '调用方系统：E00404-网上银行服务前端-海外个人网银-B';
+  assert.strictEqual(S.shortCode(FULL_B), FULL_B, '单个字母不算编码 —— 宁可整条显示');
+  assert.strictEqual(S.shortCode('批次-2'), '批次-2');
+  assert.strictEqual(S.shortCode('网上银行为主-备2'), '网上银行为主-备2');
+  // 多个取值拼出来的串：只截最后一个会把前面的字段丢掉，拼成「甲-O-261」更是造假
+  assert.strictEqual(S.shortCode('调用方：E00301 提供方：E00406'), '调用方：E00301 提供方：E00406');
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-MAPSN · 批次：261'),
+    '调用方系统：BOCNETC-O-MAPSN · 批次：261');
+  assert.strictEqual(S.shortCode('E00301-E00406-2611'), 'E00301-E00406-2611', '塌成一个数字算错');
+  // 用户自己改的名字同样不许被截（显示端 home.js 已不再过 shortCode，这里守住函数本身）
+  assert.strictEqual(S.shortCode('发布查询-2'), '发布查询-2');
+  // 真编码照旧截得出来 —— 防反向改坏（口径与上面那条 2026-09-22 的用例一致）
+  assert.strictEqual(S.shortCode('E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-MAPSN'), 'BOCNETC-O-MAPSN');
+});
+
+test('saved-query：condNameOf 先截码再限长，不许先砍 30 字把编码截成半截（复测 D-2）', () => {
+  const S = load(fakeStorage());
+  const long = '一些很长的中文说明文字用来把长度撑过三十个字以验证顺序问题确实存在啊'
+    + '-E00301-互联网金融服务平台-BOCNET-G-IFS';
+  assert.strictEqual(S.condNameOf({ autoName: long }), 'BOCNET-G-IFS');
+  // 没有 autoName 时退回 summary：同样要能截出完整编码（旧顺序先 slice(0,30) 就截没了）
+  assert.strictEqual(S.condNameOf({ summary: long }), 'BOCNET-G-IFS');
+});
+
+test('sync：未登录时 pushToServer 之后角标仍是 nouser，不许谎报「已同步」（2026-09-22 复测 D-3）', async () => {
+  // loadSync 不给 CurrentUser → 走的正是「没设当前用户」那条分支。
+  // 09-21 的修法只覆盖了 syncFromServer（GET），首页每次加载都会 pushToServer（POST）把它盖回 shared。
+  const st = fakeStorage();
+  const S = loadSync(st, okJson({ items: [], file: '/srv/a.db', storage: 'sqlite', people: 2 }));
+  await S.save({ page: 'publish', name: '匿名保存', fields: {} });
+  const r = await S.pushToServer();
+  assert.strictEqual(r.ok, true, '没登录也能推本机记录，不该报错');
+  assert.strictEqual(S.lastSyncState().state, 'nouser',
+    `未登录推送后角标必须仍是 nouser，实际：${S.lastSyncState().state}`);
+});
+
+test('导入：把同事的文件导给另一个登录人时换发新 id，归属真的变成「我」（2026-09-22 复测 D-4）', async () => {
+  const st = fakeStorage();
+  const X = { userId: '4711510', userName: '甲', teamId: 'T1', teamName: '开发一部' };
+  const Y = { userId: '6464402', userName: '乙', teamId: 'T1', teamName: '开发一部' };
+  // 服务端已经有甲的那一条（同一份共享代理 → id 必然与甲导出的文件里完全一样）
+  const serverItems = [{ id: 'q-same', page: 'publish', name: '甲的条件', fields: { a: 1 },
+    autoName: '甲的条件', owner: X, savers: [X], hits: 1, saves: 1, at: 10 }];
+  let posted = null;
+  const win = {
+    localStorage: st,
+    location: { href: 'http://localhost:3000/' },
+    CurrentUser: { get: () => Y },
+    fetch: async (url, opts) => {
+      if (!opts || !opts.body) return { ok: true, status: 200, json: async () => ({ code: 200, data: { items: serverItems, mode: 'all', file: '/srv/a.db', storage: 'sqlite', people: 1 } }) };
+      posted = JSON.parse(opts.body);
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: { items: posted.items, file: '/srv/a.db', storage: 'sqlite', people: 2 } }) };
+    },
+  };
+  loadScript('js/ui/saved-query.js', {}, win);
+  const S = win.SavedQuery;
+  const file = JSON.stringify({ version: 1, items: [{ id: 'q-same', page: 'publish',
+    name: '甲的条件', fields: { a: 1 }, autoName: '甲的条件', owner: X, hits: 1, saves: 1, at: 10 }] });
+  const r = await S.importJson(file);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.added, 1, '乙导进来必须算**新增一条属于乙的**，不是静默合并到甲那行');
+  const mine = posted.items.find((it) => it.id !== 'q-same');
+  assert.ok(mine, '提交里应有一条换了新 id 的记录');
+  assert.strictEqual(String(mine.owner.userId), '6464402', '新记录的归属要是乙');
+  assert.ok(!serverItems.some((it) => it.id === mine.id), '新 id 不该撞上服务端已有的行');
 });

@@ -26,76 +26,8 @@
   // 数字千分位 / 兜底（与订阅页内部 num 同口径）
   const num = (v) => ((window.Fmt && window.Fmt.num) || ((n) => String(n ?? '—')))(v);
 
-  // ── 复制单元格的键盘漫游（清单 B9）────────────────────
-  // 22 列 × 每页 10 行 = 220 个格子。若给每个 .copy-cell 都加 tabindex="0"，
-  // 光穿过这张表就要按 220 次 Tab，比不能用还糟。所以用「漫游焦点」：
-  // 整张表只占 1 个 Tab 停靠点，进去后方向键在格子间移动、Enter / 空格复制。
-  // 状态存在模块里（同一时刻只有一张结果表），每次重建表格归零。
-
-  /** 当前漫游到的格子下标 */
-  let copyRoi = 0;
-
-  function copyCells(bodyEl) {
-    return Array.prototype.slice.call(bodyEl.querySelectorAll('td.copy-cell'));
-  }
-
-  /** 把 tabindex 与焦点样式只留给当前格，其余移出 Tab 顺序 */
-  function paintCopyRoi(bodyEl, idx) {
-    const list = copyCells(bodyEl);
-    if (!list.length) return;
-    copyRoi = Math.min(Math.max(0, idx), list.length - 1);
-    list.forEach((td, i) => {
-      const on = i === copyRoi;
-      td.tabIndex = on ? 0 : -1;
-      td.classList.toggle('is-copy-focus', on);
-    });
-  }
-
-  /**
-   * 装键盘漫游（只装一次；靠 dataset 标记防每次重渲染叠监听）。
-   * 单元格每次都是新 DOM，所以「当前下标」与复制回调都从 tbody 上现取，
-   * 不能在闭包里捕获旧的一批节点。
-   * @param {HTMLElement} bodyEl tbody#resultBody
-   */
-  function bindCopyGridKeys(bodyEl) {
-    if (!bodyEl || typeof bodyEl.addEventListener !== 'function') return;   // 不是真元素，跳过
-    if (!bodyEl.dataset) bodyEl.dataset = {};
-    if (bodyEl.dataset.copyKeysBound === '1') return;
-    bodyEl.dataset.copyKeysBound = '1';
-    bodyEl.addEventListener('keydown', (e) => {
-      const cells = copyCells(bodyEl);
-      if (!cells.length) return;
-      const tgt = (e.target && e.target.closest) ? e.target.closest('td.copy-cell') : null;
-      const cur = cells.indexOf(tgt);
-      if (cur < 0) return;                       // 焦点不在可复制格里，交给别人处理
-
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        e.stopPropagation();                     // 别被外层的「回车即查询」接手
-        const text = cells[cur].dataset.copy;
-        if (text && typeof bodyEl.__copyHandler === 'function') bodyEl.__copyHandler(text);
-        return;
-      }
-      const row = cells[cur].parentElement;
-      const perRow = (row && row.querySelectorAll) ? row.querySelectorAll('td.copy-cell').length : 0;
-      const stepMap = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: perRow, ArrowUp: -perRow };
-      const step = stepMap[e.key];
-      if (!step || !perRow) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      const rowStart = Math.floor(cur / perRow) * perRow;
-      const next = cur + step;
-      // 左右不跨行（横向滚动位置不该被方向键打乱）、上下不越出整表
-      if (step === 1 || step === -1) {
-        if (next < rowStart || next >= rowStart + perRow) return;
-      } else if (next < 0 || next >= cells.length) {
-        return;
-      }
-      paintCopyRoi(bodyEl, next);
-      if (typeof cells[next].focus === 'function') cells[next].focus();
-    });
-  }
+  // 「点击复制 + 键盘漫游」的本体已抽到 js/ui/copy-cells.js（三页共用一份实现，
+  // 见该文件头注释）。这里只在渲染末尾调一次 CopyCells.bind()。
 
   /** 基线状态标签：值 → 中文 + 色块 */
   function statusTag(v) {
@@ -150,12 +82,12 @@
         if (k === '_prioText') return prioCell(r);          // 自己带 col-prio
         if (k === 'status' || k === 'prodReviewStatus') {
           const tag = k === 'status' ? statusTag(raw) : reviewStatusTag(raw);
-          return `<td class="${fixed}copy-cell" ${copyAttr} title="点击复制">${tag}</td>`;
+          return `<td class="${fixed}copy-cell" ${copyAttr}>${tag}</td>`;
         }
         // 数据格统一套一层 .cell-clamp：列宽不够时折到 2 行再省略，而不是一上来就截断。
         // 用内层 span 而不是给 td 加类，是因为 -webkit-line-clamp 会改 display，加在 td 上会毁掉表格布局。
         return `<td class="${fixed}cell-wrap ${mono ? 'cell-code ' : ''}copy-cell" ${copyAttr}`
-          + ` title="点击复制: ${esc(text)}"><span class="cell-clamp">${esc(text)}</span></td>`;
+          + `><span class="cell-clamp">${esc(text)}</span></td>`;
       }).join('');
       return `<tr class="${overdue.trim()}" data-index="${i}">
         ${cells}
@@ -168,20 +100,9 @@
     bodyEl.querySelectorAll('button[data-jump]').forEach((b) => {
       b.addEventListener('click', () => { if (onJump) onJump(rows[Number(b.dataset.jump)]); });
     });
-    // 表格数据单元格：点击复制到剪贴板
-    bodyEl.querySelectorAll('td.copy-cell').forEach((td) => {
-      td.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const text = td.dataset.copy;
-        if (text && onCopy) onCopy(text);
-      });
-    });
-
-    // 同一批单元格的键盘入口（清单 B9）：漫游焦点 + 方向键移动 + Enter 复制。
-    // 回调每次渲染都可能换（onCopy 是页面传进来的），所以挂在 tbody 上现取。
-    bodyEl.__copyHandler = onCopy;
-    bindCopyGridKeys(bodyEl);
-    paintCopyRoi(bodyEl, 0);
+    // 点击复制 + 键盘漫游（清单 B9）：三页共用 js/ui/copy-cells.js。
+    // 没有它（单测只加载本文件）时安静跳过 —— 渲染出来的 data-copy 还在，不影响其他断言。
+    if (window.CopyCells) window.CopyCells.bind(bodyEl, { onCopy });
   }
 
   /**

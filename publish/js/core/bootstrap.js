@@ -32,6 +32,12 @@
       // 只是降级成原生下拉（home.js 的 initUserSelect 里那条 warn），所以这里是点名登记
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
       ['toast', () => typeof window.toast === 'function'],
+      // 「点遮罩关闭」与确认框 / 命名框都在 dialog-utils.js（2026-09-23 起五处弹窗的
+      // 遮罩关闭统一走 DialogUtils.bindBackdropDismiss）：掉了脚本不白屏，只是弹窗
+      // 关不掉 / 确认框静默不弹，所以点名登记。
+      ['DialogUtils', () => has(window.DialogUtils, 'bindBackdropDismiss')
+        && has(window.DialogUtils, 'confirmBox')],
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     // 服务发布数据查询页（publish.html，旧 index.html 迁过来的）
     publish: [
@@ -43,9 +49,17 @@
       ['CsvExporter', () => has(window.CsvExporter, 'exportRows')],
       ['PublishResponse', () => has(window.PublishResponse, 'parse')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['Fmt', () => has(window.Fmt, 'esc')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
+      // 五个弹窗（服务详情 / 接口明细 / 操作记录 / 订阅 / 订阅服务管理）的「点遮罩关闭」
+      // 都走 DialogUtils.bindBackdropDismiss（2026-09-23）：少了它这些弹窗仍然能用 ✕ 关，
+      // 但遮罩点不动 —— 而每个调用点都写了 `if (window.DialogUtils)`，不点名就是零报警。
+      ['DialogUtils', () => has(window.DialogUtils, 'bindBackdropDismiss')
+        && has(window.DialogUtils, 'confirmBox')],
       ['PublishModel', () => has(window.PublishModel, 'normalizeRow')],
       ['PublishView', () => has(window.PublishView, 'renderRows')],
       ['PublishQuery', () => has(window.PublishQuery, 'doQuery')],
@@ -63,11 +77,18 @@
       // 只引前者不引后者不会报错，但存出去的记录 owner 为空（2026-09-19 就是这么坏的）。
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     subscription: [
       ['API', () => has(window.API, 'call') && has(window.API, 'createRequester')],
       ['Priority', () => has(window.Priority, 'evaluate')],
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['SubscriptionBatchTimes', () => has(window.SubscriptionBatchTimes, 'load')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['createSearchableSelect', () => typeof window.createSearchableSelect === 'function'],
@@ -77,14 +98,35 @@
       ['SubscriptionModel', () => has(window.SubscriptionModel, 'rowKey')],
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「点遮罩关闭」与确认框 / 命名框都在 dialog-utils.js（2026-09-23 起五处弹窗的
+      // 遮罩关闭统一走 DialogUtils.bindBackdropDismiss）：掉了脚本不白屏，只是弹窗
+      // 关不掉 / 确认框静默不弹，所以点名登记。
+      ['DialogUtils', () => has(window.DialogUtils, 'bindBackdropDismiss')
+        && has(window.DialogUtils, 'confirmBox')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
     task: [
       ['TableUtils', () => has(window.TableUtils, 'totalPages')],
+      // 结果表「折行 + 点击复制 + 键盘漫游」三页共用（2026-9-23）：
+      // 少了它数据格点不动、也没法用键盘漫游，但页面不白屏 —— 必须点名。
+      ['CopyCells', () => has(window.CopyCells, 'bind')],
       ['CsvExporter', () => has(window.CsvExporter, 'downloadRows')],
       ['toast', () => typeof window.toast === 'function'],
       ['PopupPosition', () => has(window.PopupPosition, 'place')],
       ['SavedQuery', () => has(window.SavedQuery, 'save') && has(window.SavedQuery, 'listForUser')],
       ['CurrentUser', () => has(window.CurrentUser, 'get')],
+      // 「点遮罩关闭」与确认框 / 命名框都在 dialog-utils.js（2026-09-23 起五处弹窗的
+      // 遮罩关闭统一走 DialogUtils.bindBackdropDismiss）：掉了脚本不白屏，只是弹窗
+      // 关不掉 / 确认框静默不弹，所以点名登记。
+      ['DialogUtils', () => has(window.DialogUtils, 'bindBackdropDismiss')
+        && has(window.DialogUtils, 'confirmBox')],
+      // 「🔑 Token」面板与 api-client 的 localToken() 都靠它（2026-09-22 复测 D-10）：
+      // 之前四个页面都引了脚本，却没在这里点名 —— 掉脚本时**零报警**，
+      // 查询照发、静默回落管理员 token、订阅等写操作无声禁用，只在控制台留两条 404。
+      ['UserToken', () => has(window.UserToken, 'active') && has(window.UserToken, 'set')],
     ],
   };
 

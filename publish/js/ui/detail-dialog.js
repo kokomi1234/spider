@@ -84,12 +84,14 @@
     }
   }
 
-  // 关闭入口：底部「关 闭」、右上角 ✕、点遮罩空白处
+  // 关闭入口：底部「关 闭」、右上角 ✕
   document.addEventListener('click', (e) => {
     const id = e.target && e.target.id;
-    if (id === 'btnDetailClose' || id === 'btnDetailCloseX') { close(); return; }
-    if (e.target === overlay) close();   // 点遮罩空白处关闭
+    if (id === 'btnDetailClose' || id === 'btnDetailCloseX') close();
   });
+  // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
+  // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况）
+  if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(overlay, close);
 
   window.DetailDialog = { open, close };
 })();

@@ -12,6 +12,7 @@
 shared/saved-queries.db
 shared/saved-queries.db-wal
 shared/saved-queries.db-shm
+shared/saved-queries.db.proxy-lock
 shared/saved-queries.json
 # 用户 token 库（2026-09-22 加）：**里面是明文的凭证**，绝不能入库 ——
 # 与 saved-queries 同理是运行时数据，但要更严：一旦推上去就等于把别人的 token 公开了。

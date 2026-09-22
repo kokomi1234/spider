@@ -35,8 +35,14 @@ function load(storage) {
 const isExpired = loadScript('js/core/user-token.js', {}).UserToken.isExpired;
 
 const KEY = 'spider.userToken.v1';
-/** 本地时刻（用例里都用本地时间，避免时区把 5:00 边界算歪） */
-const at = (y, m, d, h, min) => new Date(y, m - 1, d, h, min || 0, 0, 0).getTime();
+/**
+ * 造「**北京时间** h:mm」的时间戳。
+ * ⚠️ 原来这里用 `new Date(y,m,d,h)`（机器本地时刻），注释还写着"避免时区把边界算歪" ——
+ * 恰恰相反：被测的是北京 5:00 的分界，用本地时刻造数据，在非 +8 的机器上必红
+ * （2026-09-22 复测 D-21 顺带查出：`TZ=UTC node tests/run.js` 会挂这两条用例）。
+ * 现在先按 UTC 拼出"北京读数"，再减去 8 小时得到真实时间戳，跑在哪台机器都一样。
+ */
+const at = (y, m, d, h, min) => Date.UTC(y, m - 1, d, h, min || 0, 0, 0) - 8 * 60 * 60 * 1000;
 
 test('UserToken：未录入时没有可用 token（代理会回落管理员）', () => {
   const U = load(fakeStorage());
@@ -104,6 +110,28 @@ test('UserToken：清除后回到「没有本机 token」', () => {
   assert.strictEqual(U.status().has, false);
   assert.strictEqual(U.get(), null);
   assert.strictEqual(s.getItem(KEY), null, '存储里也要清掉');
+});
+
+test('UserToken：过期截止点是**北京时间的 5:00**，与机器时区无关（2026-09-22 复测 D-21）', () => {
+  const U = load(fakeStorage());
+  const M = 60 * 1000; const H = 60 * M;
+  // 全部用 Date.UTC 写死，断言里不出现任何本地时区语义：
+  // 北京时间 2026-09-22 11:00（= UTC 03:00）→ 最近一次「北京 5:00」= 北京 09-22 05:00 = UTC 09-21 21:00
+  assert.strictEqual(U.lastResetAt(Date.UTC(2026, 8, 22, 3, 0, 0)), Date.UTC(2026, 8, 21, 21, 0, 0),
+    '北京 11:00 时，截止点应是北京当天 5:00');
+  // 北京时间 04:00（= UTC 前一天 20:00）5:00 还没到 → 用昨天那一次 = 北京 09-21 05:00 = UTC 09-20 21:00
+  assert.strictEqual(U.lastResetAt(Date.UTC(2026, 8, 21, 20, 0, 0)), Date.UTC(2026, 8, 20, 21, 0, 0),
+    '5:00 之前应退回昨天那次');
+  // 整点边界：北京 05:00 整 → 截止点就是它自己（这一刻录入的不算过期）
+  assert.strictEqual(U.lastResetAt(Date.UTC(2026, 8, 21, 21, 0, 0)), Date.UTC(2026, 8, 21, 21, 0, 0));
+  // isExpired 同口径：北京 04:30 录入的，到北京 11:00 已经算过期；05:10 录入的不算
+  const cut = Date.UTC(2026, 8, 21, 21, 0, 0);
+  const now = Date.UTC(2026, 8, 22, 3, 0, 0);
+  assert.strictEqual(U.isExpired(cut - 30 * M, now), true, '北京 04:30 录入 → 早于当天 5:00，应判过期');
+  assert.strictEqual(U.isExpired(cut + 10 * M, now), false, '北京 05:10 录入 → 应可用');
+  // 偏移量固定为 8 小时：UTC 日界 + 5 小时 - 8 小时 = 北京 5:00（防止有人改回 setHours 读本地时区）
+  assert.strictEqual(U.lastResetAt(Date.UTC(2026, 8, 22, 0, 0, 0)) - Date.UTC(2026, 8, 21, 0, 0, 0),
+    (24 + 5 - 8) * H - 0, '跨过 5:00 前后的相对天数应是固定的北京时间口径');
 });
 
 test('UserToken：存储不可用 / 内容坏掉都不崩，一律当作「没有本机 token」', () => {

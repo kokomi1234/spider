@@ -737,6 +737,58 @@ a.outlined, a.filled, a.text-btn {
    （2026-09-21 用户报「弹窗有点太宽了」的根因）。别依赖规则先后顺序来定宽度。
    min-width 也跟着收一下：原来写死 320px，比窄屏视口还宽时会溢出。 */
 .sub-dialog.dlg-util-dialog { max-width: 460px; min-width: min(320px, 92vw); }
+/* 纯文本确认框（删除确认 / 数据量可能过大 / 放弃已填写的内容）单独收窄一档：
+   460px 是给带输入框的命名框和 Token 面板用的，一句话的确认框撑那么宽，
+   屏幕上就是一大块空白 + 视线要从按钮跳到正中（2026-09-22 复测 D-17，用户："弹窗变小一点就行"）。 */
+.sub-dialog.dlg-util-dialog--confirm { max-width: 380px; min-width: min(300px, 92vw); }
+/* ── 结果表数据格：折行 + 可复制（发布页 / 任务单页 / 订阅页共用）──────────
+   实现在 js/ui/copy-cells.js；2026-09-23 前这套样式只长在 subscription.html 里，
+   另外两页被截断的格子只能靠 title 悬停看全文（与 §1「不写悬停提示」冲突）。
+   ⚠️ 必须带 .tbl-scroll 前缀，理由见下面那条注释。 */
+.tbl-scroll .cell-wrap, .tbl-scroll tbody td.cell-wrap { white-space: normal; }
+   /* 带 .tbl-scroll 前缀是为了压过各页自己的 `.result-table td { white-space: nowrap }` 之类
+      （页面内联样式在 theme.css 之后加载，同特异度是页面赢 —— 这里靠多一个类赢）。 */
+.cell-wrap { white-space: normal; }
+/* -webkit-line-clamp 只对块容器生效，直接加在 <td> 上会把 display 改成 -webkit-box、
+   毁掉表格布局 —— 所以内容要套一层 span（首页 .result-table 同款做法）。 */
+.cell-clamp, .cell-wrap .cell-clamp {
+  /* 后一个选择器是为压过各页自己给编码格写的 display 规则：页面内联 style 在 theme.css
+     之后加载，同特异度是页面赢 —— 实测发布页的编码格被改回非 -webkit-box，
+     line-clamp 直接失效（2026-09-23 探针量出来的）。⚠️ 这段注释里不要出现成对的收尾花括号 ——
+     tests/subscription-table.test.js 的成套性守卫是靠「规则体里没有右花括号」来匹配的。 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  /* 长 URL / 长 Java 包名 / 长编码里没有空格，得允许在任意位置断行 */
+  overflow-wrap: anywhere;
+}
+.copy-cell { cursor: pointer; position: relative; transition: background 0.15s ease; }
+.copy-cell:hover { background: var(--primary-c) !important; }
+.copy-cell::after {
+  content: '\1F4CB';                    /* 📋 复制角标：取代原来 title="点击复制" 的说法 */
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.copy-cell:hover::after { opacity: 0.6; }
+.copy-cell:active::after { opacity: 1; }
+/* 键盘漫游焦点：与 :hover 同一套提示，另加一圈焦点环 ——
+   键盘用户看不到鼠标悬停，没有焦点环就不知道自己「落在」哪一格。 */
+.copy-cell:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: var(--primary-c) !important;
+}
+.copy-cell:focus::after { opacity: 0.6; }
+.kv-grid dd.copy-cell { cursor: pointer; transition: background 0.15s ease; }
+.kv-grid dd.copy-cell:hover { background: var(--primary-c) !important; }
+
 .dlg-util-body { font-size: var(--fs-sm); color: var(--on-surface); }
 .dlg-util-body p { margin: 0 0 var(--sp1); line-height: 1.6; }
 .dlg-util-body .form-group { margin: 0; }

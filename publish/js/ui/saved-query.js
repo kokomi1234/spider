@@ -375,20 +375,28 @@
   function shortCode(text) {
     const s = String(text == null ? '' : text).trim();
     if (!s) return s;
-    // ⚠️ 关键：先按 `-` 分段，再对**每段取它尾部那串大写字母/数字**。
-    //   不能要求"整段都是大写" —— 「调用方系统：BOCNETC-O-MAPSN」里中文前缀与
-    //   编码是**粘在同一段**的（中间没有 -），那样只会取到尾巴的 `O-MAPSN`
-    //   （2026-09-22 用户截图报的正是这个：标题被截成了 O-MAPSN / O-WPSN）。
-    const parts = s.split('-').map((part) => {
-      const m = String(part).match(/([A-Z0-9]+)\s*$/);
-      return m ? m[1] : '';
-    });
-    const keep = [];
-    for (let i = parts.length - 1; i >= 0; i -= 1) {
-      if (!parts[i]) break;                      // 这段取不到英文 → 到头了
-      keep.unshift(parts[i]);
-    }
-    return keep.length ? keep.join('-') : s;     // 一个都取不到 → 原样返回
+    // 尾部那串「字母开头、以 - 连接的字母数字段」才是英文编码：
+    //   E00301-互联网金融服务平台-BOCNET-G-IFS → BOCNET-G-IFS
+    //   调用方系统：BOCNETC-O-MAPSN            → BOCNETC-O-MAPSN（中文前缀与编码粘在同一段也要能取到）
+    // ⚠️ 不能"按 - 分段后各取尾巴" —— 那样任何单个大写字母与纯数字都会被当成编码：
+    //   「…海外个人网银-B」截成 `B`、「…· 批次：261」拼出假编码 `BOCNETC-O-261`
+    //   （2026-09-22 复测 D-2，用户库里真实存在显示成 `B` 的记录）。
+    const m = s.match(/[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*$/);
+    if (!m) return s;                            // 结尾不是英文编码（中文/小写/数字）→ 原样
+    const code = m[0];
+    if (code.length < 2) return s;               // 单个字母（那个 `B`）不算编码
+    const boundary = s.charAt(s.length - code.length - 1);
+    const before = s.slice(0, s.length - code.length);
+    // 空白与 `·` 是**取值之间**的分隔符（labels 拼出来的「甲编码 · 乙编码」），
+    // 撞上它说明这段编码只是最后一个取值，截出来会把前面的值丢掉 → 整条原样显示。
+    if (boundary === ' ' || boundary === '\t' || boundary === '·') return s;
+    // 「调用方：E00301 提供方：E00406」这类**多个带冒号的取值**拼出来的串也一样：
+    // 只截出最后一个会把前面的字段丢掉，不如整条显示。
+    // ⚠️ 判据要同时看「前面还有别的冒号」与「有空格分隔的取值」——
+    //   「调用方系统：BOCNETC-O-MAPSN」是**单个**带前缀的编码，冒号紧贴着编码，照旧要截
+    //   （2026-09-22 用户截图点名的就是这条），一刀切按冒号排除会把它打回原形。
+    if ((before.indexOf('：') >= 0 || before.indexOf(':') >= 0) && /\s/.test(before)) return s;
+    return code;
   }
 
   /**
@@ -404,7 +412,9 @@
     const own = String((item && (item.autoName || item.auto_name)) || '').trim();
     if (own) return shortCode(own);
     const sum = String((item && item.summary) || '').trim();
-    if (sum) return shortCode(sum.slice(0, 30));
+    // 先截码、再限长：反过来（先 slice(0,30) 再 shortCode）会正好截断在编码中间，
+    // 于是"截出来的尾巴"是半个编码（2026-09-22 复测 D-2）。
+    if (sum) return shortCode(sum).slice(0, 30);
     return shortCode(nameFromLabels(item && item.labels));
   }
 
@@ -1020,7 +1030,11 @@
     // 判重口径（同页面 + 同名 + 同一个人）随之按「我」来算：与我已有的同名记录会合并。
     // 没设当前用户时不动 owner —— 那种记录只落本机镜像（与 save 的本地兜底路径同理）。
     const me = cleanOwner(window.CurrentUser && window.CurrentUser.get());
-    if (me) valid.forEach((it) => { it.owner = me; });
+    if (me) valid.forEach((it) => { it.owner = me; it.id = newId(); });
+    // ⚠️ 换归属人的同时要**换发新 id**（2026-09-22 复测 D-4）：`sameQuery` 第一步就按 id 短路
+    //   判同、不比人，而全组共用一份代理时文件里的 id 在服务端必然已存在（属于原主人）。
+    //   结果是"导入同事的文件"变成静默空操作 —— 归属仍是同事，提示却报「合并 N 条」。
+    //   换发新 id 之后判重退回「同条件 + 同人」：重复导入自己的文件照样合并，不会翻倍。
 
     if (canSync()) {
       try {
@@ -1049,7 +1063,13 @@
                 if (mine.ok) { writeMineSeg(mine.items); total = mine.items.length; }   // 只覆盖登录段
               }
               recordSync({ ok: true, total, file: pd.file, storage: pd.storage, people: pd.people });
-              return { ok: true, added, merged, total, server: true };
+              // 代理如实回传的丢弃/跳过计数（`truncated` 早已有之、`skipped` 是 2026-09-22 补的），
+              // 前端必须读 —— 不读就会出现「一条没入库却报已合并保存」（复测 D-5）。
+              return {
+                ok: true, added, merged, total, server: true,
+                dropped: Number(pd.truncated) || 0,
+                skipped: Number(pd.skipped) || 0,
+              };
             }
           }
         }
@@ -1304,7 +1324,10 @@
         if (mine.ok) writeMineSeg(mine.items);   // 只覆盖登录段，匿名段不动
         return recordSync({ ok: true, total: mine.ok ? mine.items.length : list().length, ...meta });
       }
-      return recordSync({ ok: true, total: list().length, ...meta });
+      // 没设当前用户 = 没有「我的列表」可同步，只推了本机匿名段 —— 不许谎报「已同步」
+      //（2026-09-21 已拍板，但当时只修了 GET 那条路 `syncFromServer`；首页每次加载都会
+      //  主动 pushToServer，把正确记下的 'nouser' 又覆盖成 'shared'，2026-09-22 复测 D-3）。
+      return recordSync({ ok: true, noUser: true, total: list().length, ...meta });
     } catch (e) {
       return recordSync(fail('同步失败：' + ((e && e.message) || String(e))));
     }
@@ -1377,6 +1400,7 @@
 
   window.SavedQuery = {
     STORAGE_KEY,
+    ANON_STORAGE_KEY,          // 未登录段也要能被页面监听到（跨标签页同步，2026-09-22 复测 D-15）
     MAX_ITEMS,
     SCHEMA_VERSION,
     PAGES,

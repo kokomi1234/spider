@@ -67,7 +67,9 @@
 
   function askConfirm(text) {
     const D = window.DialogUtils;
-    if (D && typeof D.confirmBox === 'function') return D.confirmBox({ text });
+    // ⚠️ 字段名是 `message` 不是 `text`：传错不报错、正文静默变空，
+    //   于是「确定删除常用查询『X』？」在页面上只剩一个「请确认」（2026-09-22 复测 D-1，阻塞级）。
+    if (D && typeof D.confirmBox === 'function') return D.confirmBox({ message: text });
     return Promise.resolve(window.confirm(text));
   }
 
@@ -117,12 +119,10 @@
     const condTitle = o.titleFromLabels && window.SavedQuery
       && typeof window.SavedQuery.condNameOf === 'function'
       ? window.SavedQuery.condNameOf(item) : '';
-    // 标题统一过一遍 shortCode：把「E00301-互联网金融服务平台-BOCNET-G-IFS」显示成
-    // 「BOCNET-G-IFS」（2026-09-22 用户要求）。**只影响显示** —— 记录里存的、重命名弹窗里
-    // 显示的仍是完整名字；对不含这种编码的名字（"27年6月独立"、用户自己起的）原样返回。
-    const shortOf = window.SavedQuery && typeof window.SavedQuery.shortCode === 'function'
-      ? window.SavedQuery.shortCode : ((t) => t);
-    nameText.textContent = shortOf(condTitle || item.name);
+    // 截断只作用于**条件生成的默认名**（condNameOf 内部已经过 shortCode）。
+    // ⚠️ 这里不得再过一遍 shortCode，否则会连用户自己起的名字一起截：
+    //   他改成「发布查询-2」，卡片上就只剩一个「2」（2026-09-22 复测 D-2）。
+    nameText.textContent = condTitle || item.name || '';
     nameRow.appendChild(badge);
     nameRow.appendChild(nameText);
     main.appendChild(nameRow);
@@ -817,7 +817,17 @@
         markLocalWrite();
         render();
         // 导入的合并结果写在**共享库**，r.total 是库里的条数（不再说「本机现有」）
-        showToast(`已导入：新增 ${r.added} 条、合并 ${r.merged} 条，库内现有 ${r.total} 条`, 4000, 'success');
+        // ⚠️ 一条都没新增时不许报「已导入」：那多半是文件里全是自己已有的条件，
+        //   或被上限/字段不全丢弃了（2026-09-22 复测 D-4、D-5 —— 原来这种情形也报成功）。
+        const dropped = (Number(r.dropped) || 0) + (Number(r.skipped) || 0);
+        const head = r.added === 0 && r.merged === 0
+          ? '没有可导入的新查询'
+          : (r.added === 0
+            ? `这些查询你已经有了：合并 ${r.merged} 条`
+            : `已导入：新增 ${r.added} 条、合并 ${r.merged} 条`);
+        showToast(head + `，库内现有 ${r.total} 条`
+          + (dropped ? `，另有 ${dropped} 条未入库（超上限或字段不全）` : ''),
+        4000, dropped ? 'warn' : 'success');
       };
       reader.onerror = () => { input.remove(); showToast('读取文件失败', 3000, 'error'); };
       reader.readAsText(file, 'utf-8');
@@ -839,7 +849,9 @@
   window.addEventListener('storage', (e) => {
     const S = window.SavedQuery;
     if (!e.key) return;
-    if (S && e.key === S.STORAGE_KEY) renderSaved();
+    // 登录段与**匿名段**都要监听：没设当前用户时数据全在匿名段，只认 STORAGE_KEY 的话
+    // 未登录保存的记录在另一个标签页里永远不重绘，必须刷新（2026-09-22 复测 D-15）。
+    if (S && (e.key === S.STORAGE_KEY || (S.ANON_STORAGE_KEY && e.key === S.ANON_STORAGE_KEY))) renderSaved();
     const CU = window.CurrentUser;
     if (CU && e.key === CU.STORAGE_KEY) renderUser();
   });

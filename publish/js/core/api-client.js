@@ -30,11 +30,14 @@
    * @param {object} [opts.headers] 额外请求头
    * @param {AbortSignal} [opts.signal] 调用方的中止信号（如「被新查询取代」）。
    *        传了它照样有 opts.timeout 兜底：两个信号是「或」的关系，谁先触发谁生效
-   * @param {number} [opts.timeout] 超时毫秒数，默认 20000；<= 0 表示不限时
+   * @param {number} [opts.timeout] 超时毫秒数，默认 22000（要比代理的 20000 长，见下面 DEFAULT_TIMEOUT）；<= 0 表示不限时
    * @param {number} [opts.retry] 失败后重试次数，默认 0（调用方主动中止的不重试）
    * @returns {Promise<Response>} 原样返回 fetch 的 Response，调用方自行判 resp.ok / resp.json()
    */
-  const DEFAULT_TIMEOUT = 20000; // ms，与代理层 PROXY_TIMEOUT 对齐，避免网络异常时无限等待
+  // ⚠️ 必须**大于**代理层的 PROXY_TIMEOUT（默认 20000），不能"对齐"成同一个数：
+  //   代理是在自己掐断之后才回退读本地缓存（实测 20006ms 才交付），
+  //   两边都是 20000 时浏览器先 abort，那条降级回放**永远来不及**（2026-09-22 复测 D-6）。
+  const DEFAULT_TIMEOUT = 22000; // ms；<= 0 表示不限时
 
   // ── 「这次用的是谁的 token」（2026-09-22 改：token 只在**本机**）──────────
   // 用户拍板：token 不交给后端存（有的同事 token 权限高），只留 localStorage，

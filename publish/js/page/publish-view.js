@@ -107,18 +107,19 @@
 
       return `<tr class="${rowClass}" data-code="${esc(serverCoding)}">
         <td class="cell-index">${idx}</td>
-        <td class="cell-code" title="${esc(codeAndInterface)}">
-          <span class="cell-primary-code">${esc(serverCoding)}</span>
+        <td class="cell-code cell-wrap copy-cell" data-copy="${esc(codeAndInterface)}">
+          <span class="cell-primary-code cell-clamp">${esc(serverCoding)}</span>
           ${interfaceCode && interfaceCode !== serverCoding
-            ? `<span class="cell-secondary-code">接口：${esc(interfaceCode)}</span>`
+            // 两段编码各自都要 clamp：不套的话一个 709px 长的接口编码能折成七八行，把整行撑高
+            ? `<span class="cell-secondary-code cell-clamp">接口：${esc(interfaceCode)}</span>`
             : ''}
         </td>
-        <td class="cell-name" title="${esc(serviceName)}"><span class="cell-clamp">${esc(serviceName)}</span></td>
-        <td class="cell-comp" title="${esc(compNum)}">${esc(compNum)}</td>
-        <td class="cell-batch" title="${esc(batch)}">${esc(batch)}</td>
+        <td class="cell-name cell-wrap copy-cell" data-copy="${esc(serviceName)}"><span class="cell-clamp">${esc(serviceName)}</span></td>
+        <td class="cell-comp cell-wrap copy-cell" data-copy="${esc(compNum)}"><span class="cell-clamp">${esc(compNum)}</span></td>
+        <td class="cell-batch cell-wrap copy-cell" data-copy="${esc(batch)}"><span class="cell-clamp">${esc(batch)}</span></td>
         <td class="cell-status">${stateBadge(serviceStatus)}</td>
         <td class="cell-check">${isChecked}</td>
-        <td class="cell-dept" title="${esc(deptName)}"><span class="cell-clamp">${esc(deptName)}</span></td>
+        <td class="cell-dept cell-wrap copy-cell" data-copy="${esc(deptName)}"><span class="cell-clamp">${esc(deptName)}</span></td>
         <td class="cell-sub">${subscribeMark}</td>
         <td class="col-op">
           <div class="action-row">
@@ -255,6 +256,9 @@
     resultBody.innerHTML = renderRows(rows, {
       pageNum: state.pageNum, pageSize: state.pageSize, checkSubscribe,
     });
+    // 数据格「点击复制 + 键盘漫游」：与订阅页共用 js/ui/copy-cells.js。
+    // 原来这几格靠 title 悬停才看得到全文（22 处之一），现在改成折行 + 可复制（2026-09-23）。
+    if (window.CopyCells) window.CopyCells.bind(resultBody);
   }
 
   /** 分页控制（基于筛选后的全量，纯客户端切分） */

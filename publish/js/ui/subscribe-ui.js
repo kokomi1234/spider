@@ -111,10 +111,9 @@
     $('#btnClose').addEventListener('click', closeDialog);
     $('#subSearch').addEventListener('input', renderSubList);
 
-    // 点击遮罩关闭
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) closeDialog();
-    });
+    // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
+    // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况）
+    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(overlay, closeDialog);
   }
 
   /** 打开弹窗 */

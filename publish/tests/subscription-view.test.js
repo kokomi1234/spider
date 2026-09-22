@@ -17,6 +17,11 @@ const assert = require('assert');
 const win = loadScript('js/core/format.js');
 loadScript('js/ui/table-utils.js', {}, win);
 loadScript('js/page/subscription-model.js', {}, win);
+// 「点击复制 + 键盘漫游」的实现已经抽到 js/ui/copy-cells.js（三页共用）。
+// 本文件只测「渲染 + 把 onCopy 交出去」；交接之后的点击/漫游行为在 tests/copy-cells.test.js 里测，
+// 免得这里的假 DOM 要同时养两套语义。
+const copyBound = [];
+win.CopyCells = { bind(bodyEl, opts) { copyBound.push({ bodyEl, opts }); } };
 loadScript('js/page/subscription-view.js', {}, win);
 const V = win.SubscriptionView;
 const M = win.SubscriptionModel;
@@ -151,9 +156,9 @@ test('renderTable：每行渲染 COLUMNS + 操作列，逾期整行标红', () =
   assert.ok(html.indexOf('data-jump="0"') > -1);
   assert.ok(html.indexOf('查 看') > -1);
   // 状态列与审核列走标签渲染，并带复制属性
-  assert.ok(html.indexOf('<td class="col-st copy-cell" data-copy="正式版基线" title="点击复制">') > -1);
+  assert.ok(html.indexOf('<td class="col-st copy-cell" data-copy="正式版基线">') > -1);
   assert.ok(html.indexOf('<span class="st-tag is-official">正式版基线</span>') > -1);
-  assert.ok(html.indexOf('<td class="col-review copy-cell" data-copy="03" title="点击复制">') > -1);
+  assert.ok(html.indexOf('<td class="col-review copy-cell" data-copy="03">') > -1);
   assert.ok(html.indexOf('<span class="st-tag is-official">审核完成</span>') > -1);
   // 优先级列自带 col-prio（不能被包装成普通数据格）
   assert.strictEqual(html.indexOf('<td class=" col-prio">'), -1);
@@ -212,10 +217,13 @@ test('renderTable：查 看 / 复制 的事件回传到 opts 回调', () => {
   jumpEls[1].fire('click');
   assert.deepStrictEqual(jumped.map((r) => r.publishSubcriptionId), ['r1']);   // 按行对象回传，不靠下标找
 
-  let stopped = false;
-  copyEls[0].fire('click', { stopPropagation: () => { stopped = true; } });
-  assert.deepStrictEqual(copied, ['S0']);
-  assert.strictEqual(stopped, true);        // 复制要阻止冒泡，否则会触发整行的其它行为
+  // 复制动作交给共用的 CopyCells.bind：这里只断言「这张 tbody + 页面自己的 onCopy」确实传过去了，
+  // 点击复制与键盘漫游本身的行为在 tests/copy-cells.test.js 里测。
+  const last = copyBound[copyBound.length - 1];
+  assert.strictEqual(last.bodyEl, body, 'renderTable 要把这张 tbody 交给 CopyCells.bind');
+  assert.strictEqual(typeof last.opts.onCopy, 'function', '页面的复制回调要原样传下去');
+  last.opts.onCopy('S0');
+  assert.deepStrictEqual(copied, ['S0'], '回调被调到就说明交接通了（值取自 data-copy）');
 
   // 没给回调时不抛
   const silent = stubBody([stubEl({ jump: '0' })], [stubEl({ copy: 'x' })]);

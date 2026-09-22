@@ -60,11 +60,6 @@
     return /认证失败|未授权|未登录|unauthorized/i.test(String(msg || ''));
   }
 
-  /**
-   * 查询失败的常驻提示（toast 几秒就消失，常驻条不会）。
-   * hasPrev=true 表示页面上还留着上一次成功结果 —— 文案必须明说，
-   * 否则用户会把「查询失败」误读成「点了没反应」或「确实没有数据」。
-   */
   function showQueryFail(reason, hasPrev, sels) {
     const o = Object.assign({}, DEFAULTS, sels);
     const bar = $(o.bar);
@@ -77,6 +72,8 @@
       // 这属于「操作失败必须说清楚怎么办」的例外，不是冗余提示。
       // 文案里已经提到 Token 的（如 publish-response 的「认证失败，请检查 Token 是否有效」）
       // 就不重复追加，免得同一句话说两遍。
+      // ⚠️ **只给文案，不自动弹 Token 弹窗**（2026-09-22 用户拍板）：没录入自己的 token 时
+      //   本来就该回落管理员 token（只给查询权限），那是设计而不是故障，弹一个模态框打断查询没道理。
       const tail = (isAuthError(reason, msg) && !/Token|令牌/i.test(msg))
         ? '（Token 可能已过期，请点右上角「🔑 Token」更新）'
         : '';

@@ -52,6 +52,20 @@ testOrSkip('queries-db：同一份条件被两个人保存 → 合成一行，�
   s.close();
 });
 
+testOrSkip('queries-db：字段不全 / 没有归属人的记录要如实报 skipped，不许静默丢（2026-09-22 复测 D-5）', () => {
+  const s = freshStore();
+  const r = s.upsert([
+    { id: 'ok', page: 'publish', name: '合法的一条', fields: { ...COND }, owner: A, at: 1000 },
+    { id: 'nopage', name: '缺 page', fields: { ...COND }, owner: A, at: 1000 },
+    { page: 'publish', name: '缺 id', fields: { ...COND }, owner: A, at: 1000 },
+    { id: 'noowner', page: 'publish', name: '没有归属人', fields: { ...COND }, at: 1000 },
+  ], []);
+  assert.strictEqual(r.items.filter((x) => x.id === 'ok').length, 1, '合法的那条要入库');
+  assert.strictEqual(r.items.length, 1, '三条不合格的都不该进库');
+  assert.strictEqual(r.skipped, 3, `要如实报被跳过 3 条，实际：${r.skipped}`);
+  s.close();
+});
+
 testOrSkip('queries-db：同一个人反复保存同一份条件 → 只算 1 人（热度刷不出来）', () => {
   const s = freshStore();
   for (let i = 0; i < 5; i += 1) {
