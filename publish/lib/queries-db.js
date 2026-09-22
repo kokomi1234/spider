@@ -277,6 +277,12 @@ function open(file) {
           const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
           const at = num(it.at, now) || now;
           const uk = userKeyOf(owner);
+          // ⚠️ 没有归属人的记录**不入服务端**（2026-09-22 用户报「未登录存的会变成重复」）：
+          // 服务端的用户视图是按 savers 表 join 出来的（byUser / deptTop 都靠它），
+          // 没有 saver 的行走进去只会变成**孤儿行** —— 谁的用户视图都看不见它，
+          // 但它确实占着一个 id、还会在镜像刷新后冒出来，表现就是"同一条查询出现两遍"。
+          // 未登录时保存的东西本来就只属于那台机器（本机镜像是它的家，见 user-token 那套思路）。
+          if (!uk) return;
           const fp = fingerprintOf(it);
           // 同条件 + 同人已有记录 → **并到它上面**（用它的 id），而不是新增一条。
           // 前端已经按同一口径判过了，这里再兜一层：前端镜像可能陈旧、或那次提交
@@ -342,6 +348,16 @@ function open(file) {
               delUses.run(dup.id);
               delQuery.run(dup.id);
             });
+          });
+          // 孤儿行（没有任何 saver）：同条件下还有别的行时删掉它。
+          // 未登录保存的记录曾被推成这种（见上面 !uk 那段注释），老库里已经攒下了 ——
+          // 不清掉的话，用户镜像刷新后它还会以"重复的一条"冒出来。
+          if (rows.length < 2) return;
+          rows.forEach((r) => {
+            if (selSaversOf.all(r.id).length > 0) return;
+            delSavers.run(r.id);
+            delUses.run(r.id);
+            delQuery.run(r.id);
           });
         });
         (Array.isArray(deletedIds) ? deletedIds : []).forEach((id) => {

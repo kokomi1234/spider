@@ -273,3 +273,23 @@ testOrSkip('queries-db：归并不误伤别人 —— 别人也存过的行不�
   assert.ok(rows.some((r) => r.name === 'A 改的名字'), 'A 那条被更新');
   s.close();
 });
+
+testOrSkip('queries-db：没有归属人的记录不入库（未登录保存的不该在服务端变孤儿）', () => {
+  // 2026-09-22 用户报「未登录保存 → 登录，就多出一条」：
+  // 匿名记录被前端推上服务端，而服务端的用户视图是按 savers 表 join 的 ——
+  // 没有 saver 的行走进去就是**孤儿行**，谁的用户视图都看不见它，
+  // 但它占着 id、镜像刷新后还以"重复的一条"冒出来。现在直接不收。
+  const s = freshStore();
+  const anon = {
+    id: 'anon1', page: 'publish', name: '未登录存的', summary: '',
+    fields: COND, labels: {}, owner: null, at: Date.now(), hits: 0, saves: 1,
+  };
+  s.upsert([anon], []);
+  assert.strictEqual(s.all().length, 0, '没归属人的记录不该落库');
+  assert.strictEqual(s.peopleCount(), 0, '也不该留下任何 savers 关系');
+  // 同一条认领之后（带上归属）就该正常入库
+  s.upsert([{ ...anon, owner: A }], []);
+  assert.strictEqual(s.all().length, 1, '认领后要能存进去');
+  assert.strictEqual(s.byUser('1001', 10).length, 1, '并且出现在这个人的列表里');
+  s.close();
+});
