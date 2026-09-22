@@ -720,10 +720,19 @@ function getQueriesStore() {
 function resolveToken(req) {
   const h = req.headers || {};
   const own = String(h['x-user-token'] || '').trim();
-  // 工号只用于**日志与诊断**，不参与选 token（token 本身就在请求里）。
+  // 工号只用于**日志与诊断**与「是不是管理员本人」的判断，不参与选 token（token 本身就在请求里）。
   // 没登录时前端不带，日志里就显示"未登录"。
   const userKey = String(h['x-user-key'] || '').trim();
   if (own) return { token: own, source: 'user', userKey, reason: '本人 token' };
+  const admin = String(ADMIN_USER_ID_REFRESHED || '').trim();
+  // 管理员本人**没有"自己的 token"可录** —— 他用的就是 .env 里那个全局 token，而且是全套权限。
+  // 以前这里和"同事没录/录了但过期"共用一个 'fallback'，日志写成「本人没有可用 token
+  //（未录入或已过期） · 工号 4711510」，看着像管理员忘了录入（2026-09-22 用户问的就是这条）。
+  // 前端本来就用同一个 ADMIN_USER_ID 区分 'admin' 与 'fallback'（api-client 的 tokenSource），
+  // 代理这边没跟上 → 两边的口径不一致，响应头 x-token-source 也跟着报错类别。
+  if (userKey && admin && userKey === admin) {
+    return { token: TOKEN_REFRESHED, source: 'admin', userKey, reason: '管理员本人：用的就是全局 token（全套权限）' };
+  }
   return {
     token: TOKEN_REFRESHED,
     source: 'fallback',
@@ -824,7 +833,9 @@ const server = http.createServer((req, res) => {
     const tkLog = resolveToken(req);
     console.log(tkLog.source === 'user'
       ? `   🔑 用本人 token（工号 ${tkLog.userKey || '未带'}）`
-      : `   🔑 用管理员 token（${tkLog.reason}${tkLog.userKey ? ' · 工号 ' + tkLog.userKey : ''}）`);
+      : tkLog.source === 'admin'
+        ? `   🔑 用全局 token（管理员本人 · 工号 ${tkLog.userKey} · 全套权限）`
+        : `   🔑 用管理员 token（${tkLog.reason}${tkLog.userKey ? ' · 工号 ' + tkLog.userKey : ''}）`);
   }
 
   // CORS 预检
