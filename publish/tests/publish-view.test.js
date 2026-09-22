@@ -46,7 +46,8 @@ test('renderRows：未订阅 → 未订阅标记 + 订阅按钮 + 绝对下标',
   });
   assert.strictEqual(html.includes('data-code="S1"'), true);
   assert.strictEqual(html.includes('<td class="cell-index">1</td>'), true);
-  assert.strictEqual(html.includes('<span class="cell-primary-code">S1</span>'), true);
+  // 2026-09-23：编码格也要限 2 行（长接口编码能撑到七八行）
+  assert.strictEqual(html.includes('<span class="cell-primary-code cell-clamp">S1</span>'), true);
   assert.strictEqual(html.includes('接口：I1'), true);     // 副编码
   assert.strictEqual(html.includes('<span class="badge b-run">运行中</span>'), true);
   assert.strictEqual(html.includes('<span class="badge b-run">是</span>'), true);   // isChecked=1
