@@ -61,9 +61,10 @@ const PAGES = [
   // 服务发布数据查询页迁到 publish.html —— 两个页面都要冒烟，别只盯着一个。
   { name: '首页 index.html', file: 'index.html', globals: ['Fmt', 'toast', 'API', 'SavedQuery', 'CurrentUser', 'UserApi', 'HomePage', 'DialogUtils', 'PopupPosition', 'createSearchableSelect', 'UserToken'] },
   { name: '服务发布数据查询 publish.html', file: 'publish.html', globals: ['Fmt', 'toast', 'API', 'PublishResponse', 'TableUtils', 'DetailDialog', 'DictSelects', 'CsvExporter', 'SubscribeDialog', 'SubscribeModel', 'SubscribeManager', 'ServiceApi', 'UserApi', 'DialogUtils', 'PopupPosition', 'SubscribeDryRun', 'SavedQuery', 'CurrentUser', 'PublishDialogModel', 'IntfDetailDialog', 'OpRecordDialog', 'CopyCells'] },
-  // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；task.html 也没引 dialog-utils.js
-  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken', 'CopyCells'] },
-  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken', 'CopyCells'] },
+  // 注：people-search.js 是自动初始化的页面内模块、不暴露任何全局；
+  // task.html 也引了 dialog-utils.js（命名框 / 确认框都靠它），别按老印象漏登记。
+  { name: '任务单 task.html', file: 'task.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'CsvExporter', 'TaskApi', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken', 'CopyCells', 'DialogUtils'] },
+  { name: '订阅 subscription.html', file: 'subscription.html', globals: ['Fmt', 'toast', 'API', 'TableUtils', 'SubscriptionBatchTimes', 'Priority', 'CsvExporter', 'createDatePicker', 'PopupPosition', 'SavedQuery', 'CurrentUser', 'UserToken', 'CopyCells', 'DialogUtils'] },
 ];
 
 (async () => {
@@ -3977,6 +3978,81 @@ const PAGES = [
     }
     fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
     if (fails.length) anyFail = true;
+    await page.close();
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 点遮罩关闭 ≠「在弹窗里按下、滑到遮罩上松开」（2026-09-23 用户报）
+  // ═══════════════════════════════════════════════════════════════
+  // 浏览器把 click 派发到 mousedown / mouseup 的共同祖先，所以这种手势的 target
+  // 正好是遮罩。旧实现只判 `e.target === overlay`，于是「长按选中弹窗里的文字往外拖」
+  // 会把填了一半的弹窗整个关掉。统一实现见 dialog-utils.js 的 bindBackdropDismiss。
+  // 必须用**真鼠标**走：单测的假 DOM 造不出「按下与松开不在同一个元素」这种手势。
+  {
+    const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+    const fails = [];
+    try {
+      await page.goto(base + 'publish.html', { waitUntil: 'load', timeout: 15000 });
+      await page.waitForTimeout(900);
+
+      const shown = (sel) => page.evaluate((s) => {
+        const ov = document.querySelector(s);
+        return !!ov && ov.classList.contains('show');
+      }, sel);
+      /** 遮罩上一点（视口左上角）+ 弹窗内一点（正中） */
+      const pts = (sel) => page.evaluate((s) => {
+        const dlg = document.querySelector(s).querySelector('.dialog, .sub-dialog');
+        const r = dlg.getBoundingClientRect();
+        return { bx: 8, by: 8, ix: Math.round(r.left + r.width / 2), iy: Math.round(r.top + r.height / 2) };
+      }, sel);
+      /** 在弹窗里按下 → 拖到遮罩上松开（旧实现会在这里关掉弹窗） */
+      const dragOut = async (p) => {
+        await page.mouse.move(p.ix, p.iy);
+        await page.mouse.down();
+        await page.mouse.move(p.bx, p.by, { steps: 6 });
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+      };
+      /** 真的点遮罩：按下与松开都在遮罩上（这条既有契约不能被上面的防护弄坏） */
+      const backdropClick = async (p) => {
+        await page.mouse.move(p.bx, p.by);
+        await page.mouse.down();
+        await page.mouse.up();
+        await page.waitForTimeout(240);
+      };
+
+      const subjects = [
+        { name: '通用弹窗(confirmBox)', sel: '.dlg-util-overlay',
+          open: () => page.evaluate(() => { window.DialogUtils.confirmBox({ message: '冒烟：拖拽' }); }) },
+        { name: '订阅弹窗', sel: '#subscribeOverlay',
+          open: () => page.evaluate(() => window.SubscribeDialog.open({ serverCoding: 'SMOKE-DRAG', sysServeName: '冒烟拖拽' })) },
+        { name: '服务详情弹窗', sel: '#detailOverlay',
+          open: () => page.evaluate(() => {
+            document.getElementById('detailTitle').textContent = '冒烟详情';
+            document.getElementById('detailBody').innerHTML = '<div class="kv-grid"><dt>甲</dt><dd>乙</dd></div>';
+            document.getElementById('detailOverlay').classList.add('show');
+          }) },
+      ];
+
+      for (const s of subjects) {
+        await s.open();
+        await page.waitForTimeout(380);
+        if (!(await shown(s.sel))) { fails.push(`${s.name}：没打开，拖拽手势无法验证`); continue; }
+        const p = await pts(s.sel);
+        await dragOut(p);
+        if (!(await shown(s.sel))) fails.push(`${s.name}：在弹窗里按下、滑到遮罩上松开就被关掉了（应只认「按下也在遮罩上」）`);
+        await backdropClick(p);
+        if (await shown(s.sel)) fails.push(`${s.name}：真的点遮罩反而关不掉了（防护过界）`);
+        // 订阅弹窗走脏检查，这里没改过字段，Esc/遮罩都该直接关；留个兜底免得挡住后面
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(240);
+      }
+    } catch (e) {
+      fails.push(`点遮罩段异常：${e.message}`);
+    }
+    fails.forEach((f) => process.stdout.write(`    [FAIL] ${f}\n`));
+    if (fails.length) anyFail = true;
+    else process.stdout.write('  点遮罩 vs 弹窗内拖出: PASS（3 类弹窗）\n');
     await page.close();
   }
 

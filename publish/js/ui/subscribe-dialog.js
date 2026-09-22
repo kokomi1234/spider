@@ -240,7 +240,10 @@
     dom.btnClose.addEventListener('click', () => close());
     dom.btnCancel.addEventListener('click', () => close());
     dom.btnConfirm.addEventListener('click', confirmSubscribe);
-    dom.overlay.addEventListener('click', (e) => { if (e.target === dom.overlay) close(); });
+    // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
+    // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况 ——
+    // 订阅表单填一半被关掉是这里最贵的代价）
+    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(dom.overlay, close);
 
     // 关联文档：子弹窗自己绑定内部事件，这里只负责把当前上下文交出去
     dom.btnPickDoc.addEventListener('click', openDocPicker);

@@ -303,12 +303,14 @@
     if (!ov) return;          // DOM 还没就绪：下次再试
     inited = true;
 
-    // 关闭入口：底部「关 闭」、右上角 ✕、点遮罩空白处
+    // 关闭入口：底部「关 闭」、右上角 ✕
     document.addEventListener('click', (e) => {
       const id = e.target && e.target.id;
-      if (id === 'btnIntfDetailClose' || id === 'btnIntfDetailCloseX') { close(); return; }
-      if (e.target === ov) close();
+      if (id === 'btnIntfDetailClose' || id === 'btnIntfDetailCloseX') close();
     });
+    // 点遮罩空白处关闭（统一实现见 dialog-utils.js：它还会挡掉
+    // 「在弹窗里按下、把指针滑到遮罩上松开」被误判成点遮罩的情况）
+    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss(ov, close);
 
     // tab 切换：整体重建 → 事件委托
     if (tabsEl) {

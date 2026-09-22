@@ -603,6 +603,73 @@ test('promptText：点遮罩关闭 → resolve null', async () => {
   assert.strictEqual(res, null, '点遮罩应返回 null');
 });
 
+/**
+ * 模拟「在 downTarget 上按下、在遮罩上松开」：浏览器把 click 派发到 mousedown 与
+ * mouseup 的共同祖先，所以这种手势的 click.target 也是遮罩（2026-09-23 用户报的
+ * 「长按滑出弹窗范围会把弹窗关掉」就是这么来的）。
+ */
+function pressOnThenClickOverlay(ov, downTarget, extra) {
+  ov.dispatch('mousedown', { type: 'mousedown', target: downTarget });
+  ov.dispatch('click', Object.assign({ type: 'click', target: ov, preventDefault() {} }, extra));
+}
+
+function findDialog(ov) {
+  return findIn(ov, (e) => e.className.split(/\s+/).includes('dlg-util-dialog'));
+}
+
+test('点遮罩：在弹窗里按下、滑到遮罩上松开 → 不关（不是「点遮罩」）', () => {
+  const { win, doc } = loadDialog();
+  win.DialogUtils.promptText({ title: 'T' });
+  const ov = findOverlay(doc);
+  const dlg = findDialog(ov);
+  assert.ok(dlg, '应找到弹窗本体');
+  pressOnThenClickOverlay(ov, dlg);
+  assert.ok(findOverlay(doc), '从弹窗里滑出去的这一下不该把弹窗关掉');
+});
+
+test('点遮罩：在弹窗内的输入框上按下、滑到遮罩上松开 → 同样不关', () => {
+  const { win, doc } = loadDialog();
+  win.DialogUtils.promptText({ title: 'T', label: 'L' });
+  const ov = findOverlay(doc);
+  pressOnThenClickOverlay(ov, findInput(ov));
+  assert.ok(findOverlay(doc), '选中输入框里的文字往外拖不该关掉弹窗');
+});
+
+test('点遮罩：按下与松开都在遮罩上 → 照旧关闭（既有契约不变）', async () => {
+  const { win, doc } = loadDialog();
+  const p = win.DialogUtils.promptText({ title: 'T' });
+  const ov = findOverlay(doc);
+  pressOnThenClickOverlay(ov, ov);
+  assert.strictEqual(await p, null, '真的点了遮罩还是要关');
+  assert.ok(!findOverlay(doc), '关闭后应移除弹窗');
+});
+
+test('点遮罩：双击的第二次点击不关（2026-09-22 复测 D-12）', () => {
+  const { win, doc } = loadDialog();
+  win.DialogUtils.promptText({ title: 'T' });
+  const ov = findOverlay(doc);
+  pressOnThenClickOverlay(ov, ov, { detail: 2 });
+  assert.ok(findOverlay(doc), 'detail>=2 不该当成「点遮罩取消」');
+});
+
+test('bindBackdropDismiss：overlay 为空或不是元素时静默跳过，不抛', () => {
+  const { win } = loadDialog();
+  const boom = () => { throw new Error('不该被调用'); };
+  win.DialogUtils.bindBackdropDismiss(null, boom);
+  win.DialogUtils.bindBackdropDismiss(undefined, boom);
+  win.DialogUtils.bindBackdropDismiss({}, boom);   // 没有 addEventListener
+});
+
+test('点遮罩：上一轮「按下在弹窗内」不污染下一轮真点遮罩', async () => {
+  const { win, doc } = loadDialog();
+  const p = win.DialogUtils.promptText({ title: 'T' });
+  const ov = findOverlay(doc);
+  pressOnThenClickOverlay(ov, findDialog(ov));   // 滑出去那一下：不关
+  assert.ok(findOverlay(doc), '第一下不该关');
+  pressOnThenClickOverlay(ov, ov);               // 紧接着真点遮罩：要关
+  assert.strictEqual(await p, null, '按下记录必须每轮清掉，否则遮罩再也点不动');
+});
+
 test('promptText：按 Esc 取消 → resolve null', async () => {
   const { win, doc } = loadDialog();
   const p = win.DialogUtils.promptText({ title: 'T' });

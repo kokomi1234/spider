@@ -11,6 +11,11 @@
 （无锁定）
 ```
 
+> 本轮锁定（2026-09-23 00:0x 起：修「在弹窗里长按、滑出弹窗范围松手 → 弹窗被当成点遮罩关掉」）
+> **已完成并解锁（00:15）**，见下面第一条交接记录；探针 `_fx-backdrop.js` 移入
+> `~/.Trash/spider-backdrop-probe-20260923-001538`。全程只起静态服务（`listen(0)`），
+> 未占 3000 / 3014，未起代理，未碰团队库与缓存报文。
+
 > 本轮锁定（2026-09-23 00:3x 起：把订阅页的「折行 + 点击复制 + 键盘漫游」抽成三页共用）
 > **已完成并解锁**，见下面第一条交接记录；探针 `_fx-copy.js` 移入
 > `~/.Trash/spider-fixprobes-20260922-223519`，临时实例 3044 已停。
@@ -56,6 +61,54 @@
 `.workbuddy/` 既有条目、`publish/tools/my-subscribed-services.txt`、`.env`）。
 
 ## 📝 交接记录（新在上）
+
+### [2026-09-23 00:15] 主会话 —— 修「在弹窗里长按、滑出弹窗范围松手」被当成点遮罩关闭（D-22）
+
+> 本机时钟此刻是 `00:15`；下面那两条 `00:1x / 00:5x` 是上一路会话自己写的时间标，没核过钟，
+> 所以顺序看着别扭，别按时间标推断先后 —— 按 git log 推。
+
+**用户原话**：「有个潜在的问题，如果我在弹窗页面长按滑出了弹窗范围，会关闭弹窗，因为他识别到我点击了弹窗外」。
+
+**根因（一句话）**：浏览器把 `click` 派发到 `mousedown` 与 `mouseup` 的**共同祖先**。在弹窗里按下
+（拖选一段文字、选输入框里的内容）、拖到遮罩上松手，`click.target` 就是 `.overlay` —— 而全站
+「点遮罩关闭」的 6 处判据都只有 `e.target === overlay`，于是这一下被认成「用户点了遮罩 = 取消」。
+
+**做了什么**：
+1. `js/ui/dialog-utils.js` 新增并导出 `bindBackdropDismiss(overlay, close)`：捕获阶段记下
+   `pointerdown` / `mousedown` 的 target，**只有按下那一下也在遮罩上**才认作点遮罩；
+   D-12 的「双击第二次不算」（`e.detail >= 2`）一并收进来，注释也搬过去了（原来写在 openUtilDialog 里）。
+   ⚠️ 一条容易改错的地方：**没观测到按下时必须放行**（`started === null`）。单测的假 DOM 只会
+   `element.click()`，不会先派发 mousedown。实测过：把判据收紧成 `started !== overlay`（要求必须观测到按下）
+   → `662/664`，红的正是两条既有契约 `promptText：点遮罩关闭 → resolve null`、`confirmBox：点遮罩 → 返回 false`。
+2. 6 处调用点统一换成它，各弹窗自己那份 `e.target === overlay` 删掉：
+   `dialog-utils.js`（openUtilDialog，即 Token 面板 / 命名框 / 放弃确认 / 首页删除确认）、
+   `detail-dialog.js`、`op-record-dialog.js`、`intf-detail-dialog.js`（这三处原来是**document 级**
+   监听里顺带判遮罩，现在拆成「按钮 id 归 document、遮罩归 overlay」两段）、
+   `subscribe-dialog.js`、`subscribe-ui.js`。
+3. `bootstrap.js` 四页 PRESETS 点名 `DialogUtils`（`bindBackdropDismiss` + `confirmBox`）。
+   理由：6 个调用点都写了 `if (window.DialogUtils)`，掉脚本时表现为「遮罩点不动 / 确认框不弹」，
+   **零报警**（与 D-10 同一个病）。`smoke-browser.js` 的 task / subscription 两页 globals 也补了 `DialogUtils`
+   （两页本来就引了 dialog-utils.js，只是没登记；顺带修掉 PAGES 上面那句"task.html 也没引 dialog-utils.js"的过时注释）。
+4. 冒烟新增常驻段「点遮罩 vs 弹窗内拖出」：三类弹窗各跑两组**真鼠标**手势（拖出不该关 / 真点遮罩要关），
+   输出 `点遮罩 vs 弹窗内拖出: PASS（3 类弹窗）`。
+
+**验证（这是本轮的重点，别只看门禁数字）**：
+- 真鼠标探针 13 项 **ALL PASS**；**变异跑**（只删掉 `if (started && started !== overlay) return;` 那一行）：
+  通用弹窗 / 订阅弹窗 / 服务详情弹窗三处「拖出不该关」**全部转 FAIL** —— 说明缺陷真实存在、探针不是空跑。
+- **一个反直觉的实测结论**：拖标题栏把弹窗挪出去、在遮罩上松手，**去掉防护也不会关** ——
+  `makeDraggable` 的 `setPointerCapture` 把 click 重定向到把手上了。所以用户踩到的手势是**拖选文字**，
+  不是拖标题栏。别照着"拖标题栏"去复现，会复现不出来。
+- 新增 6 条单测（`tests/boundary-ui.test.js`，含「上一轮的按下记录必须清掉，否则遮罩再也点不动」）。
+  **变异检验**：删防护 → `661/664`（红 3）；删 `detail >= 2` → `663/664`（红 1）。
+- 门禁原话：`664/664 通过`；`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**没做 / 下一步**：
+- `js/ui/date-picker.js:552` 的「点外面关面板」是同一类判据（只判 `click.target`），从日历里拖选到面板外
+  松手会关掉日期面板。**本轮没动**：不丢数据（已选值还在），且 `searchable-select` / `multi-select`
+  早就用 `mousedown` 判据，只有日期选择器是 `click`。要不要一并按同样口径改，等你点头。
+- 上一轮遗留未变：解释性 `title`（优先级为什么紧急 / 订阅按钮置灰原因 / 清除选择）仍等 §1 口径；
+  订阅页的点击复制仍只验到"脚本装载 + 样式成套"，下次连内网顺手点一次。
+- 你自己的 3000 代理要重启才看得到这批改动；3014 那个实例（你说是忘关的）我没动，还在跑。
 
 ### [2026-09-23 00:5x] 主会话 —— 订阅页那套「折行 + 点击复制 + 键盘漫游」抽成三页共用，22 处内容 title 删掉
 

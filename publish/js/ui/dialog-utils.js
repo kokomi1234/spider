@@ -11,6 +11,7 @@
  *   DialogUtils.unlockScroll()            关闭弹窗时调用（计数归零才真正解锁）
  *   DialogUtils.forceUnlockAll()         兜底：关闭最外层弹窗时一次性解锁
  *   DialogUtils.makeDraggable(dialog, handle)  让标题栏可以拖动整个弹窗
+ *   DialogUtils.bindBackdropDismiss(overlay, close)  「点遮罩空白处关闭」（含误判防护）
  *   DialogUtils.openUtilDialog(cfg)       通用弹窗骨架（promptText / confirmBox 都基于它）
  *   DialogUtils.promptText(opts)          替代 window.prompt
  *   DialogUtils.confirmBox(opts)          替代 window.confirm
@@ -203,6 +204,52 @@
   }
 
   // ═══════════════════════════════════════════════════
+  // 点遮罩关闭（全站弹窗统一走这里）
+  // ═══════════════════════════════════════════════════
+
+  /**
+   * 给遮罩挂「点空白处关闭」，并挡掉两类误判。
+   *
+   * ① 在弹窗里按下、把指针滑到遮罩上再松开 ≠ 点遮罩。
+   *    浏览器把 click 派发到 mousedown 与 mouseup 的**共同祖先**，所以这种手势的
+   *    click.target 正好就是 overlay —— 只判 `e.target === overlay` 的话，
+   *    「长按选中弹窗里的一段文字 / 输入框里的内容，往外拖着松手」就会把弹窗关掉，
+   *    填了一半的表单直接没了（2026-09-23 用户报，真鼠标实测三类弹窗都能复现）。
+   *    所以要求**按下那一下也在遮罩上**。弹窗内部的按下同样会被这里收到（捕获阶段），
+   *    不需要各弹窗自己判。
+   *    注：拖标题栏挪弹窗那条路本来就关不掉 —— makeDraggable 用 setPointerCapture
+   *    把 click 重定向到把手上了；真鼠标变异实测（去掉本防护）也只有①会关。
+   *
+   * ② 双击的**第二次**点击不认作「点遮罩 = 取消」：用户双击「查 询」时，第一次点击
+   *    同步把框弹出来、第二次正好落在遮罩上，于是变成「打开 → 立刻取消」，界面闪一下
+   *    什么都没发生（2026-09-22 复测 D-12：手快的用户每天都在踩这条）。
+   *    用 `detail`（浏览器给同一次连击的计数）而不是时间窗 —— 时间窗会把既有契约
+   *    「点遮罩关闭」的单测挂死（假 DOM 里 click 是立刻发生的，实测少跑 215 条）。
+   *
+   * 没观测到按下（单测的合成 click、键盘激活）时按旧契约放行，
+   * 否则「点遮罩关闭」这条既有行为会在假 DOM 里静默失效。
+   *
+   * @param {HTMLElement} overlay 遮罩元素（.overlay）
+   * @param {Function} close 关闭回调（不收事件对象，免得被当成参数传下去）
+   */
+  function bindBackdropDismiss(overlay, close) {
+    if (!overlay || typeof overlay.addEventListener !== 'function') return;
+    let downTarget = null;   // 这一轮按下落在哪；null = 压根没观测到按下
+
+    const onDown = (e) => { downTarget = (e && e.target) || null; };
+    overlay.addEventListener('pointerdown', onDown, true);
+    overlay.addEventListener('mousedown', onDown, true);   // 老 Safari / 无 Pointer Events
+    overlay.addEventListener('click', (e) => {
+      const started = downTarget;
+      downTarget = null;
+      if (!e || e.target !== overlay) return;
+      if (started && started !== overlay) return;   // 从弹窗里滑出来的，不是点遮罩
+      if (e.detail >= 2) return;                    // 双击的第二次（D-12）
+      close();
+    });
+  }
+
+  // ═══════════════════════════════════════════════════
   // 通用输入 / 确认弹窗（替代 window.prompt / window.confirm）
   // ═══════════════════════════════════════════════════
   // 为什么不用原生：① 样式与全站弹窗不一致，且没法加标题/多行说明；
@@ -294,14 +341,8 @@
       }
     }
 
-    // ⚠️ 双击的**第二次**点击不认作「点遮罩 = 取消」：用户双击「查 询」时，第一次点击同步把
-    //   框弹出来、第二次正好落在遮罩上，于是变成「打开 → 立刻取消」，界面闪一下什么都没发生
-    //   （2026-09-22 复测 D-12：手快的用户每天都在踩这条）。
-    //   用 `detail`（浏览器给同一次连击的计数）而不是时间窗 —— 时间窗会把既有契约
-    //   「点遮罩关闭」的单测挂死（假 DOM 里 click 是立刻发生的，实测少跑 215 条）。
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay && !(e.detail >= 2)) done(null);
-    });
+    // 点遮罩 = 取消（误判防护见 bindBackdropDismiss）
+    bindBackdropDismiss(overlay, () => done(null));
     document.addEventListener('keydown', onKey, true);
 
     dialog.append(head, body, foot);
@@ -393,6 +434,7 @@
       unlockScroll,
       forceUnlockAll,
       makeDraggable,
+      bindBackdropDismiss,
       openUtilDialog,
       promptText,
       confirmBox,
