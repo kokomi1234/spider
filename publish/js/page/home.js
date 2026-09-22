@@ -111,7 +111,13 @@
     badge.className = 'saved-badge';
     badge.textContent = (window.SavedQuery && window.SavedQuery.PAGES[item.page]) || item.page;
     const nameText = document.createElement('span');
-    nameText.textContent = item.name;
+    // 部门榜（titleFromLabels）的标题**只认筛选条件**，不认个人起的名字：
+    // 否则有人改个名，整个部门的榜单都跟着变（2026-09-22 用户报）。
+    // labels 为空（没填任何条件）时退回 name —— 那种记录本来就没"条件"可拼。
+    const condTitle = o.titleFromLabels && window.SavedQuery
+      && typeof window.SavedQuery.nameFromLabels === 'function'
+      ? window.SavedQuery.nameFromLabels(item.labels) : '';
+    nameText.textContent = condTitle || item.name;
     nameRow.appendChild(badge);
     nameRow.appendChild(nameText);
     main.appendChild(nameRow);
@@ -698,7 +704,7 @@
       console.error('[home] 读取部门常用查询失败：', e);
     }
 
-    items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true })));
+    items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true, titleFromLabels: true })));
 
     const empty = items.length === 0;
     deptEmptyEl.hidden = !empty;
@@ -732,7 +738,7 @@
     if (!r || !r.ok || !Array.isArray(r.items)) return;   // 失败就保留本机渲染的结果
 
     clear(deptListEl);
-    r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true })));
+    r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true, titleFromLabels: true })));
     const empty = r.items.length === 0;
     deptEmptyEl.hidden = !empty;
     if (empty) {

@@ -239,3 +239,37 @@ testOrSkip('queries-db：部门排行按衰减分数 —— 1 人刚用的压过
   assert.ok(top2[0].score > 1, `用了一次应有约 1 票的加分，实际 ${top2[0].score}`);
   s.close();
 });
+
+testOrSkip('queries-db：同一份条件 + 同一个人只留一条（改名/认领攒的重复会被归并）', () => {
+  // 2026-09-22 用户报：改个名同条件就多出一条；匿名保存被认领后也多一条。
+  // 旧判重比的是名字，库里已经攒下重复 —— 服务端在这一层兜住并顺手归并。
+  const s = freshStore();
+  const mk = (id, name, owner) => ({
+    id, page: 'publish', name, summary: '', fields: COND, labels: {}, owner,
+    at: Date.now(), hits: 0, saves: 1,
+  });
+  s.upsert([mk('a', '原名', A)], []);
+  assert.strictEqual(s.all().length, 1);
+  s.upsert([mk('b', '改过的名', A)], []);
+  const rows = s.all();
+  assert.strictEqual(rows.length, 1, '同一份条件 + 同一个人只该有一条');
+  assert.strictEqual(rows[0].name, '改过的名', '名字用最新提交的那份');
+  s.close();
+});
+
+testOrSkip('queries-db：归并不误伤别人 —— 别人也存过的行不动', () => {
+  const s = freshStore();
+  const mk = (id, owner) => ({
+    id, page: 'publish', name: '同一条件', summary: '', fields: COND, labels: {}, owner,
+    at: Date.now(), hits: 0, saves: 1,
+  });
+  s.upsert([mk('a', A)], []);
+  s.upsert([mk('b', B)], []);
+  assert.strictEqual(s.all().length, 2, '不同人各自一条（部门榜靠聚合，不靠共用一条）');
+  // A 又提交同条件（换了 id、名字）→ 只并进 A 自己那条，B 那条不许动
+  s.upsert([{ ...mk('c', A), name: 'A 改的名字' }], []);
+  const rows = s.all();
+  assert.strictEqual(rows.length, 2, '还是两条');
+  assert.ok(rows.some((r) => r.name === 'A 改的名字'), 'A 那条被更新');
+  s.close();
+});

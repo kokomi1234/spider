@@ -1358,6 +1358,18 @@ server.listen(PORT, HOST, () => {
   console.log(`   Token：${TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)'}`);
   console.log(`   模式：${OFFLINE_REFRESHED ? '🟡 纯离线回放（PROXY_OFFLINE=1）' : '🟢 真实转发 + 自动录制，失败回退缓存'}`);
   console.log(`   🔑 .env 位置：${envPath}（前端「Token 管理」写入此处；可用 PROXY_ENV_PATH 改）`);
+  // 「同一份条件 + 同一个人」的历史重复归并一次（2026-09-22）：
+  // 旧的判重比的是名字，改名 / 认领攒下的重复不会自己消失 —— 启动时扫一遍收干净。
+  // 只删「仅属于这一个人」的重复行，别人也存过的行不动。
+  try {
+    const st = getQueriesStore();
+    if (st && typeof st.dedupeAll === 'function') {
+      const d = st.dedupeAll();
+      if (d && d.removed) console.log(`   🧹 已归并 ${d.removed} 条旧记录（同一个人重复保存了同一份条件）`);
+    }
+  } catch (e) {
+    console.log(`   ⚠️ 归并历史重复失败（不影响运行）：${(e && e.message) || e}`);
+  }
   if (!OFFLINE_REFRESHED) {
     console.log(`   转发超时：${TIMEOUT}ms（PROXY_TIMEOUT 可调）`);
     if (!TOKEN_REFRESHED) {

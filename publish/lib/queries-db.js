@@ -188,6 +188,23 @@ function open(file) {
   const selAll = db.prepare('SELECT * FROM saved_queries WHERE id NOT IN (SELECT query_id FROM saved_query_tombstones)');
   const selSaversOf = db.prepare('SELECT * FROM saved_query_savers WHERE query_id = ? ORDER BY saved_at ASC');
   const deptTotal = db.prepare('SELECT COUNT(DISTINCT user_key) AS c FROM saved_query_savers');
+  // ── 同一份条件 + 同一个人 = 同一条（2026-09-22）────────────────────
+  // 以前判重比的是**名字**：改个名就多出一条，匿名保存被认领后也多出一条。
+  // 这两条语句用于 upsert 里归并（一条找"该并到哪"，一条列"这个条件下的所有行"）。
+  const selSameByFp = db.prepare(`
+    SELECT q.id AS id
+    FROM saved_queries q
+    JOIN saved_query_savers s ON s.query_id = q.id
+    WHERE q.fingerprint = ? AND q.fingerprint <> '' AND s.user_key = ?
+    ORDER BY q.updated_at DESC LIMIT 1
+  `);
+  const selRowsByFp = db.prepare(`
+    SELECT q.id AS id, q.hits AS hits, q.saves AS saves, q.updated_at AS updated_at
+    FROM saved_queries q
+    WHERE q.fingerprint = ?
+    ORDER BY q.updated_at DESC
+  `);
+  const updQueryCounts = db.prepare('UPDATE saved_queries SET hits = MAX(hits, ?), saves = MAX(saves, ?) WHERE id = ?');
 
   const TOMB_KEEP_MS = 30 * 24 * 3600 * 1000;   // 与前端/旧 JSON 实现一致：墓碑留 30 天
 
@@ -259,25 +276,66 @@ function open(file) {
           if (!it || typeof it !== 'object' || !it.id || !it.page) return;
           const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
           const at = num(it.at, now) || now;
+          const uk = userKeyOf(owner);
+          const fp = fingerprintOf(it);
+          // 同条件 + 同人已有记录 → **并到它上面**（用它的 id），而不是新增一条。
+          // 前端已经按同一口径判过了，这里再兜一层：前端镜像可能陈旧、或那次提交
+          // 根本没带上老记录（2026-09-22 用户报的两个重复来源正是这两类）。
+          let id = String(it.id);
+          if (fp && uk) {
+            const hit = selSameByFp.get(fp, uk);
+            if (hit && hit.id) id = String(hit.id);
+          }
           insQuery.run(
-            String(it.id), String(it.page), String(it.name || '未命名查询'),
+            id, String(it.page), String(it.name || '未命名查询'),
             String(it.summary || ''),
             JSON.stringify(it.fields && typeof it.fields === 'object' ? it.fields : {}),
             JSON.stringify(it.labels && typeof it.labels === 'object' ? it.labels : {}),
-            fingerprintOf(it),
+            fp,
             num(it.hits, 0), Math.max(1, num(it.saves, 1)),
             at, num(it.at, at), num(it.lastAt, 0),
           );
-          const uk = userKeyOf(owner);
           if (uk) {
             insSaver.run(
-              String(it.id), uk,
+              id, uk,
               String(owner.userId || ''), String(owner.userName || uk),
               String(owner.teamId || ''), String(owner.teamName || ''),
               String(owner.orgId || ''), String(owner.orgName || ''),
               deptKeyOf(owner), at,
             );
           }
+        });
+        // 归并历史重复：同一份条件 + 同一个人只留一条。
+        // 旧判重按名字，改名/认领时攒下的重复就在库里；这里对「本批涉及的 fingerprint」
+        // 顺手收干净（不额外扫全库）。计数取 MAX 而不是累加 —— 累加会把"存了 3 次"
+        // 算成 6 次，虚高。只删「仅属于这一个人」的重复行，别人也存过的行不动。
+        const touchedFp = new Set();
+        (Array.isArray(items) ? items : []).forEach((it) => {
+          const fp = fingerprintOf(it);
+          if (fp) touchedFp.add(fp);
+        });
+        touchedFp.forEach((fp) => {
+          const rows = selRowsByFp.all(fp);
+          const byUser = new Map();   // user_key → 该人在这个条件下的行（已按 updated_at 降序）
+          rows.forEach((r) => {
+            selSaversOf.all(r.id).forEach((s) => {
+              if (!byUser.has(s.user_key)) byUser.set(s.user_key, []);
+              byUser.get(s.user_key).push(r);
+            });
+          });
+          byUser.forEach((list) => {
+            if (list.length < 2) return;
+            const keep = list[0];                                  // 最近更新的那条留下
+            updQueryCounts.run(num(keep.hits, 0), num(keep.saves, 1), keep.id);
+            list.slice(1).forEach((dup) => {
+              if (dup.id === keep.id) return;
+              if (selSaversOf.all(dup.id).length > 1) return;      // 别人也存过 → 不动它
+              updQueryCounts.run(num(dup.hits, 0), num(dup.saves, 1), keep.id);
+              delSavers.run(dup.id);
+              delUses.run(dup.id);
+              delQuery.run(dup.id);
+            });
+          });
         });
         (Array.isArray(deletedIds) ? deletedIds : []).forEach((id) => {
           const key = String(id || '');
@@ -294,6 +352,62 @@ function open(file) {
         throw e;   // 如实抛给调用方 → 代理回 400/500，前端角标显示失败，而不是"成功但数据不全"
       }
       return { items: this.all(), deleted: this.tombstones() };
+    },
+
+    /**
+     * 全库归并「同一份条件 + 同一个人」的历史重复（2026-09-22）。
+     *
+     * 由代理启动时调一次。为什么要专门扫一遍：旧的判重比的是**名字**，
+     * 改名 / 匿名保存被认领都会攒下重复；upsert 里的归并只在"这份条件又被保存时"
+     * 才收敛 —— 用户不动它，重复就一直摆在首页上（用户截图里那条改名留下的"2"就是）。
+     *
+     * 安全性：只删「**仅属于这一个人**」的重复行；别人也存过的行一字不动
+     *（那种是两个人各存了一份，部门榜靠聚合，不该合并）。
+     *
+     * @returns {{removed:number}} 归并掉的行数
+     */
+    dedupeAll() {
+      const rows = db.prepare(
+        "SELECT id, fingerprint, hits, saves, updated_at FROM saved_queries WHERE fingerprint <> ''",
+      ).all();
+      const byFp = new Map();
+      rows.forEach((r) => {
+        if (!byFp.has(r.fingerprint)) byFp.set(r.fingerprint, []);
+        byFp.get(r.fingerprint).push(r);
+      });
+      let removed = 0;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        byFp.forEach((list) => {
+          if (list.length < 2) return;
+          const byUser = new Map();   // user_key → 该人在这个条件下的行
+          list.forEach((r) => {
+            selSaversOf.all(r.id).forEach((sv) => {
+              if (!byUser.has(sv.user_key)) byUser.set(sv.user_key, []);
+              byUser.get(sv.user_key).push(r);
+            });
+          });
+          byUser.forEach((dups) => {
+            if (dups.length < 2) return;
+            dups.sort((a, b) => (num(b.updated_at, 0) - num(a.updated_at, 0)) || String(a.id).localeCompare(String(b.id)));
+            const keep = dups[0];                       // 最近更新的那条留下
+            dups.slice(1).forEach((d) => {
+              if (d.id === keep.id) return;
+              if (selSaversOf.all(d.id).length > 1) return;   // 别人也存过 → 不动
+              updQueryCounts.run(num(d.hits, 0), num(d.saves, 1), keep.id);
+              delSavers.run(d.id);
+              delUses.run(d.id);
+              delQuery.run(d.id);
+              removed += 1;
+            });
+          });
+        });
+        db.exec('COMMIT');
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch (_) { /* 已经回滚掉了 */ }
+        throw e;
+      }
+      return { removed };
     },
 
     /**

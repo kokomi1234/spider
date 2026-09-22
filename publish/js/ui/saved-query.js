@@ -327,6 +327,44 @@
   }
 
   /**
+   * 这两条是不是**同一份查询**（保存判重、同步合并都用它）。
+   *
+   * 2026-09-22 用户报：把常用查询改个名，同一个查询就**多出一条**；匿名保存的认领之后
+   * 也会多出一条。根因就是判重比的是**名字** —— 名字是用户随手改的、不是身份。
+   * 正确的判据是「同一份筛选条件 + 同一个人」：
+   *   · id 相同 → 同一条（同步回来的老数据可能 id 对得上）
+   *   · fingerprint 相同（同一页面 + 同一套条件）且归属人相同 → 同一条
+   *   · 什么条件都没填时 fingerprint 是空串 → 退回「同页同名同人」的老口径
+   *    （空条件没有"同一份查询"可言，本来就该各自独立）
+   */
+  function sameQuery(a, b) {
+    if (!a || !b) return false;
+    if (a.id && b.id && a.id === b.id) return true;
+    if (a.page !== b.page) return false;
+    if (userKeyOf(a.owner) !== userKeyOf(b.owner)) return false;
+    const fa = fingerprintOf(a);
+    const fb = fingerprintOf(b);
+    if (fa && fb) return fa === fb;
+    return a.name === b.name;
+  }
+
+  /**
+   * 由**筛选条件**拼一个名字（部门榜的标题用它）。
+   *
+   * 为什么需要：部门高频榜是按「同一份条件」聚合出来的，但代表行的 `name` 是
+   * **个人保存时起的**（还可能被本人改过）—— 谁改了名，整个部门的榜单标题都跟着变
+   *（2026-09-22 用户报）。条件本身才是这份查询的身份，所以榜单标题只认 labels。
+   * labels 为空（没填任何条件）时返回空串，调用方自己退回 name。
+   */
+  function nameFromLabels(labels) {
+    const o = cleanLabels(labels);
+    return Object.keys(o)
+      .map((k) => String(o[k] || '').trim())
+      .filter(Boolean)
+      .join(' ');
+  }
+
+  /**
    * 某个部门的常用查询排行（**本机口径**：只统计这台浏览器上能看到的记录）。
    *
    * 排序口径（2026-09-19 改）：**先看有多少人保存过这份条件，再看时间**。
@@ -630,8 +668,10 @@
     // ── 本地兜底路径（离线 / 服务端失败 / 没有归属人）──
     const serverTried = canSync() && !!myKey;   // true = 服务端试过但失败，提示语要说「仅本机」
     const items = list();
-    const exists = items.find((it) => it.page === page && it.name === title
-      && userKeyOf(it.owner) === myKey);
+    // 判重按「同一份筛选条件 + 同一个人」（sameQuery），**不是**按名字 ——
+    // 否则用户一改名就等于又存了一条（2026-09-22 报的）。
+    const probe = { page, name: title, fields: cleanedFields, owner: ownerInfo };
+    const exists = items.find((it) => sameQuery(it, probe));
     const item = {
       id: exists ? exists.id : newId(),
       page,
@@ -672,8 +712,9 @@
   async function saveToServer({ page, title, cleanedFields, summary, labels, ownerInfo, myKey }) {
     const mine = await mineFromServer(ownerInfo);
     if (!mine.ok) return { ok: false, error: mine.error };
-    const exists = mine.items.find((it) => it.page === page && it.name === title
-      && userKeyOf(it.owner) === myKey);
+    // 与本地兜底同一套判据：同条件 + 同人 = 同一条（改名不该产生新记录）
+    const probe = { page, name: title, fields: cleanedFields, owner: ownerInfo };
+    const exists = mine.items.find((it) => sameQuery(it, probe));
     const item = {
       id: exists ? exists.id : newId(),
       page,
@@ -876,9 +917,7 @@
     let added = 0;
     let merged = 0;
     (incoming || []).forEach((inc) => {
-      const same = items.find((it) => it.id === inc.id
-        || (it.page === inc.page && it.name === inc.name
-          && userKeyOf(it.owner) === userKeyOf(inc.owner)));
+      const same = items.find((it) => sameQuery(it, inc));
       if (same) {
         same.hits = Math.max(same.hits || 0, inc.hits || 0);
         same.saves = Math.max(same.saves || 1, inc.saves || 1);
@@ -1299,6 +1338,8 @@
     userKeyOf,
     saverKeysOf,
     fingerprintOf,
+    sameQuery,
+    nameFromLabels,
     exportJson,
     exportJsonAsync,
     importJson,

@@ -90,15 +90,46 @@ test('saved-query：fields 只收 string / number / string[]，对象与 null �
     '对象/null/空串/NaN/Infinity 都不该进入 fields（它会被回填进表单）');
 });
 
-test('saved-query：同名同页视为更新 —— 不重复堆积、保留原 id', async () => {
+test('saved-query：同一份条件重复保存 → 更新，不重复堆积、保留原 id', async () => {
   const S = load(fakeStorage());
-  const a = (await S.save({ page: 'publish', name: '同名', fields: { x: '1' } }));
-  const b = (await S.save({ page: 'publish', name: '同名', fields: { x: '2' } }));
+  const a = (await S.save({ page: 'publish', name: '第一次起的名字', fields: { x: '1' } }));
+  const b = (await S.save({ page: 'publish', name: '第一次起的名字', fields: { x: '1' } }));
   assert.strictEqual(b.ok, true);
-  assert.strictEqual(b.item.id, a.item.id, '更新应复用原 id，否则首页会存下一堆同名卡片');
+  assert.strictEqual(b.item.id, a.item.id, '同一份条件应复用原 id，否则首页会堆一串卡片');
   assert.strictEqual(b.updated, true);
-  assert.strictEqual(S.list().length, 1, '不该出现两条同名记录');
-  assert.strictEqual(S.list()[0].fields.x, '2', '应覆盖为最新条件');
+  assert.strictEqual(S.list().length, 1, '不该出现两条');
+  assert.ok((S.list()[0].saves || 1) >= 2, '「保存次数」要累加 —— 高频榜看它');
+});
+
+test('saved-query：改了名字再保存 → 还是同一条（2026-09-22 用户报的重复来源之一）', async () => {
+  // 现场：把常用查询改个名，同一个查询就多出一条。
+  // 根因是判重比的是**名字**，而名字是用户随手改的 —— 判据该是「同一份筛选条件 + 同一个人」。
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '原名', fields: { x: '1' }, owner: OWNER_A }));
+  const b = (await S.save({ page: 'publish', name: '改过的名', fields: { x: '1' }, owner: OWNER_A }));
+  assert.strictEqual(b.item.id, a.item.id, '改名字不该产生新记录');
+  assert.strictEqual(b.updated, true);
+  assert.strictEqual(S.list().length, 1);
+  assert.strictEqual(S.listForUser(OWNER_A)[0].name, '改过的名', '名字要跟着更新');
+});
+
+test('saved-query：同一份条件换个人存 → 各自一条（部门榜靠聚合，不靠共用一条）', async () => {
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '同一条件', fields: { x: '1' }, owner: OWNER_A }));
+  const b = (await S.save({ page: 'publish', name: '同一条件', fields: { x: '1' }, owner: OWNER_B }));
+  assert.notStrictEqual(b.item.id, a.item.id, '不同人各自一条，谁也别改到谁');
+  assert.strictEqual(b.updated, false);
+  assert.strictEqual(S.list().length, 2);
+});
+
+test('saved-query：什么条件都没填时不按条件归并（空条件各自独立）', async () => {
+  // fingerprint 为空串表示"没有筛选条件可归并"，退回同页同名同人
+  const S = load(fakeStorage());
+  const a = (await S.save({ page: 'publish', name: '空条件', fields: {} }));
+  const b = (await S.save({ page: 'publish', name: '空条件', fields: {} }));
+  assert.strictEqual(b.item.id, a.item.id, '空条件 + 同名同人 → 仍是更新');
+  const c = (await S.save({ page: 'publish', name: '另一个名字', fields: {} }));
+  assert.notStrictEqual(c.item.id, a.item.id, '空条件 + 不同名 → 各自一条');
 });
 
 test('saved-query：同名同页但换了个人 → 新建一条，不复用别人的 id（2026-09-20 回归）', async () => {
