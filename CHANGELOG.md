@@ -67,6 +67,53 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-23 00:45] 主会话 —— 发布 stable-20260923 + 出交付包
+
+**用户原话**：「这个版本打包一下」，并选了「完整发布再打包」。
+
+**发布动作（按 AGENTS.md §0.5，一条没省）**：
+`git fetch origin main` → `git checkout main` → `git reset --hard origin/main`
+（本地 main 停在 `762f97b`，落后远端 64 个提交 —— 远端有 PR #3 `f6c0792`，果然得重置）
+→ `git merge dev --no-edit`（**不带 `--ff-only`**）→ 合并提交 **`e621511`**，
+核对 `main^{tree}` == `dev^{tree}`：**逐字节相同** → 在 main 上复跑门禁 → `git tag -a stable-20260923`
+（标签对象 `341b29a`，指向提交 `e621511`；⚠️ `git rev-parse <tag>` 给的是标签对象，不是提交）
+→ push：`f6c0792..e621511 main -> main`、`* [new tag] stable-20260923`、`dev` 已同步（`Everything up-to-date`）
+→ 切回 `dev`。**未 force-push、未 rebase。**
+
+**门禁原话（在 main 上实跑）**：
+- `node tests/run.js` → `664/664 通过`
+- `node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`
+- 时区矩阵（单测，D-21 那条修复要求）：`TZ=UTC` / `Asia/Shanghai` / `Pacific/Kiritimati` /
+  `America/New_York` → 均 `664/664 通过`
+
+**交付包（外层 `/Users/a1/Desktop/spider/`，那里不是 git 仓库、专放交付物）**：
+- `spider-stable-e621511-20260923.zip` —— **256 个文件、4.3 MB**，`git checkout-index -a -f --prefix=/tmp/pkg_src/`
+  铺树 + Python `zipfile`（**别用 `git archive`**：中文名不带 UTF-8 标志位，macOS `unzip` 会写盘失败）
+- `spider-history-e621511-20260923.bundle` —— 5.0 MB，`git bundle verify` → `The bundle records a complete history.`
+- `spider-workbuddy-memory-20260923.tar.gz` —— 123 KB（`.workbuddy/` 不在 git 里，这是它唯一的离线备份）
+
+**验收（真解压，不是只看包能列条目）**：解到 `/tmp/pkg_verify` → 文件数 **256**，与 `git ls-files` 一致 →
+中文文件名抽查 12 个全部正常（`analysis/output/ITAMP接口总览.md`、`docs/前端与代理复测报告-20260922.md`、
+`docs/archive/前端用户体验评估报告.html` 等）→ **在解压目录里复跑门禁**：`664/664 通过` +
+`==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+
+**这一版包含**（相对 `stable-20260921` = `762f97b`，72 个提交；完整分组写在标签信息里，`git tag -l -n100 stable-20260923` 可看）：
+Token 按人 + 只存本机、常用查询按人/分键、表格「折行+点击复制+键盘漫游」三页共用、
+D-22 弹窗拖选不再误关、日期面板改 mousedown 判据、D-21 token 过期线按北京时间、
+发布页 CHECKOUT/CHECKIN 与 operationType 映射 5→50 条、部门高频指数衰减、代理层超时/热更/日志、
+五路复测报告与其后 12 条收口。
+
+**已知未验证项（内网接口在开发机不可达，只能上内网验；也写进标签信息了）**：
+`/task` 提交成功态、弹窗内切行刷新、20s/22s 超时是否够用、`sysServeNoList` 形态、
+「接口明细」请求体 `sysServeNo` 的形态（形态若错则弹窗整表为空且不报错）、
+订阅页数据格「点击复制」需内网点一次；D-22 与日期面板两处手势只有真鼠标探针 + 冒烟证据，**用户尚未亲自走查**。
+
+**旁注**：外层目录里 `spider-stable-762f97b-20260921.zip` / 同名 bundle 已不在原位，
+在 `~/.Trash/` 里（不是本轮动的，本轮只**新增**三个交付件，没删没覆盖任何旧包）。
+
+**下一步给谁**：无锁定。`main` 停在 `e621511`（= tag），本条发版记录只落在 `dev` 上，
+下次发布才带进 `main`（AGENTS.md §0.5 的既有事实）。
+
 ### [2026-09-23 00:33] 主会话 —— 日期面板「点外面收起」也改成 mousedown 判据（D-22 同源第二处）
 
 **用户原话**：「把日期选择器也一起改掉」（承接上一条 D-22）。
