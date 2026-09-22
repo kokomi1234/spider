@@ -115,9 +115,14 @@
     // 否则有人改个名，整个部门的榜单都跟着变（2026-09-22 用户报）。
     // labels 为空（没填任何条件）时退回 name —— 那种记录本来就没"条件"可拼。
     const condTitle = o.titleFromLabels && window.SavedQuery
-      && typeof window.SavedQuery.nameFromLabels === 'function'
+      && typeof window.SavedQuery.condNameOf === 'function'
       ? window.SavedQuery.condNameOf(item) : '';
-    nameText.textContent = condTitle || item.name;
+    // 标题统一过一遍 shortCode：把「E00301-互联网金融服务平台-BOCNET-G-IFS」显示成
+    // 「BOCNET-G-IFS」（2026-09-22 用户要求）。**只影响显示** —— 记录里存的、重命名弹窗里
+    // 显示的仍是完整名字；对不含这种编码的名字（"27年6月独立"、用户自己起的）原样返回。
+    const shortOf = window.SavedQuery && typeof window.SavedQuery.shortCode === 'function'
+      ? window.SavedQuery.shortCode : ((t) => t);
+    nameText.textContent = shortOf(condTitle || item.name);
     nameRow.appendChild(badge);
     nameRow.appendChild(nameText);
     main.appendChild(nameRow);

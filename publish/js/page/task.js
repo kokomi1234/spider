@@ -514,20 +514,30 @@
    * 摘要是给首页卡片上的人看的，写「2611批次 / 需求」而不是内部编码；
    * 只有拿不到 label 时才回落到编号本身。
    */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function collectSavedLabels(fields) {
     const labels = {};
     const ss = { t_leadDept: deptSelect, t_projectType: projectTypeSelect, t_reviewerRole: reviewerRoleSelect };
     Object.keys(ss).forEach((id) => {
       if (!fields[id]) return;
       const t = (ss[id] && typeof ss[id].getLabel === 'function')
-        ? String(ss[id].getLabel() || '').trim() : '';
+        ? sc(String(ss[id].getLabel() || '').trim()) : '';
       if (t) labels[id] = t;
     });
     const ms = { msel_batch: multiSelects.batch, msel_classify: multiSelects.classify };
     Object.keys(ms).forEach((id) => {
       if (!fields[id]) return;
       const arr = (ms[id] && typeof ms[id].getLabels === 'function')
-        ? ms[id].getLabels().filter(Boolean) : [];
+        ? ms[id].getLabels().map((x) => sc(String(x))).filter(Boolean) : [];
       if (arr.length) labels[id] = arr.join('、');
     });
     return labels;

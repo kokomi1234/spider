@@ -612,10 +612,22 @@
   }
 
   /** 每个条件的人类可读文本（存进记录，首页以后改版式不用重新解析编号） */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function snapshotLabels(fields) {
     const out = {};
     SNAPSHOT_IDS.forEach((id) => {
-      if (fields[id]) out[id] = displayTextFor(id, fields[id]);
+      // 用 shortCode 把「E00301-互联网金融服务平台-BOCNET-G-IFS」这类长编码截成尾部
+      // 英文编码（2026-09-22 用户要求）—— labels 是给人看的，留着编号+中文只是占地方。
+      if (fields[id]) out[id] = sc(displayTextFor(id, fields[id]));
     });
     return out;
   }
@@ -679,7 +691,7 @@
     // 也是用户口头描述时最自然的顺序。
     const suggest = ['f_prodBatch', 'f_provideSystemNumber']
       .filter((id) => fields[id])
-      .map((id) => displayTextFor(id, fields[id]))
+      .map((id) => sc(displayTextFor(id, fields[id])))
       .join(' ');
 
     let name = '';

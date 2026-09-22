@@ -361,6 +361,32 @@
    * labels 为空（没填任何条件）时返回空串，调用方自己退回 name。
    */
   /**
+   * 把「编号-中文名-英文编码」这种长编码截成**尾部那段英文编码**。
+   *
+   * 用户 2026-09-22 报：「E00301-互联网金融服务平台-BOCNET-G-IFS 命名太长了，
+   * 截断一下 BOCNET-G-IFS 这个就行，前面的编号和中文都不要」。
+   *
+   * 规则：按 `-` 分段，从**末尾往前**连续取「只含大写字母/数字」的段，遇到中文或小写就停。
+   *   E00301-互联网金融服务平台-BOCNET-G-IFS                      → BOCNET-G-IFS
+   *   E00406-网上银行服务前端-海外个人手机银行客户端-BOCNETC-O-MAPSN → BOCNETC-O-MAPSN
+   *   27年6月独立（没有英文编码）                                   → 原样返回
+   * 取不到就原样返回 —— 宁可长一点，也不要把人家填的值弄成空的。
+   */
+  function shortCode(text) {
+    const s = String(text == null ? '' : text).trim();
+    if (!s || s.indexOf('-') < 0) return s;
+    const parts = s.split('-');
+    const keep = [];
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+      const p = parts[i].trim();
+      if (!p || !/^[A-Z0-9]+$/.test(p)) break;   // 含中文 / 小写 / 空 → 到头了
+      keep.unshift(p);
+      if (i === 0) break;
+    }
+    return keep.length ? keep.join('-') : s;
+  }
+
+  /**
    * 部门榜的**标题**：优先用「保存时由条件生成的默认名」（autoName），
    * 老记录没有这个字段就退回摘要前 30 字，再退回 labels 拼。
    *
@@ -371,10 +397,10 @@
    */
   function condNameOf(item) {
     const own = String((item && (item.autoName || item.auto_name)) || '').trim();
-    if (own) return own;
+    if (own) return shortCode(own);
     const sum = String((item && item.summary) || '').trim();
-    if (sum) return sum.slice(0, 30);
-    return nameFromLabels(item && item.labels);
+    if (sum) return shortCode(sum.slice(0, 30));
+    return shortCode(nameFromLabels(item && item.labels));
   }
 
   function nameFromLabels(labels) {
@@ -1366,6 +1392,7 @@
     sameQuery,
     nameFromLabels,
     condNameOf,
+    shortCode,
     exportJson,
     exportJsonAsync,
     importJson,

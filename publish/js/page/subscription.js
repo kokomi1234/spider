@@ -795,18 +795,28 @@
    * 摘要是给首页卡片上的人看的，所以写「2608批次 / BOCNETC-O-MAPSN」而不是内部编码；
    * 只有拿不到 label（选项里没有该项）时才回落到编号本身。
    */
+  /**
+   * 长编码截断的短别名：把「E00301-互联网金融服务平台-BOCNET-G-IFS」变成「BOCNET-G-IFS」
+   *（2026-09-22 用户要求「前面的编号和中文都不要」）。实现在 SavedQuery.shortCode，
+   * 取不到就原样返回 —— 显示用的东西宁可长一点，也不能变成空。
+   */
+  function sc(text) {
+    const S = window.SavedQuery;
+    return (S && typeof S.shortCode === 'function') ? S.shortCode(text) : String(text == null ? '' : text);
+  }
+
   function collectSavedLabels(fields) {
     const labels = {};
     SAVED_SELECT_KEYS.forEach((key) => {
       if (!fields[key]) return;
       const t = (selects[key] && typeof selects[key].getLabel === 'function')
-        ? String(selects[key].getLabel() || '').trim() : '';
+        ? sc(String(selects[key].getLabel() || '').trim()) : '';
       if (t) labels[key] = t;
     });
     SAVED_MULTI_KEYS.forEach((key) => {
       if (!fields[key]) return;
       const arr = (multiSelects[key] && typeof multiSelects[key].getLabels === 'function')
-        ? multiSelects[key].getLabels().filter(Boolean) : [];
+        ? multiSelects[key].getLabels().map((x) => sc(String(x))).filter(Boolean) : [];
       if (arr.length) labels[key] = arr.join('、');
     });
     return labels;

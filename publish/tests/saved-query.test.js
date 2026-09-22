@@ -1381,3 +1381,22 @@ test('saved-query：旧单键里的匿名记录会被迁移进匿名段（升级
   assert.deepStrictEqual(JSON.parse(st.getItem(ANON_KEY)).map((x) => x.name), ['旧键里的匿名'], '匿名记录要落进匿名段');
   assert.deepStrictEqual(JSON.parse(st.getItem(KEY)).map((x) => x.name), ['有归属的'], '登录段里不再混匿名记录');
 });
+
+test('saved-query：长编码截断 shortCode —— 只留尾部英文编码（2026-09-22 用户要求）', () => {
+  // 用户报：「E00301-互联网金融服务平台-BOCNET-G-IFS 命名太长了，
+  //          截断一下 BOCNET-G-IFS 这个就行，前面的编号和中文都不要」。
+  const S = load(fakeStorage());
+  assert.strictEqual(S.shortCode('E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  assert.strictEqual(S.shortCode('E00406-网上银行服务前端-海外个人手机银行客户端-BOCNETC-O-MAPSN'), 'BOCNETC-O-MAPSN');
+  assert.strictEqual(S.shortCode('E00404-网上银行服务前端-海外个人网银-BOCNETC-O-WPSN'), 'BOCNETC-O-WPSN');
+  // 前面还挂着别的内容时，照样能取到尾部编码
+  assert.strictEqual(S.shortCode('探针批次 E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  // 本来就没有英文编码的（批次名 / 纯编号）原样返回 —— 宁可长一点，也不要把值弄成空的
+  assert.strictEqual(S.shortCode('27年6月独立'), '27年6月独立');
+  assert.strictEqual(S.shortCode('2611批次'), '2611批次');
+  assert.strictEqual(S.shortCode('E00301'), 'E00301');
+  // 空值 / 小写段不当编码（别把普通英文名也切了）
+  assert.strictEqual(S.shortCode(''), '');
+  assert.strictEqual(S.shortCode(null), '');
+  assert.strictEqual(S.shortCode('abc-def'), 'abc-def');
+});
