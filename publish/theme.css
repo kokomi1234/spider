@@ -737,6 +737,10 @@ a.outlined, a.filled, a.text-btn {
    （2026-09-21 用户报「弹窗有点太宽了」的根因）。别依赖规则先后顺序来定宽度。
    min-width 也跟着收一下：原来写死 320px，比窄屏视口还宽时会溢出。 */
 .sub-dialog.dlg-util-dialog { max-width: 460px; min-width: min(320px, 92vw); }
+/* 纯文本确认框（删除确认 / 数据量可能过大 / 放弃已填写的内容）单独收窄一档：
+   460px 是给带输入框的命名框和 Token 面板用的，一句话的确认框撑那么宽，
+   屏幕上就是一大块空白 + 视线要从按钮跳到正中（2026-09-22 复测 D-17，用户："弹窗变小一点就行"）。 */
+.sub-dialog.dlg-util-dialog--confirm { max-width: 380px; min-width: min(300px, 92vw); }
 .dlg-util-body { font-size: var(--fs-sm); color: var(--on-surface); }
 .dlg-util-body p { margin: 0 0 var(--sp1); line-height: 1.6; }
 .dlg-util-body .form-group { margin: 0; }

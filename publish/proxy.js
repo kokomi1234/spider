@@ -88,7 +88,7 @@ function loadEnv() {
 
 loadEnv();   // ← 关键一行：让下面这几个常量读得到 .env
 
-const PORT = process.env.PROXY_PORT || 3000;
+const PORT = Number(process.env.PROXY_PORT) || 3000;   // 数值：启动自检要拿它比端口（原来是从 .env 来的字符串，比不中）
 // 默认**绑全网卡**（2026-09-20 用户拍板：内网自用，不做限制，同事直接连这份代理）。
 // 只给本机用就设 PROXY_HOST=127.0.0.1。
 // 安全口径（2026-09-20 用户拍板，别再加回来）：这份代理**不做鉴权** ——
@@ -867,6 +867,7 @@ const server = http.createServer((req, res) => {
       code: 200,
       msg: 'proxy ok',
       target: TARGET,
+      port: PORT,                 // 回给自己是谁：启动自检靠这个判断连到的是哪一份代理
       offline: OFFLINE_REFRESHED,
       record: RECORD,
       timeout: TIMEOUT,               // 如实播报：PROXY_TIMEOUT 改没改，这里一眼能核对（复测 D-7）
@@ -1387,6 +1388,52 @@ server.on('error', (err) => {
   console.error('[proxy] server error（已记录，服务继续运行）:', (err && err.message) || err);
 });
 
+// ── 启动自检：这份常用查询库是不是**已经有另一份代理在跑** ──────────────────
+// 2026-09-22 用户拍板：不在代码里钉死"一个库文件只许一个实例"，但要把另一份**报出来**
+//（开发机上忘关一份、同事连到另一份，就会踩实测过的坑：20 并发只落进 10 条、最长阻塞 5.3 分钟）。
+// 不用 lsof/fuser：部署机是 Windows，跨平台判活最稳的办法是问那个端口 `/health` 认不认。
+// 锁文件写在 `<库文件>.proxy-lock`，与库同目录 ⇒ 捡到锁就一定是在说同一份库；
+// 每次启动都把自己的信息覆盖上去，所以进程被 kill 掉留下的陈锁不需要谁去清理。
+function probeProxyHealth(port, cb) {
+  let done = false;
+  const finish = (v) => { if (!done) { done = true; cb(v); } };
+  try {
+    const req = http.get({ host: '127.0.0.1', port, path: '/health', timeout: 500 }, (res) => {
+      let s = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { s += c; if (s.length > 4096) req.destroy(); });
+      res.on('end', () => {
+        let j = null;
+        try { j = JSON.parse(s); } catch (_) { /* 应答的不是本项目的代理 */ }
+        finish(!!(j && j.msg === 'proxy ok'));
+      });
+    });
+    req.on('error', () => finish(false));
+    req.on('timeout', () => { req.destroy(); finish(false); });
+  } catch (_) { finish(false); }
+}
+
+function checkOtherProxyInstance() {
+  const dbFile = process.env.PROXY_QUERIES_DB || QUERIES_DB_DEFAULT;
+  const lockFile = dbFile + '.proxy-lock';
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(lockFile, 'utf8')); } catch (_) { /* 没有锁 / 内容坏了 */ }
+  try {
+    fs.writeFileSync(lockFile, JSON.stringify({
+      pid: process.pid, port: PORT, host: HOST, db: dbFile, startedAt: new Date().toISOString(),
+    }));
+  } catch (_) { /* 只读目录等：放弃自检，绝不影响启动 */ }
+  const otherPort = Number(prev && prev.port) || 0;
+  if (!otherPort || otherPort === PORT) return;      // 同一端口起不来（EADDRINUSE），这里只管不同端口
+  probeProxyHealth(otherPort, (alive) => {
+    if (!alive) return;                              // 那份早退了，刚才已把锁换成自己的
+    console.log(`   ⚠️ 另有一份代理正在跑同一份常用查询库：http://127.0.0.1:${otherPort}`
+      + `（pid ${prev.pid || '?'}，启动于 ${prev.startedAt || '?'}）`);
+    console.log('      两个进程写同一个 SQLite 文件会互相抢锁、丢记录（实测 20 并发只落进 10 条）。'
+      + '请只保留一份，并确认同事连的是哪个端口。');
+  });
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`\n✅ 服务器运行在 http://${HOST === '0.0.0.0' || HOST === '::' ? 'localhost' : HOST}:${PORT}`);
   console.log(`   🌐 监听地址：${HOST}` + (HOST === '127.0.0.1' ? '（只本机）' : '（全网卡，同事可直接连这台）')
@@ -1416,6 +1463,7 @@ server.listen(PORT, HOST, () => {
     }
   }
   console.log(`   健康检查：http://localhost:${PORT}/health`);
+  checkOtherProxyInstance();   // 同一份库上是否还有别的代理在跑（不同端口时只能靠这个自检发现）
   console.log(`   热更新 .env：修改后自动生效（约 1.5 秒），也可 curl http://localhost:${PORT}/reload 立即生效`);
   console.log(`   用法：浏览器访问 http://localhost:${PORT} 即可看到前端页面`);
   console.log(`   订阅预演台（dry-run）：http://localhost:${PORT}/publish.html?dryrun=1`);

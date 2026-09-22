@@ -224,6 +224,10 @@
 
     const dialog = document.createElement('div');
     dialog.className = 'dialog sub-dialog dlg-util-dialog';
+    // 纯文本确认框走单独一档宽度（见 theme.css 的 .dlg-util-dialog--confirm）：
+    // 460px 是给有输入框的命名框 / Token 面板用的，一句话的确认框撑那么宽，
+    // 视线得从按钮跳到屏幕中央一大块空白上（2026-09-22 复测 D-17）。
+    if (cfg.extraCls) dialog.classList.add(cfg.extraCls);
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     dialog.tabIndex = -1;
@@ -365,6 +369,7 @@
     const o = opts || {};
     const dlg = openUtilDialog({
       title: o.title || '请确认',
+      extraCls: 'dlg-util-dialog--confirm',
       buildBody(body) {
         const p = document.createElement('p');
         // 三个叫法都认：调用方写 `{ text }` / `{ body }` 时不该静默弹出空正文的确认框
