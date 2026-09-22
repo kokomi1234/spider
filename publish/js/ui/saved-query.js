@@ -374,16 +374,21 @@
    */
   function shortCode(text) {
     const s = String(text == null ? '' : text).trim();
-    if (!s || s.indexOf('-') < 0) return s;
-    const parts = s.split('-');
+    if (!s) return s;
+    // ⚠️ 关键：先按 `-` 分段，再对**每段取它尾部那串大写字母/数字**。
+    //   不能要求"整段都是大写" —— 「调用方系统：BOCNETC-O-MAPSN」里中文前缀与
+    //   编码是**粘在同一段**的（中间没有 -），那样只会取到尾巴的 `O-MAPSN`
+    //   （2026-09-22 用户截图报的正是这个：标题被截成了 O-MAPSN / O-WPSN）。
+    const parts = s.split('-').map((part) => {
+      const m = String(part).match(/([A-Z0-9]+)\s*$/);
+      return m ? m[1] : '';
+    });
     const keep = [];
     for (let i = parts.length - 1; i >= 0; i -= 1) {
-      const p = parts[i].trim();
-      if (!p || !/^[A-Z0-9]+$/.test(p)) break;   // 含中文 / 小写 / 空 → 到头了
-      keep.unshift(p);
-      if (i === 0) break;
+      if (!parts[i]) break;                      // 这段取不到英文 → 到头了
+      keep.unshift(parts[i]);
     }
-    return keep.length ? keep.join('-') : s;
+    return keep.length ? keep.join('-') : s;     // 一个都取不到 → 原样返回
   }
 
   /**

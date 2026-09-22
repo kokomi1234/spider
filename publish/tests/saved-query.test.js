@@ -1391,6 +1391,11 @@ test('saved-query：长编码截断 shortCode —— 只留尾部英文编码（
   assert.strictEqual(S.shortCode('E00404-网上银行服务前端-海外个人网银-BOCNETC-O-WPSN'), 'BOCNETC-O-WPSN');
   // 前面还挂着别的内容时，照样能取到尾部编码
   assert.strictEqual(S.shortCode('探针批次 E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
+  // ⚠️ 中文前缀与英文编码**粘在同一段**（中间没有 -）—— 2026-09-22 用户截图报的
+  //    「发布查询也应该是 BOCNET-O-WPSN，但是截错了」：那时只取到了尾巴的 O-WPSN。
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-MAPSN'), 'BOCNETC-O-MAPSN');
+  assert.strictEqual(S.shortCode('调用方系统：BOCNETC-O-WPSN'), 'BOCNETC-O-WPSN');
+  assert.strictEqual(S.shortCode('提供方系统：E00301-互联网金融服务平台-BOCNET-G-IFS'), 'BOCNET-G-IFS');
   // 本来就没有英文编码的（批次名 / 纯编号）原样返回 —— 宁可长一点，也不要把值弄成空的
   assert.strictEqual(S.shortCode('27年6月独立'), '27年6月独立');
   assert.strictEqual(S.shortCode('2611批次'), '2611批次');
