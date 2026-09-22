@@ -102,6 +102,10 @@ const TIMEOUT = Number(process.env.PROXY_TIMEOUT) || 20000;
 function refreshConfig() {
   loadEnv();
   TOKEN_REFRESHED = process.env.PROXY_TOKEN || '';
+  // 管理员工号（2026-09-22）：token 归属的分界线 —— 管理员自己用 .env 里的 PROXY_TOKEN，
+  // 其他人在没录入自己 token / 录了但过期 / 没登录时**回落**到它。
+  // 默认写死 4711510，.env 里配了就以 .env 为准。
+  ADMIN_USER_ID_REFRESHED = String(process.env.ADMIN_USER_ID || '4711510').trim();
   for (const [name, envKey] of [
     ['systemId', 'PROXY_SYSTEM_ID'],
     ['ssopSessionId', 'PROXY_SSOP_SESSION_ID'],
@@ -121,6 +125,8 @@ const EXTRA_HEADERS = {};
 
 let TOKEN_REFRESHED = '';
 let OFFLINE_REFRESHED = false;
+/** 管理员工号（refreshConfig 里从 .env 的 ADMIN_USER_ID 读，默认 4711510） */
+let ADMIN_USER_ID_REFRESHED = '4711510';
 
 // 启动时先加载一次 .env
 refreshConfig();
@@ -173,7 +179,11 @@ const LOOSE = process.env.PROXY_LOOSE_MATCH !== '0';
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, token',
+  // x-user-key：前端每次请求带上「我是谁」，代理据此决定用谁的 token（2026-09-22）
+  'Access-Control-Allow-Headers': 'Content-Type, token, x-user-key',
+  // ⚠️ 不 Expose 的话，跨域下前端 JS **读不到**响应头 —— 「这次用的是谁的 token」
+  //    正是靠 x-token-source 传回去的（用管理员 token 时要禁掉订阅写操作）。
+  'Access-Control-Expose-Headers': 'x-token-source',
 };
 
 // ── 静态文件服务 ──────────────────────────────────────────────
@@ -519,7 +529,12 @@ function forward(req, res, bodyBuf, key, meta) {
   // ⚠️ 必须在配了 token 时才写这个头。写成 undefined 时 http.request 会同步抛
   // ERR_HTTP_INVALID_HEADER_VALUE，异常被 uncaughtException 吞掉后响应永远不会发出，
   // 客户端只能一直转圈（实测 6s 无响应）。token 约 12 小时过期，这个坑迟早踩到。
-  if (TOKEN_REFRESHED) fwdHeaders['token'] = TOKEN_REFRESHED;
+  //
+  // 2026-09-22 按人取 token：本人录入过且没过期就用本人的；否则回落管理员 token。
+  // x-token-source 随响应回给前端 —— 它同时是「是否禁掉订阅写操作」的依据。
+  const tk = resolveToken(req);
+  if (tk.token) fwdHeaders['token'] = tk.token;
+  res.setHeader('x-token-source', tk.source);
   Object.assign(fwdHeaders, EXTRA_HEADERS);    // systemId / ssopSessionId / authMethods
   fwdHeaders['Accept-Encoding'] = 'identity'; // 不压缩，便于调试与录制
   if (!fwdHeaders['content-type']) fwdHeaders['content-type'] = 'application/json';
@@ -622,6 +637,9 @@ function forward(req, res, bodyBuf, key, meta) {
 const QUERIES_DB_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.db');
 const QUERIES_JSON_DEFAULT = path.resolve(__dirname, '..', 'shared', 'saved-queries.json');
 const QUERIES_JSON_LEGACY = path.join(__dirname, 'config', 'saved-queries.json');
+// 用户 token 库（2026-09-22）：一人一行，存他自己录入的内网 token。独立文件 ——
+// 它是凭证、与业务数据生命周期不同（清了常用查询不该把大家的 token 一起清了）。
+const TOKENS_DB_DEFAULT = path.resolve(__dirname, '..', 'shared', 'user-tokens.db');
 
 // 批次时间（订阅页「批量修改批次时间」的落盘）。
 // 2026-09-20 从 publish/config/ 搬到 shared/ —— 它和库一样是**运行时数据**，
@@ -687,6 +705,70 @@ function getQueriesStore() {
     queriesDbState = null;
     return null;
   }
+}
+
+// ── 用户 token（2026-09-22）────────────────────────────────────
+// 以前 token 是全局一个（.env 的 PROXY_TOKEN）。现在按人：
+//   用户录入自己的 → 用他的；没录入 / 录了但过期（每天 5:00 失效）/ 没登录 → 回落管理员 token。
+// 前端每次请求带 `x-user-key`（当前用户的工号），代理在这里解析。
+let tokensDbTried = false;
+let tokensDbState = null;
+
+function getTokensStore() {
+  if (tokensDbTried) return tokensDbState && tokensDbState.store;
+  tokensDbTried = true;
+  let Mod = null;
+  try { Mod = require('./lib/user-tokens.js'); } catch (_) { Mod = null; }
+  if (!Mod || !Mod.available()) {
+    console.log('[user-tokens] 当前 Node 没有可用的 node:sqlite（需要 Node ≥ 22.5），所有人只能用管理员 token');
+    return null;
+  }
+  const file = process.env.PROXY_TOKENS_DB || TOKENS_DB_DEFAULT;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const store = Mod.open(file);
+    tokensDbState = { store, file, Mod };   // Mod 一起留着：resolveToken 要用它的 isExpired
+    console.log(`[user-tokens] SQLite 已就绪：${file}（${store.count()} 人录了自己的 token）`);
+    return store;
+  } catch (e) {
+    console.log(`[user-tokens] 打开失败，回落「所有人用管理员 token」：${e.message}`);
+    tokensDbState = null;
+    return null;
+  }
+}
+
+/**
+ * 这次请求该用谁的 token。
+ *
+ * @returns {{token:string, source:'user'|'admin'|'fallback', userKey:string, reason:string}}
+ *   source 会随响应头 `x-token-source` 回到前端，**三种取值要分清**：
+ *     · 'user'     本人录入且没过期 → 全套操作
+ *     · 'admin'    管理员本人 → 全套操作（他的 token 就是 .env 里那个全局的，由工具每天刷新）
+ *     · 'fallback' 回落用管理员 token（未登录 / 未录入 / 已过期）→ **只有查询权限**，
+ *                  前端据此禁掉订阅这类写操作。把管理员本人混进这一类，
+ *                  会连他自己都订阅不了 —— 2026-09-22 用户明确要求区分。
+ */
+function resolveToken(req) {
+  const adminKey = String(ADMIN_USER_ID_REFRESHED || '').trim();
+  const userKey = String((req.headers && req.headers['x-user-key']) || '').trim();
+  const asFallback = (reason) => ({ token: TOKEN_REFRESHED, source: 'fallback', userKey, reason });
+
+  if (!TOKEN_REFRESHED) return asFallback('未配置管理员 token');
+  if (!userKey) return asFallback('未登录');
+  // 管理员自己：用 .env 里那个（他的 token 由运维工具每天刷新），不算"回落"
+  if (adminKey && userKey === adminKey) {
+    return { token: TOKEN_REFRESHED, source: 'admin', userKey, reason: '管理员本人' };
+  }
+  // ⚠️ 顺序要紧：先 getTokensStore() 把库打开（它会初始化 tokensDbState），
+  //    再取 tokensDbState —— 反过来的话，**第一次**请求永远读到一个 null 快照，
+  //    于是每次都报「本机没有用户 token 存储」，用户的 token 白录（实测踩过）。
+  if (!getTokensStore()) return asFallback('本机没有用户 token 存储');
+  const st = tokensDbState;
+  if (!st || !st.Mod) return asFallback('本机没有用户 token 存储');
+  const rec = st.store.get(userKey);
+  if (!rec) return asFallback('本人未录入 token');
+  if (st.Mod.isExpired(rec.issuedAt)) return asFallback('本人 token 已过期');
+  return { token: rec.token, source: 'user', userKey, reason: '本人的 token' };
 }
 
 /**
@@ -855,12 +937,47 @@ const server = http.createServer((req, res) => {
       try {
         const text = Buffer.concat(bufs).toString('utf8');
         if (text.length > 1024) { sendJson(res, 413, { code: 413, msg: '内容过大' }); return; }
-        const { token, saveToEnv } = JSON.parse(text);
+        const { token, saveToEnv, userKey, userName, remove } = JSON.parse(text);
+        const who = String(userKey || '').trim();
+        const adminKey = String(ADMIN_USER_ID_REFRESHED || '').trim();
+        // ⓪ 清除某个人的 token（回到「回落管理员 token」的兜底）。
+        //    放在 token 校验之前：清空请求不需要带 token。
+        //    管理员的 token 在 .env 里，不走这条路 —— 想换就用 ② 或直接改 .env。
+        if (remove === true) {
+          if (!who || who === adminKey) {
+            sendJson(res, 400, { code: 400, msg: 'remove 需要带要清除的 userKey（管理员的 token 在 .env 里，不能这样清）' });
+            return;
+          }
+          const store = getTokensStore();
+          if (!store) {
+            sendJson(res, 500, { code: 500, msg: '本机不支持用户 token 存储（需要 Node ≥ 22.5）' });
+            return;
+          }
+          store.remove(who);
+          console.log(`   🗑️ 已清除用户 token：${who}`);
+          sendJson(res, 200, { code: 200, msg: 'token removed', scope: 'user', userKey: who });
+          return;
+        }
         if (!token || typeof token !== 'string') {
           sendJson(res, 400, { code: 400, msg: '缺少 token 字段' });
           return;
         }
-        // 立即生效
+        // ① 普通用户录入「自己的 token」（2026-09-22）：存进 token 库、绑到他的工号，
+        //    **不动 .env** —— .env 里的 PROXY_TOKEN 是管理员 token，只有下面那条路能改它。
+        //    没带 userKey（老调用）或带的就是管理员工号时，走 ② 的全局逻辑。
+        if (who && who !== adminKey) {
+          const store = getTokensStore();
+          if (!store) {
+            sendJson(res, 500, { code: 500, msg: '本机不支持用户 token 存储（需要 Node ≥ 22.5）' });
+            return;
+          }
+          const r = store.set({ userKey: who, userName, token, issuedAt: Date.now() });
+          if (!r.ok) { sendJson(res, 400, { code: 400, msg: r.error || '保存失败' }); return; }
+          console.log(`   🔑 已录入用户 token：${who}${userName ? '（' + userName + '）' : ''}`);
+          sendJson(res, 200, { code: 200, msg: 'token updated (user)', saved: false, scope: 'user', userKey: who });
+          return;
+        }
+        // ② 管理员（或没带身份的老调用）：改全局 token，可选写回 .env
         const prevToken = TOKEN_REFRESHED;
         process.env.PROXY_TOKEN = token;
         TOKEN_REFRESHED = token;
@@ -906,11 +1023,41 @@ const server = http.createServer((req, res) => {
   // 获取当前 token 状态（同 /admin/token）
   if (cachePath === '/admin/token/status') {
     // 不做鉴权：内网自用、只有一台部署（2026-09-20 用户拍板去掉 token 校验）
+    // 2026-09-22 扩展：请求带 x-user-key（前端每次都带）就把「这个人自己那条」的状态、
+    // 以及**本次实际会用谁的 token**一起回 —— 用 resolveToken 算，确保与转发时同一套判定
+    //（状态里说"用你的"、实际却用了管理员的，是最难查的一类问题）。
+    let adminKey = '';
+    let expiryHour = 5;
+    try {
+      const TU = require('./lib/user-tokens.js');
+      expiryHour = TU.EXPIRY_HOUR;
+    } catch (_) { /* 没有模块就按 5 说 */ }
+    adminKey = String(ADMIN_USER_ID_REFRESHED || '').trim();
+    const tk = resolveToken(req);
+    let mine = { has: false };
+    const st = tokensDbState;
+    if (tk.userKey && tk.userKey !== adminKey && getTokensStore() && st) {
+      const rec = st.store.get(tk.userKey);
+      if (rec) {
+        mine = {
+          has: true,
+          preview: st.Mod ? st.Mod.previewOf(rec.token) : '',
+          issuedAt: rec.issuedAt,
+          expired: st.Mod ? st.Mod.isExpired(rec.issuedAt) : true,
+        };
+      }
+    }
     sendJson(res, 200, {
       code: 200,
       hasToken: !!TOKEN_REFRESHED,
       tokenPreview: TOKEN_REFRESHED ? TOKEN_REFRESHED.slice(0, 8) + '...' + TOKEN_REFRESHED.slice(-4) : '(未配置)',
       envPath: envPath,
+      adminUserId: adminKey,
+      isAdmin: !!tk.userKey && tk.userKey === adminKey,
+      mine,
+      expiryHour,
+      source: tk.source,       // 'admin' = 本次用管理员 token（订阅写操作会被前端禁掉）
+      reason: tk.reason,
     });
     return;
   }

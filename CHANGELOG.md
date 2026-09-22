@@ -50,6 +50,58 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-22 12:40] 主会话 —— token 按人：管理员兜底 + 用户各自录入 + 回落时只给查询权限
+
+**用户需求**：登录后能认领 token；区分管理员与普通用户；用户没登录 / token 失效（**每天早上 5 点**失效）
+时回落到管理员 token；管理员固定郑梓辉 `4711510`，他有工具能自动改管理员 token。
+动手前先问清了七件事（认领语义 / 存哪 / 工具怎么改 / 受限怎么生效 / 管理员怎么定 / 录入入口 / 切的时间点）。
+
+**最终口径（用户拍板，别再改回去）**
+| 身份 | 用谁的 token | 能做什么 |
+|---|---|---|
+| 管理员（`ADMIN_USER_ID`，配 `.env`，默认 4711510） | `.env` 的 `PROXY_TOKEN`（运维工具每天刷新） | 全套 |
+| 用户·录入过自己的 | 他自己的（存代理侧 `shared/user-tokens.db`，绑工号） | 全套 |
+| 用户·未录入 / 已过期 | 回落管理员 token | **只有查询权限** |
+| 没登录 | 回落管理员 token | **只有查询权限** |
+
+- 受限功能**只有订阅**（写内网 `POST /itamp-tool/publish/setSubcription`）；
+  **取消订阅/删除**照旧可用（它的接口本来就是空的，只删本机标记）。
+- 录入入口**复用「🔑 Token」弹窗**，按身份切换语义。
+
+**实现**
+- `lib/user-tokens.js`（新，SQLite `shared/user-tokens.db`）：`get/set/remove/list` +
+  `isExpired(issuedAt)` —— 过期判定就是「录入时间早于**最近一次 5:00**」，
+  天然支持「5 点后重录立刻生效」。`list()` 只回**脱敏预览**，绝不回明文。
+- `proxy.js`：`.env` 读 `ADMIN_USER_ID`（默认 4711510）；`resolveToken(req)` 按 `x-user-key` 选 token；
+  转发时注入并把结论写进响应头 `x-token-source`；CORS 放行 `x-user-key` 且 **Expose** `x-token-source`
+  （不 Expose 的话跨域下前端读不到）；`/admin/token` 支持用户录入与 `remove`；`/admin/token/status`
+  回 `mine/source/reason/isAdmin/expiryHour`。
+- 前端：`api-client` 每次请求带 `x-user-key`、记录 `tokenSource`；发布页「🔑」按钮文案随身份变
+  （`🔑 我的 token` / `🔑 管理员` / `🔑 管理员 token`）；订阅按钮在 fallback 时置灰 + 点击再拦一道。
+
+**⚠️ 三个踩过的坑**
+1. **`x-token-source` 必须分三种**：`user` / `admin`（管理员**本人**，用全局 token 但**有全套权限**）/
+   `fallback`（别人回落）。一开始只有 `admin`/`user` 两种 —— 那样管理员本人会被当成"回落"一起禁掉订阅，
+   而他明确要能做所有操作。
+2. **`resolveToken` 里取 `tokensDbState` 的顺序**：必须在 `getTokensStore()` **之后**取。
+   反了的话第一次请求永远读到 null 快照 → 每次都报"本机没有用户 token 存储" → 用户录了 token 也不生效
+   （实测踩到：source 一直是 fallback）。
+3. **离线回放不经过 `forward()`**（`PROXY_OFFLINE=1` 时未命中的请求在外层就 404 了），
+   所以离线实例上**测不出** `x-token-source`。要验真实转发得另起一个非离线实例
+   （内网不可达也没关系：`502` 响应里照样带 header）。
+
+**实测**（`/admin/token/status` 用的是与转发同一套 `resolveToken`，所以离线也能验准）
+- 未登录 → `fallback`/未登录；管理员本人 → `admin`/管理员本人；普通用户未录入 → `fallback`/本人未录入 token；
+  录入后 → `user`/本人的 token；清除后 → `fallback`/本人未录入 token。全部符合预期。
+- 非离线实例（3015）验证真实转发：请求带 `x-token-source: admin` + `Access-Control-Expose-Headers` 齐全；
+  页面上「🔑」按钮文案四种身份逐一核对正确（未登录/管理员/用户未录入/用户已录入），无页面异常。
+- 探针录入的测试 token 已清除，库干净。
+
+**门禁**：`634/634`（token 存储 6 条 + 弹窗 2 条 + 订阅置灰 1 条）+ 冒烟 `ALL PASS`。
+
+**部署注意**：`.env` 里加了 `ADMIN_USER_ID=4711510`（代码里有同样的默认值，不配也能跑）。
+`.env` 不在 git 里；换机器部署要自己配上。
+
 ### [2026-09-22 00:55] 主会话 —— 镜像分键：登录同步不再冲掉未登录时保存的
 
 **用户**：「登录的和未登录的不要用一个，不然登录了再退出的未登录用户又会被覆盖。」

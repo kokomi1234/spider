@@ -296,7 +296,9 @@ test('token-manager：token 为空时点确认不关闭弹窗，并给出提示'
   });
 });
 
-test('token-manager：填上 token 点确认 → POST /admin/token 并关闭弹窗', async () => {
+test('token-manager：管理员填上 token 点确认 → POST /admin/token 并关闭弹窗', async () => {
+  // 2026-09-22 起弹窗按身份分两种语义：管理员改的是**全局** token（可写 .env），
+  // 普通用户录的是自己的（存代理 token 库）。所以这条要带管理员身份跑，与真实页面一致。
   const btn = fakeEl('button');
   const calls = [];
 
@@ -306,7 +308,7 @@ test('token-manager：填上 token 点确认 → POST /admin/token 并关闭弹�
       ? { code: 200, msg: 'token updated', saved: true }
       : STATUS_OK)),
     async (doc) => {
-      const win = {};
+      const win = { CurrentUser: { get: () => ({ userId: '4711510', userName: '郑梓辉' }) } };
       const toasts = [];
       loadTokenManager(win, doc);
       win.toast = (msg) => toasts.push(msg);
@@ -331,6 +333,61 @@ test('token-manager：填上 token 点确认 → POST /admin/token 并关闭弹�
 
       assert.ok(!overlayOf(doc), '确认成功后应关闭弹窗');
       assert.ok(toasts.some((t) => /已更新/.test(t)), `应提示更新成功，实际：${JSON.stringify(toasts)}`);
+    },
+  );
+});
+
+test('token-manager：普通用户录入自己的 token → 带 userKey 且不写 .env', async () => {
+  // 2026-09-22：非管理员录入的是**他自己的** token（绑到工号、存代理侧），
+  // 不能顺手把 .env 里的管理员 token 改掉。
+  const btn = fakeEl('button');
+  const calls = [];
+  await withFakeDom(
+    { btnTokenManager: btn },
+    fakeFetch(calls, () => STATUS_OK),
+    async (doc) => {
+      const win = { CurrentUser: { get: () => ({ userId: '6464402', userName: '吴树海' }) } };
+      const toasts = [];
+      loadTokenManager(win, doc);
+      win.toast = (msg) => toasts.push(msg);
+      win.TokenManager.init();
+      btn.click();
+      await flush();
+      const overlay = overlayOf(doc);
+      findIn(overlay, (e) => e.id === 'tm-token-input').value = 'MY-OWN-TOKEN';
+      confirmBtnOf(overlay).click();
+      await flush();
+
+      const post = calls.find((c) => c.init && c.init.method === 'POST');
+      assert.ok(post, '应有 POST');
+      const body = JSON.parse(post.init.body);
+      assert.strictEqual(body.userKey, '6464402', '要带上「这是谁的 token」');
+      assert.strictEqual(body.token, 'MY-OWN-TOKEN');
+      assert.strictEqual(body.saveToEnv, false, '普通用户的 token 不写 .env');
+    },
+  );
+});
+
+test('token-manager：没设「当前用户」时不许改 token（免得动到全局那个）', async () => {
+  const btn = fakeEl('button');
+  const calls = [];
+  await withFakeDom(
+    { btnTokenManager: btn },
+    fakeFetch(calls, () => STATUS_OK),
+    async (doc) => {
+      const win = {};                 // 未设当前用户
+      const toasts = [];
+      loadTokenManager(win, doc);
+      win.toast = (msg) => toasts.push(msg);
+      win.TokenManager.init();
+      btn.click();
+      await flush();
+      const overlay = overlayOf(doc);
+      findIn(overlay, (e) => e.id === 'tm-token-input').value = 'NEW-TOKEN-VALUE';
+      confirmBtnOf(overlay).click();
+      await flush();
+      assert.ok(!calls.some((c) => c.init && c.init.method === 'POST'), '未登录不该发出 POST');
+      assert.ok(toasts.some((t) => /当前用户/.test(t)), `要提示先设身份，实际：${JSON.stringify(toasts)}`);
     },
   );
 });

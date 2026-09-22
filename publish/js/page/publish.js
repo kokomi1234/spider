@@ -807,6 +807,14 @@
     }
     const subBtn = e.target.closest('button[data-sub]');
     if (subBtn) {
+      // 订阅是**写内网**的操作（POST /itamp-tool/publish/setSubcription）。
+      // 用管理员 token 时内网只给查询权限（2026-09-22 用户拍板），所以在入口就拦住，
+      // 而不是等内网返回 401 才报错 —— 后者会让用户以为是自己点错了。
+      if (window.API && typeof window.API.tokenSource === 'function'
+        && window.API.tokenSource() === 'fallback') {
+        showToast('当前用的是管理员 token（回落），只有查询权限：订阅需要先在「🔑 Token」里录入你自己的 token', 4200, 'error');
+        return;
+      }
       // 与「详情」同口径：用 filteredRows 的绝对下标定位。
       // 原来按 serverCoding 反查 find()：该编码允许重复（rowKey 注释里就写了），
       // 会订阅到同编码的第一行；而且每点一次都 O(n) 扫一遍。
@@ -895,6 +903,33 @@
   });
 
   /** 初始化页面加载状态 */
+  /**
+   * Token 按钮上的「归属」提示（2026-09-22）。
+   *
+   * 'admin' = 本次用的是管理员 token（内网只给查询权限）—— 必须让用户一眼看到，
+   * 否则他点「订阅」被拦会以为是自己的操作问题。'user' = 用的是他自己录入的。
+   * 数据来自 API.tokenSource()（代理的响应头 x-token-source）。
+   */
+  function updateTokenBadge() {
+    const btn = document.getElementById('btnTokenManager');
+    if (!btn) return;
+    const src = (window.API && typeof window.API.tokenSource === 'function') ? window.API.tokenSource() : '';
+    if (src === 'fallback') {
+      // 回落用管理员 token：只有查询权限，订阅那类写操作会被禁 —— 必须让用户一眼看到原因
+      btn.textContent = '🔑 管理员 token';
+      btn.title = '当前用的是管理员 token（只有查询权限）：在弹窗里录入你自己的 token，即可解锁订阅等写操作';
+    } else if (src === 'admin') {
+      btn.textContent = '🔑 管理员';
+      btn.title = '你是管理员：本次用的是全局 token（其他人没录入自己的 token 时兜底用它）';
+    } else if (src === 'user') {
+      btn.textContent = '🔑 我的 token';
+      btn.title = '当前用的是你自己录入的 token';
+    } else {
+      btn.textContent = '🔑 Token';
+      btn.title = '';
+    }
+  }
+
   function initPageState() {
     // 检测是否处于离线状态
     if (!navigator.onLine) {
@@ -977,6 +1012,13 @@
 
   // Token 管理浮窗
   if (window.TokenManager) TokenManager.init();
+
+  // 这次用的是谁的 token（2026-09-22）：用管理员的就在按钮上标出来 ——
+  // 否则用户点「订阅」被拦会以为是自己点错了。
+  updateTokenBadge();
+  if (window.API && typeof window.API.onTokenSourceChange === 'function') {
+    window.API.onTokenSourceChange(updateTokenBadge);
+  }
 
   window.addEventListener('storage', (e) => {
     if (e.key === SUBSCRIBE_STORAGE_KEY) {

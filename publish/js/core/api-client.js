@@ -36,6 +36,34 @@
    */
   const DEFAULT_TIMEOUT = 20000; // ms，与代理层 PROXY_TIMEOUT 对齐，避免网络异常时无限等待
 
+  // ── 「这次用的是谁的 token」（2026-09-22）──────────────────────────
+  // 代理按请求头 x-user-key 决定用谁的 token：本人录入过且没过期 → 用本人的；
+  // 否则回落管理员 token（内网只给查询权限）。结果随响应头 x-token-source 回来
+  //（'user' / 'admin'），页面据此禁掉「用管理员 token 时不该给做」的写操作。
+  let lastTokenSource = '';
+  const tokenSourceListeners = new Set();
+
+  function rememberTokenSource(resp) {
+    try {
+      const s = resp && resp.headers && typeof resp.headers.get === 'function'
+        ? String(resp.headers.get('x-token-source') || '')
+        : '';
+      if (!s || s === lastTokenSource) return;
+      lastTokenSource = s;
+      tokenSourceListeners.forEach((fn) => { try { fn(s); } catch (_) { /* 订阅方炸了不影响请求 */ } });
+    } catch (_) { /* 读不到响应头（跨域没 Expose / 老浏览器）就当不知道，不影响请求本身 */ }
+  }
+
+  /** 当前用户工号（代理的 token 归属判定读它）。未登录返回空串 = 代理走管理员 token */
+  function currentUserKey() {
+    try {
+      const u = (typeof window !== 'undefined' && window.CurrentUser) ? window.CurrentUser.get() : null;
+      return String((u && (u.userId || u.userName)) || '').trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
   async function call(path, opts = {}) {
     const { method = 'GET', body, query, headers = {}, signal, timeout = DEFAULT_TIMEOUT, retry = 0 } = opts;
 
@@ -76,6 +104,8 @@
       headers: {
         'Content-Type': 'application/json',
         ...(TOKEN ? { 'token': TOKEN } : {}),
+        // 带上「我是谁」：代理据此选 token（本人录入的 / 管理员兜底）。未登录就不带。
+        ...(currentUserKey() ? { 'x-user-key': currentUserKey() } : {}),
         ...headers,
       },
       ...(abortController ? { signal: abortController.signal } : (signal ? { signal } : {})),
@@ -83,7 +113,9 @@
     if (body !== undefined) fetchOpts.body = JSON.stringify(body);
 
     try {
-      return await fetch(url, fetchOpts);
+      const resp = await fetch(url, fetchOpts);
+      rememberTokenSource(resp);   // 记下这次代理用的是谁的 token（界面要据此限制功能）
+      return resp;
     } catch (e) {
       // 调用方主动中止（发起新查询 / 重置表单）时不算失败：照实抛 AbortError，
       // 别谎报成「超时」—— 查询层靠 err.name === 'AbortError' / signal.aborted 判定中止。
@@ -217,6 +249,13 @@
       call,
       fetchSubscribePayload,
       createRequester,
+      // 「当前用的是谁的 token」：'user' = 本人录入且有效；'admin' = 回落管理员（只读口径）。
+      // 空串 = 还没有请求过 / 读不到响应头。
+      tokenSource: () => lastTokenSource,
+      onTokenSourceChange(fn) {
+        tokenSourceListeners.add(fn);
+        return () => tokenSourceListeners.delete(fn);
+      },
     };
   }
 
