@@ -974,3 +974,26 @@ test('部门榜：身份里没有部门键 → 不把本机记录当部门榜渲
     `空态要说清是身份缺部门，实际：${els.deptEmpty.textContent}`);
 });
 
+test('部门榜：身份残缺时服务端回了 0 条，空态不许说「本部门还没有」', async () => {
+  // 深度矩阵量出来的最后一句谎话：身份缺 teamId → 部门键退到上级单位 → 查回来当然是 0 条，
+  // 但同事的记录其实存在（挂在 teamId 下）。这时说"本部门还没有"就是骗人。
+  const nameOnly = { userId: '', userName: '张三', teamId: '', teamName: '', orgId: 'O1', orgName: '软件中心' };
+  const { els, win } = buildEnv({ currentUser: nameOnly, items: [] });
+  win.CurrentUser.missingOf = (u) => (!u || u.userId ? [] : ['userId']);
+  win.SavedQuery.deptTopFromServer = async () => ({ ok: true, items: [] });
+  await win.HomePage.renderDept();
+  await flush();
+  assert.ok(/不完整|缺工号|部门编号/.test(els.deptEmpty.textContent),
+    `要说清是身份残缺导致查不到，实际：${els.deptEmpty.textContent}`);
+  assert.ok(!/本部门还没有/.test(els.deptEmpty.textContent), '不许把"键对不上"说成"本部门没有"');
+
+  // 对照：身份齐全时服务端回 0 条，才准说「本部门还没有」
+  const ok2 = buildEnv({ currentUser: ME, items: [] });
+  ok2.win.CurrentUser.missingOf = () => [];
+  ok2.win.SavedQuery.deptTopFromServer = async () => ({ ok: true, items: [] });
+  await ok2.win.HomePage.renderDept();
+  await flush();
+  assert.ok(/本部门还没有常用查询记录/.test(ok2.els.deptEmpty.textContent),
+    `身份齐全时的空列表就该照实说没有，实际：${ok2.els.deptEmpty.textContent}`);
+});
+

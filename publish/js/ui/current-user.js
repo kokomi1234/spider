@@ -195,6 +195,45 @@
     return user.teamName || user.orgName || '';
   }
 
+  /**
+   * 身份残缺时**自己补一次**：拿姓名去人员接口查，只有「姓名完全相等且唯一命中」才认。
+   *
+   * 为什么必须在首屏做：归属键是工号优先（`SavedQuery.userKeyOf`），缺工号的那台机器
+   * 存进共享库的记录，键就成了**姓名**；另一台用完整身份（工号）的机器按工号查不到它 ——
+   * 反向也一样查不到（2026-09-23 深度矩阵里唯一没通的那格）。补上工号，两边才认得彼此。
+   * 查不到 / 同名多命中一律**不动**：宁可继续提示「身份不全」，也不能把别人当成你。
+   *
+   * @returns {Promise<{ok:boolean, completed?:boolean, user?:object, missing?:string[], reason?:string, error?:string}>}
+   */
+  async function autoComplete() {
+    const cur = get();
+    if (!cur) return { ok: false, reason: 'nouser' };
+    const miss = missingOf(cur);
+    if (!miss.length) return { ok: true, completed: false, user: cur, missing: [] };
+    const name = cur.userName;
+    if (!name) return { ok: false, reason: 'noname', missing: miss };   // 连姓名都没有，无从查起
+    let r = null;
+    try {
+      r = await lookup(name);
+    } catch (e) {
+      return { ok: false, reason: 'error', error: (e && e.message) || String(e), missing: miss };
+    }
+    if (!r || !r.ok) return { ok: false, reason: 'error', error: (r && r.error) || '人员查询失败', missing: miss };
+    const exact = (r.list || []).filter((u) => u && u.userName === name);
+    if (exact.length !== 1) {
+      return { ok: false, reason: exact.length > 1 ? 'ambiguous' : 'notfound', missing: miss };
+    }
+    // 只**填空**，不覆盖已有值（接口偶尔回残缺对象，别把本机已有的字段抹成空串）
+    const found = exact[0];
+    const patch = {};
+    Object.keys(found).forEach((k) => { if (!cur[k] && found[k]) patch[k] = found[k]; });
+    const merged = normalize(Object.assign({}, cur, patch));
+    if (!merged) return { ok: false, reason: 'bad', missing: miss };
+    const w = set(merged);
+    if (!w.ok) return { ok: false, reason: 'storage', error: w.error, missing: miss };
+    return { ok: true, completed: missingOf(merged).length < miss.length, user: merged, missing: missingOf(merged) };
+  }
+
   /** 展示文案：「张三（4711510） · …开发三部」 */
   function label(u) {
     const user = normalize(u);
@@ -216,5 +255,6 @@
     looksLikeId,
     missingOf,
     incompleteWarning,
+    autoComplete,
   };
 })();

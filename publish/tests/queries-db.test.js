@@ -320,3 +320,26 @@ testOrSkip('queries-db：byUser 允许工号↔姓名互查（另一台机器只
   assert.strictEqual(s.byUser('', 10).length, 0, '空键不许退化成"返回全部"');
   s.close();
 });
+
+testOrSkip('queries-db：只有姓名的提交按库内唯一映射补成工号键（同名歧义就不补）', () => {
+  // 2026-09-23 深度矩阵里唯一没通的一格：一台机器只填得出姓名（人员接口没回工号），
+  // 它存出去的键是姓名 → 另一台按工号查不到它。库里其实知道「这个姓名 = 那个工号」。
+  const NAME_ONLY = { userName: '张三', teamId: 'T01', teamName: '开发一部', orgId: 'O1', orgName: '软件中心（深圳）' };
+  const s = freshStore();
+  s.upsert([{ id: 'q1', page: 'publish', name: '带工号的', fields: { ...COND }, owner: A, at: 1000 }], []);
+  s.upsert([{ id: 'q2', page: 'publish', name: '只有姓名的', fields: { a: '2' }, owner: NAME_ONLY, at: 2000 }], []);
+  assert.strictEqual(s.byUser('1001', 10).length, 2, '姓名键那次要被判成同一个人（补成工号键）');
+  assert.strictEqual(s.byUser('张三', 10).length, 2, '按姓名查也拿到两行');
+  assert.strictEqual(s.peopleCount(), 1, '补全之后不该凭空多出一个"人"');
+  s.close();
+
+  // 同名对应到两个工号 → 不敢猜（宁可留着姓名键，也不能把别人的查询算到你头上）
+  const s2 = freshStore();
+  s2.upsert([{ id: 'p1', page: 'publish', name: '甲', fields: { a: '1' }, owner: A, at: 1000 }], []);
+  s2.upsert([{ id: 'p2', page: 'publish', name: '乙', fields: { a: '2' }, owner: { ...A, userId: '9999' }, at: 1100 }], []);
+  s2.upsert([{ id: 'p3', page: 'publish', name: '姓名键的', fields: { a: '3' }, owner: NAME_ONLY, at: 2000 }], []);
+  assert.strictEqual(s2.byUser('1001', 10).length, 1, '歧义时不许并到 1001');
+  assert.strictEqual(s2.byUser('9999', 10).length, 1, '也不许并到 9999');
+  assert.strictEqual(s2.byUser('张三', 10).length, 3, '按姓名查照旧能拿到全部三行');
+  s2.close();
+});
