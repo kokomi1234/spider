@@ -263,3 +263,26 @@ test('current-user：工号一致时正常返回', async () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.list[0].userId, '4711510');
 });
+
+test('current-user：身份完整性把关 —— 缺工号与缺部门分开算，齐了才不提醒', () => {
+  // 2026-09-23：换台机器看不到自己存的常用查询，根因是"设上了但设得不完整"——
+  // 没工号 → 归属键退化成姓名（库里存的是工号）；没 team 级部门 → 部门榜的键对不上。
+  // 这两种都必须当场说出来，不能让 set() 报个"成功"就完事。
+  const { CurrentUser: CU } = load(fakeStorage());
+  assert.deepStrictEqual(CU.missingOf(USER), [], '该有的都有 → 不缺');
+  assert.deepStrictEqual(CU.missingOf({ ...USER, userId: '' }), ['userId']);
+  assert.deepStrictEqual(CU.missingOf({ ...USER, teamId: '', teamName: '' }), ['team'],
+    '只剩上级单位（org）也算缺部门：部门榜的键会退到 orgId，和别人存的 teamId 对不上');
+  assert.deepStrictEqual(CU.missingOf({ userName: '张三' }), ['userId', 'team']);
+
+  assert.strictEqual(CU.incompleteWarning(USER), '', '齐了就不该有那句话');
+  const w = CU.incompleteWarning({ userName: '张三' });
+  assert.match(w, /缺工号和部门/, '要说清缺了哪两样');
+  assert.match(w, /换台机器|换浏览器/, '要说清后果（不然用户下次才发现）');
+
+  const win = load(fakeStorage());
+  const r = win.CurrentUser.set({ userName: '张三' });
+  assert.strictEqual(r.ok, true, '残缺也照样存得下（离线时总得能用）');
+  assert.deepStrictEqual(r.missing, ['userId', 'team'], '但要把缺什么如实带回给调用方');
+  assert.deepStrictEqual(win.CurrentUser.set(USER).missing, [], '齐的时候不该报错东西');
+});

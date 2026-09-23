@@ -388,13 +388,19 @@
     //   而且架构改版后同步响应里的 total 已经变成「我的条数」，再标「库内」就是错口径。
     savedSyncEl.hidden = false;
     savedSyncEl.className = `sync-state is-${st.state}`;
-    savedSyncEl.textContent = st.state === 'shared' ? '已同步' : (st.state === 'fail' ? '同步失败' : '仅本机');
+    // 'incomplete'（连上了库但当前用户缺工号/部门）不许混进「已同步」——
+    // 那种身份存进库的记录换台机器就查不到，报「已同步」是骗人（2026-09-23 实测）。
+    const SYNC_TEXT = { shared: '已同步', incomplete: '身份不全', fail: '同步失败', local: '仅本机' };
+    savedSyncEl.textContent = SYNC_TEXT[st.state] || '仅本机';
     savedSyncEl.title = '';
   }
 
   // ══════════════════════════════════════════════════════
   // 当前用户
   // ══════════════════════════════════════════════════════
+
+  /** 残缺身份提醒的"本次加载只提一次"开关（renderUser 会被多处触发） */
+  let incompleteWarned = false;
 
   function renderUser() {
     const CU = window.CurrentUser;
@@ -420,6 +426,14 @@
       if (userSetEl) userSetEl.removeAttribute('title');
     }
     if (userHintEl) userHintEl.textContent = has ? '已设置' : '未设置';
+    // 身份残缺（没工号 / 没 team 级部门）要当场说出来：这样存进共享库的记录
+    // 换台机器就查不到（2026-09-23 实测：库里存的是工号，拿姓名键查回 0 条，
+    // 而角标还说「已同步」）。设身份那条路径自己会提示，这里只补「打开页面时
+    // 身份已经是残缺的」这一种 —— 每次加载最多提醒一次，别刷屏。
+    if (has && !incompleteWarned && CU.missingOf && CU.missingOf(u).length) {
+      incompleteWarned = true;
+      showToast(CU.incompleteWarning(u), 6000, 'warn');
+    }
     resetUserSearch();   // 身份一变（设好 / 切换 / 清空）就把候选与搜索词一起清掉
     // 「我的常用查询」和部门排行都随身份变，所以在这里一起刷；
     // render() 那边就不再单独调 renderSaved()，免得一次首屏发两遍请求
@@ -638,7 +652,13 @@
     const CU = window.CurrentUser;
     const r = CU.set(u);
     if (!r.ok) { showToast(r.error || '保存失败', 3000, 'error'); return; }
-    showToast(`已切换为 ${CU.label(r.user)}`, 2400, 'success');
+    // 设上了不等于设对了：缺工号会让归属退化成姓名（共享库里存的是工号，
+    // 换台机器拿姓名查回 0 条），缺部门会让部门榜拿上级单位的键去查（看着是空的）。
+    // 这两种都在设的当场说清，别让用户到另一台机器上才发现"东西不见了"。
+    const missing = r.missing || [];
+    incompleteWarned = missing.length > 0;
+    if (missing.length) showToast(CU.incompleteWarning(r.user), 6000, 'warn');
+    else showToast(`已切换为 ${CU.label(r.user)}`, 2400, 'success');
     resetUserSearch();   // 选完了就把候选与搜索词清掉，下次重新搜
     renderUser();
   }
@@ -679,6 +699,18 @@
     } catch (_) { /* 记不住就用默认，不打扰用户 */ }
   }
 
+  /**
+   * 部门榜现在显示的是哪一份数据：'local' = 只有本机镜像，'server' = 服务端按部门聚合的结果。
+   * 标题必须跟着它走（paintDeptTitle）—— 「×× 常用查询」这句话只有真拿到部门结果才配说。
+   */
+  let deptScope = 'local';
+
+  function paintDeptTitle(deptName) {
+    if (!deptTitleEl) return;
+    deptTitleEl.textContent = deptScope === 'server'
+      ? `${deptName} 常用查询` : `${deptName} 常用查询（本机）`;
+  }
+
   function renderDept() {
     const S = window.SavedQuery;
     const CU = window.CurrentUser;
@@ -700,7 +732,22 @@
     // 用 teamName 优先（真实报文里 orgName 是整个一级单位，teamName 才是部门）
     const deptName = (typeof CU.deptLabel === 'function' ? CU.deptLabel(u) : (u.teamName || u.orgName))
       || '（未识别部门）';
-    if (deptTitleEl) deptTitleEl.textContent = `${deptName} 常用查询`;
+
+    // 没有部门键就聚不出榜（本机 listByDept 与服务端 ?dept= 都要它）。这时屏幕上那份
+    // 根本不是"部门榜"，别顶着部门标题显示它 —— 用户据此以为"部门里只有我存过"，
+    // 实际是身份里没部门、连请求都没发出去（2026-09-23 实测复现）。
+    if (!S.deptKeyOf(u)) {
+      deptScope = 'local';
+      paintDeptTitle(deptName);
+      deptEmptyEl.hidden = false;
+      deptEmptyEl.textContent = '这份「当前用户」里没有部门信息，聚不出部门榜：'
+        + '到上面「当前用户」重新查一次工号或姓名（接口会带回部门）。';
+      return;
+    }
+
+    // 先按本机口径渲染（离线也能看），服务端答了再升成部门口径
+    deptScope = 'local';
+    paintDeptTitle(deptName);
 
     let items = [];
     try {
@@ -741,6 +788,10 @@
     const now = CU ? CU.get() : null;
     if (!now || String(now.userId || now.userName || '') !== String(u.userId || u.userName || '')) return;
     if (!r || !r.ok || !Array.isArray(r.items)) return;   // 失败就保留本机渲染的结果
+
+    // 真拿到服务端按部门聚合的结果了：口径升上来，标题里的「（本机）」才拿掉
+    deptScope = 'server';
+    paintDeptTitle((CU.deptLabel ? CU.deptLabel(now) : (now.teamName || now.orgName)) || '（未识别部门）');
 
     clear(deptListEl);
     r.items.forEach((it) => deptListEl.appendChild(buildItem(it, { meta: true, readonly: true, titleFromLabels: true })));

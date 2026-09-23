@@ -307,3 +307,16 @@ testOrSkip('queries-db：没有归属人的记录不入库（未登录保存的�
   assert.strictEqual(s.byUser('1001', 10).length, 1, '并且出现在这个人的列表里');
   s.close();
 });
+
+testOrSkip('queries-db：byUser 允许工号↔姓名互查（另一台机器只填得出姓名）', () => {
+  // 2026-09-23 实测：库里 user_key 是工号优先，而「当前用户」在别的机器上可能只有姓名
+  //（人员接口没回工号 / 旧版本设的身份）。那时前端拿姓名来查，只比 user_key 就回 0 条，
+  // 而 HTTP 200 + mode=user → 角标照样报「已同步」，用户看到的是"我存过 4 条，换台机器一条都没有"。
+  const s = freshStore();
+  s.upsert([{ id: 'q1', page: 'publish', name: '甲', fields: { ...COND }, owner: A, at: 1000 }], []);
+  assert.strictEqual(s.byUser('1001', 10).length, 1, '按工号命中');
+  assert.strictEqual(s.byUser('张三', 10).length, 1, '按姓名也要命中（库里存的是工号）');
+  assert.strictEqual(s.byUser('查无此人', 10).length, 0, '不相干的人不许蹭');
+  assert.strictEqual(s.byUser('', 10).length, 0, '空键不许退化成"返回全部"');
+  s.close();
+});

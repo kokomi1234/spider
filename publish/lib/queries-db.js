@@ -515,20 +515,29 @@ function open(file) {
 
     /**
      * 某人保存过的查询（个人视图）。
-     * @param {string} userKey 工号 / 姓名
+     * @param {string} userKeyOrName 工号 **或** 姓名
      * @param {number} [limit]
      */
-    byUser(userKey, limit) {
+    byUser(userKeyOrName, limit) {
       // 上限要钳住：?limit=1e21 是有限数，直接进 SQLite 的 LIMIT 会 500（datatype mismatch）
       const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 50;
+      // 三个键都要能命中（2026-09-23）：库里存的 user_key 是「工号优先」（userKeyOf），
+      // 但「当前用户」在另一台机器上可能只有姓名（接口没回工号 / 旧版本设的身份），
+      // 那时前端拿姓名来查 —— 只比 user_key 就会回 0 条，而 HTTP 200 + mode=user，
+      // 角标照报「已同步」，用户看到的是「我存过 4 条，换台机器一条都没有」（实测复现）。
+      // ⚠️ 同名同姓会互相看到对方的记录：这台后端在姓名多命中时本来就报错
+      //（current-user.js 的 lookup 里那条抓包结论），实际风险很低；真要区分还得靠工号。
+      // ⚠️ 空键直接返回空：user_id 允许是空串（只有姓名的人），否则 `user_id = ''` 会把这些行捞出来
+      const key = String(userKeyOrName || '');
+      if (!key) return [];
       const rows = db.prepare(`
         SELECT * FROM saved_queries q
         JOIN saved_query_savers s ON s.query_id = q.id
-        WHERE s.user_key = ?
+        WHERE (s.user_key = ? OR s.user_id = ? OR s.user_name = ?)
           AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
         ORDER BY MAX(s.saved_at, q.last_opened_at) DESC
         LIMIT ?
-      `).all(String(userKey || ''), n);
+      `).all(key, key, key, n);
       return rows.map((r) => toRecord(r));
     },
 

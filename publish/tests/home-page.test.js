@@ -937,3 +937,40 @@ test('角标：存储层没给 lastSyncState（旧版替身）时安静跳过，
   assert.strictEqual(els.savedSync.hidden, true, '拿不到状态就把角标收起来，别显示旧的');
 });
 
+test('部门榜口径：服务端没答时标题必须写明「本机」，答了才升成部门榜（2026-09-23）', async () => {
+  // 用户报「换台机器部门榜只有自己的」。实测根因：先渲染本机镜像、再用 ?dept= 覆盖，
+  // 覆盖那一步失败时标题照旧写「×× 常用查询」，等于把本机那份说成部门结果。
+  const item = { id: 'd1', page: 'publish', name: '本部门一条', at: 5, owner: ME };
+  const { win, els } = buildEnv({ currentUser: ME, items: [item] });
+  await flush();
+  assert.ok(/本机/.test(els.deptTitle.textContent),
+    `默认桩不提供服务端部门榜，标题要写明本机口径，实际：${els.deptTitle.textContent}`);
+
+  win.SavedQuery.deptTopFromServer = async () => ({ ok: true, items: [{ ...item, savers: 3 }] });
+  await win.HomePage.renderDept();
+  await flush();
+  assert.ok(!/本机/.test(els.deptTitle.textContent),
+    `真拿到部门结果后不该再标「本机」，实际：${els.deptTitle.textContent}`);
+  assert.ok(/开发三部/.test(els.deptTitle.textContent), '标题仍要写清是哪个部门');
+
+  // 服务端明确答了 0 条：口径是部门的，不许退回"本机"这种含糊说法
+  win.SavedQuery.deptTopFromServer = async () => ({ ok: true, items: [] });
+  await win.HomePage.renderDept();
+  await flush();
+  assert.ok(!/本机/.test(els.deptTitle.textContent), '拿到部门结果（哪怕是空）都算部门口径');
+});
+
+test('部门榜：身份里没有部门键 → 不把本机记录当部门榜渲染，空态说清原因', async () => {
+  // 实测复现：身份缺 team/org 时 saved-query.deptTopFromServer 直接 fail，连 ?dept= 都不发，
+  // 页面却留着本机那几条并冠以部门标题 —— 用户以为"部门里只有我存过"。
+  const noDept = { userId: '9', userName: '赵六' };
+  const { els, win } = buildEnv({
+    currentUser: noDept,
+    items: [{ id: 'x1', page: 'publish', name: '甲', at: 1, owner: noDept }],
+  });
+  await flush();
+  assert.strictEqual(win.HomePage.deptCount(), 0, '没有部门键就不该渲染本机那几条当部门榜');
+  assert.ok(/没有部门信息/.test(els.deptEmpty.textContent),
+    `空态要说清是身份缺部门，实际：${els.deptEmpty.textContent}`);
+});
+

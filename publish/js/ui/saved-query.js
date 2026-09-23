@@ -205,6 +205,19 @@
   }
 
   /**
+   * 一个人的**全部键**：工号与姓名都算。
+   * 与 userKeyOf（主键，工号优先）配对使用 —— 判"是不是我"要按集合求交，
+   * 因为同一台机器上可能只填得出姓名（接口没回工号 / 旧版本设的身份），
+   * 而共享库里那条记录的键是工号（2026-09-23 实测：拿姓名去查回 0 条）。
+   */
+  function userKeysOf(user) {
+    const o = user && typeof user === 'object' ? user : {};
+    return Array.from(new Set([o.userId, o.userName]
+      .map((v) => String(v == null ? '' : v).trim())
+      .filter(Boolean)));
+  }
+
+  /**
    * 这条记录**谁保存过**（可能不止一个人）。
    *
    * 为什么不能只看 owner：记录经服务端往返之后，owner 是「最早保存的那个人」
@@ -213,13 +226,17 @@
    * 于是 listForUser(B) 恒为空，表现成「第二个用户怎么存都存不进去、条数还是第一个人的」。
    * 服务端在 saverKeys 里如实回传了全部保存者，这里把它和 owner 合起来用。
    *
+   * ⚠️ owner 的工号与姓名**都**要收进来（2026-09-23）：只取主键的话，
+   * 「库里按工号存、本机按姓名认」这条链就在前端又断一次 —— 服务端互查放宽了，
+   * 本机过滤却仍然按单键 includes，记录会在这一步被抹掉。
+   *
    * @param {object} item 记录
-   * @returns {string[]} 去重后的键（工号优先、姓名兜底）
+   * @returns {string[]} 去重后的键（工号与姓名并列）
    */
   function saverKeysOf(item) {
     const out = [];
-    const own = userKeyOf(item && item.owner);
-    if (own) out.push(own);
+    const o = (item && item.owner) || {};
+    userKeysOf(o).forEach((k) => out.push(k));
     if (item && Array.isArray(item.saverKeys)) {
       item.saverKeys.forEach((k) => {
         const s = String(k == null ? '' : k).trim();
@@ -496,12 +513,12 @@
    *        （**绝不退化成"显示全部"** —— 那会把同事的记录当成我的）
    */
   function listForUser(user, limit) {
-    const key = userKeyOf(user);
+    const keys = userKeysOf(user);
     const mine = list()
       // 用 saverKeysOf 而不是 owner：owner 只是「最早保存的那个人」，
       // 经服务端往返后可能不是我（见 saverKeysOf 的注释）。
-      .filter((it) => (key
-        ? saverKeysOf(it).includes(key)          // 有身份：按人过滤
+      .filter((it) => (keys.length
+        ? saverKeysOf(it).some((k) => keys.includes(k))   // 有身份：按人过滤（工号或姓名命中即算）
         // 2026-09-22 用户报「没登录时保存的也应该显示在常用查询里」：
         // 那时保存的记录 owner 为空，旧写法直接 return [] → 存下来了却看不到，
         // 空态还让用户"设好用户再去查询页重新保存一次"（等于白存）。
@@ -601,7 +618,8 @@
             });
             // 是我自己的记录才进镜像（别人的只计数，不落本机）
             const cu = window.CurrentUser && window.CurrentUser.get();
-            if (cu && saverKeysOf(updated).includes(userKeyOf(cu))) {
+            const cuKeys = userKeysOf(cu);
+            if (cuKeys.some((k) => saverKeysOf(updated).includes(k))) {
               writeRaw([updated].concat(list().filter((it) => it.id !== id)));
             }
             return { ok: true, item: updated };
@@ -1112,8 +1130,22 @@
   //        / 'fail' 端点在但这次失败 / 'pending' 还没同步过
   //        / 'nouser' 没设「当前用户」—— 没有「我的列表」可同步，首页角标对它隐藏
   //          （2026-09-21 加：以前这种情况也报 'shared'，等于说了一句空话）
+  //        / 'incomplete' 连上了、但「当前用户」残缺（没工号或没 team 级部门）——
+  //          这种身份存进库的东西换台机器可能对不上，角标不许说「已同步」（2026-09-23）
   const syncState = { state: 'pending', total: 0, file: '', storage: '', people: 0, error: '', at: 0 };
   const syncListeners = new Set();
+
+  /** 「当前用户」残缺到会影响归属与部门聚合吗？CurrentUser 没加载/没这个能力时按「不缺」处理 */
+  function identityIncomplete() {
+    const CU = window.CurrentUser;
+    if (!CU || typeof CU.missingOf !== 'function' || typeof CU.get !== 'function') return false;
+    try {
+      const u = CU.get();
+      return !!u && CU.missingOf(u).length > 0;
+    } catch (_) {
+      return false;   // 判不了就别改角标语义，宁可报原状态
+    }
+  }
 
   /** @returns {{state:string,total:number,file:string,storage:string,people:number,error:string,at:number}} 最近一次同步的结果（副本，改不坏内部状态） */
   function lastSyncState() {
@@ -1152,7 +1184,10 @@
       // 'nouser'：没设当前用户时只是探活，没有「我的列表」可同步 —— 不许谎报「已同步」
       syncState.state = r.noUser
         ? 'nouser'
-        : (r.file ? 'shared' : (syncState.state === 'shared' ? 'shared' : 'local'));
+        : (!r.file ? (syncState.state === 'shared' ? 'shared' : 'local')
+          // 连上了库但身份残缺：这次"同步成功"只说明请求通了，不说明
+          // 存进去的东西以后还认得出来 —— 不许报「已同步」（2026-09-23）。
+          : (identityIncomplete() ? 'incomplete' : 'shared'));
       syncState.total = Number(r.total) || 0;
       // 只留文件名，不把代理机器的绝对路径摆到页面上（代理默认监听所有网卡，
       // 角标是每个打开首页的人都会看的；真要看全路径，title 里的文件名足够定位）
@@ -1376,6 +1411,7 @@
   function syncSuffix() {
     const st = lastSyncState();
     if (st.state === 'shared') return ' · 共享库已连上';
+    if (st.state === 'incomplete') return ' · 共享库已连上，但当前用户缺工号/部门（换台机器可能对不上）';
     if (st.state === 'local') return ' · 仅本机（没连上共享库）';
     if (st.state === 'fail') return ` · 共享同步失败（${st.error || '未知错误'}），先存本机`;
     return '';
@@ -1416,6 +1452,7 @@
     listForUser,
     mineFromServer,
     userKeyOf,
+    userKeysOf,
     saverKeysOf,
     fingerprintOf,
     sameQuery,

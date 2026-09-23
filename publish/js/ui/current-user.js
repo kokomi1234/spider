@@ -68,10 +68,39 @@
     if (!s) return fail('浏览器存储不可用（隐私模式？），无法记住选择');
     try {
       s.setItem(STORAGE_KEY, JSON.stringify(u));
-      return { ok: true, user: u };
+      // missing 如实带回这份身份缺什么（见 missingOf）—— 调用方要据此提醒用户，
+      // 不能设完就报「成功」，残缺的身份存进共享库的东西换台机器会查不到。
+      return { ok: true, user: u, missing: missingOf(u) };
     } catch (_) {
       return fail('保存失败：浏览器存储空间不足或被禁用');
     }
+  }
+
+  /**
+   * 这份身份**缺什么**（决定它写进共享库的记录换台机器、换个人还查不查得到）。
+   *   'userId' —— 没工号：归属键退化成姓名（saved-query.js 的 userKeyOf = 工号 ‖ 姓名），
+   *     而库里存的是工号，换台机器拿姓名去查就是 0 条（2026-09-23 实测），还可能撞同名。
+   *   'team' —— 没有 team 级部门：部门榜的键会退到 orgId/orgName（整个一级单位），
+   *     和别人存的 teamId 对不上，榜单看着就是空的（同日实测）。
+   * 返回空数组 = 该有的都有。
+   */
+  function missingOf(u) {
+    const user = normalize(u);
+    if (!user) return ['identity'];
+    const out = [];
+    if (!user.userId) out.push('userId');
+    if (!(user.teamId || user.teamName)) out.push('team');
+    return out;
+  }
+
+  /** 残缺身份要说的那句话 —— 措辞只这一处：设上时的 toast 与首屏加载的提醒都走它 */
+  const MISSING_LABEL = { userId: '工号', team: '部门', identity: '信息' };
+  function incompleteWarning(u) {
+    const miss = missingOf(u);
+    if (!miss.length) return '';
+    const what = miss.map((m) => MISSING_LABEL[m] || '信息').join('和');
+    return `当前用户缺${what}：这样存进共享库的常用查询，换台机器或换浏览器可能查不到`
+      + '（归属按工号记、部门榜按部门键聚合）。在「当前用户」里重新查一次工号或姓名补全。';
   }
 
   function clear() {
@@ -185,5 +214,7 @@
     deptLabel,
     normalize,
     looksLikeId,
+    missingOf,
+    incompleteWarning,
   };
 })();

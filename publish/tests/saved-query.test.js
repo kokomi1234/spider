@@ -405,7 +405,10 @@ test('saved-query：listForUser 认服务端回传的 saverKeys（owner 不是�
   assert.strictEqual(S.listForUser(OWNER_A).length, 1, 'owner 本人看得到');
   assert.strictEqual(S.listForUser(OWNER_B).length, 1, 'owner 不是我，但 saverKeys 里有我 → 也要看得到');
   assert.strictEqual(S.listForUser({ userId: '查无此人' }).length, 0, '没保存过的人不许看到');
-  assert.deepStrictEqual(S.saverKeysOf(S.list()[0]).sort(), ['1001', '4711510'], 'owner 与 saverKeys 要合起来算');
+  // owner 的工号**和姓名**都算键（2026-09-23）：库里按工号存，另一台机器可能只填得出姓名，
+  // 少收一个姓名，服务端互查放宽了也会被本机这一步重新滤掉。
+  assert.deepStrictEqual(S.saverKeysOf(S.list()[0]).sort(), ['1001', '4711510', '张三'],
+    'owner（工号+姓名）与 saverKeys 要合起来算');
 });
 
 test('saved-query：hit 累加打开次数并记最近打开时间', async () => {
@@ -764,12 +767,13 @@ test('saved-query：合并后超过上限 → 拒绝并保留原数据', async (
 // ══════════════════════════════════════════════════════════
 
 /** 带同步能力的加载：注入 location + fetch 桩（模块从 window 上取，可替换） */
-function loadSync(storage, fetchStub, user) {
+function loadSync(storage, fetchStub, user, cuExtra) {
   const win = { localStorage: storage, location: { href: 'http://localhost:3000/' }, fetch: fetchStub };
   // 第三参：给不给「当前用户」。2026-09-22 复测 D-3 之后，没用户时 push 也只许记 'nouser'
   //（服务端本来就拒绝没有归属人的记录，`if (!uk) return`），所以那些讲「已同步」状态机的用例
   // 必须显式带上身份，否则测的是匿客户端的行为。
-  if (user) win.CurrentUser = { get: () => user };
+  // 第四参：给 CurrentUser 补 missingOf 之类的能力（测「身份残缺」那条角标分支用）。
+  if (user) win.CurrentUser = Object.assign({ get: () => user }, cuExtra || {});
   loadScript('js/ui/saved-query.js', {}, win);
   return win.SavedQuery;
 }
@@ -1485,4 +1489,48 @@ test('导入：把同事的文件导给另一个登录人时换发新 id，归�
   assert.ok(mine, '提交里应有一条换了新 id 的记录');
   assert.strictEqual(String(mine.owner.userId), '6464402', '新记录的归属要是乙');
   assert.ok(!serverItems.some((it) => it.id === mine.id), '新 id 不该撞上服务端已有的行');
+});
+
+test('saved-query：本机身份只有姓名时，也要认得「按工号存进去」的那条（2026-09-23 换机器看不到）', async () => {
+  // 库里 user_key 是工号优先；另一台机器的「当前用户」可能只填得出姓名（接口没回工号）。
+  // 服务端放宽成互查之后，本机这层过滤也必须按"键集合"求交，否则记录会在这一步被再抹掉一次。
+  const st = fakeStorage();
+  const seed = load(st);   // 不带身份导入：owner 原样留着（带身份导入会换归属人）
+  const r = await seed.importJson(JSON.stringify({
+    app: 'spider-saved-queries', v: 2,
+    items: [{ id: 'q1', page: 'publish', name: '甲', fields: { a: '1' }, owner: OWNER_A, saverKeys: ['4711510'] }],
+  }));
+  assert.strictEqual(r.ok, true);
+
+  const S = load(st, { CurrentUser: { get: () => ({ userName: '张三' }) } });
+  assert.strictEqual(S.listForUser({ userName: '张三' }).length, 1, '只填得出姓名也要看到自己那条');
+  assert.strictEqual(S.listForUser({ userId: '4711510', userName: '张三' }).length, 1, '工号姓名都有时同样命中');
+  assert.strictEqual(S.listForUser({ userName: '李四' }).length, 0, '别人的姓名不许蹭');
+  assert.deepStrictEqual(S.userKeysOf({ userId: ' 4711510 ', userName: '张三' }), ['4711510', '张三'],
+    '一个人的键 = 工号 + 姓名，各自去空白');
+});
+
+test('同步状态：连上了库但「当前用户」残缺 → 报 incomplete，不许说已同步（2026-09-23）', async () => {
+  // 这一条是实测复现出来的：库里存的是工号，拿姓名键去查回 0 条，
+  // 但 HTTP 200 + mode=user，旧实现照样把角标写成「已同步」——用户以为同步好了，
+  // 实际换台机器什么都看不到。角标必须区分「请求通了」和"这身份存的东西以后还认得出来"。
+  const noId = { userName: '张三' };
+  const missingOf = (u) => (u && u.userId ? [] : ['userId']);
+  const stub = okJson({ mode: 'user', items: [], file: '/srv/shared/saved-queries.db', storage: 'sqlite' });
+
+  const S = loadSync(fakeStorage(), stub, noId, { missingOf });
+  const r = await S.syncFromServer();
+  assert.strictEqual(r.ok, true, '请求本身是通的，不该报故障');
+  assert.strictEqual(S.lastSyncState().state, 'incomplete', '身份残缺时不许报「已同步」');
+  assert.match(S.syncSuffix(), /身份|缺/, '查询页 toast 也要带上同一口径');
+
+  // 对照：身份齐 → 仍是 shared（这条防线不许把正常状态也拦下来）
+  const T = loadSync(fakeStorage(), stub, { userId: '4711510', userName: '张三' }, { missingOf });
+  await T.syncFromServer();
+  assert.strictEqual(T.lastSyncState().state, 'shared');
+
+  // 对照：CurrentUser 没提供 missingOf（旧版脚本 / 半挂）→ 维持原语义，不乱判
+  const U = loadSync(fakeStorage(), stub, noId);
+  await U.syncFromServer();
+  assert.strictEqual(U.lastSyncState().state, 'shared', '判不了就不改角标语义');
 });
