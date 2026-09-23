@@ -87,6 +87,7 @@
   let defaultDept = '';         // 牵头部门默认值（当前用户所在团队）
   let deptSelect = null;        // 牵头部门 searchable-select 实例
   let projectTypeSelect = null; // 项目分类 searchable-select 实例
+  let detailDrag = null;        // 任务单详情弹窗的标题栏拖动（只绑一次；每次打开复位到居中）
   let reviewerRoleSelect = null;// 评委角色 searchable-select 实例（禁用，仅保持统一外观）
   let datePickers = {};         // id -> date-picker 实例
   let multiSelects = {};        // key -> multi-select 实例
@@ -376,6 +377,13 @@
     }).join('');
     const ov = $('#taskDetailOverlay');
     ov.classList.add('show');
+    // 标题栏可拖动（2026-09-23）：与发布页服务详情同款旧结构（没有 .sub-head），
+    // 之前没接 makeDraggable，弹窗挡住结果表时只能关掉重开。
+    // 把手用 <h2 id="taskDetailTitle">（块级、占满整行），每次打开先复位到居中。
+    if (window.DialogUtils && !detailDrag) {
+      detailDrag = window.DialogUtils.makeDraggable($('#taskDetailDialog'), $('#taskDetailTitle'));
+    }
+    if (detailDrag && detailDrag.reset) detailDrag.reset();
     $('#taskDetailDialog').focus();
   }
 
@@ -725,9 +733,10 @@
     // 右上角 ✕（与订阅页详情弹窗同款），关的是同一个弹窗
     const taskDetailCloseX = $('#btnTaskDetailCloseX');
     if (taskDetailCloseX) taskDetailCloseX.addEventListener('click', closeDetail);
-    $('#taskDetailOverlay').addEventListener('click', (e) => {
-      if (e.target === $('#taskDetailOverlay')) closeDetail();
-    });
+    // 点遮罩空白处关闭：与其余弹窗统一走 DialogUtils（2026-09-23）——
+    // 直接判 `e.target === overlay` 会把「在弹窗里按下、滑到遮罩上松开」误判成点遮罩，
+    // 填了一半的内容就没了。上一轮统一时漏了这个弹窗。
+    if (window.DialogUtils) window.DialogUtils.bindBackdropDismiss($('#taskDetailOverlay'), closeDetail);
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#taskDetailOverlay').classList.contains('show')) closeDetail();
     });

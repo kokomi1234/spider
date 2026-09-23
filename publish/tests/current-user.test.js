@@ -263,3 +263,78 @@ test('current-user：工号一致时正常返回', async () => {
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.list[0].userId, '4711510');
 });
+
+test('current-user：身份完整性把关 —— 缺工号与缺部门分开算，齐了才不提醒', () => {
+  // 2026-09-23：换台机器看不到自己存的常用查询，根因是"设上了但设得不完整"——
+  // 没工号 → 归属键退化成姓名（库里存的是工号）；没 team 级部门 → 部门榜的键对不上。
+  // 这两种都必须当场说出来，不能让 set() 报个"成功"就完事。
+  const { CurrentUser: CU } = load(fakeStorage());
+  assert.deepStrictEqual(CU.missingOf(USER), [], '该有的都有 → 不缺');
+  assert.deepStrictEqual(CU.missingOf({ ...USER, userId: '' }), ['userId']);
+  assert.deepStrictEqual(CU.missingOf({ ...USER, teamId: '', teamName: '' }), ['team'],
+    '只剩上级单位（org）也算缺部门：部门榜的键会退到 orgId，和别人存的 teamId 对不上');
+  assert.deepStrictEqual(CU.missingOf({ userName: '张三' }), ['userId', 'team']);
+
+  assert.strictEqual(CU.incompleteWarning(USER), '', '齐了就不该有那句话');
+  const w = CU.incompleteWarning({ userName: '张三' });
+  assert.match(w, /缺工号和部门/, '要说清缺了哪两样');
+  assert.match(w, /换台机器|换浏览器/, '要说清后果（不然用户下次才发现）');
+
+  const win = load(fakeStorage());
+  const r = win.CurrentUser.set({ userName: '张三' });
+  assert.strictEqual(r.ok, true, '残缺也照样存得下（离线时总得能用）');
+  assert.deepStrictEqual(r.missing, ['userId', 'team'], '但要把缺什么如实带回给调用方');
+  assert.deepStrictEqual(win.CurrentUser.set(USER).missing, [], '齐的时候不该报错东西');
+});
+
+test('current-user：autoComplete 拿姓名补出工号与部门（换机器互相看不见那格的解法）', async () => {
+  const st = fakeStorage({ 'spider.currentUser.v1': JSON.stringify({ userName: '张三' }) });
+  const w = load(st);
+  let asked = '(没查)';
+  w.UserApi = { fetchUserList: async (kw) => { asked = kw; return { ok: true, list: [USER] }; } };
+  const r = await w.CurrentUser.autoComplete();
+  assert.strictEqual(asked, '张三', '该拿姓名去人员接口查一次');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.completed, true, '补全要有交代（首页据此重画「我的」与部门榜）');
+  const now = w.CurrentUser.get();
+  assert.strictEqual(now.userId, '4711510', '工号补上了');
+  assert.strictEqual(now.teamId, 'K4229', '部门也补上了');
+  assert.deepStrictEqual(w.CurrentUser.missingOf(now), []);
+});
+
+test('current-user：autoComplete 在歧义 / 查不到 / 接口故障 / 已齐全时一律不乱动身份', async () => {
+  const TWO = [{ ...USER, userId: '4711510' }, { ...USER, userId: '9999999' }];   // 同名同姓两个人
+  const a = load(fakeStorage({ 'spider.currentUser.v1': JSON.stringify({ userName: '张三' }) }));
+  a.UserApi = { fetchUserList: async () => ({ ok: true, list: TWO }) };
+  const ra = await a.CurrentUser.autoComplete();
+  assert.strictEqual(ra.ok, false);
+  assert.strictEqual(ra.reason, 'ambiguous', '同名多命中宁可不动，也不能把别人当成你');
+  assert.strictEqual(a.CurrentUser.get().userId, '', '本机身份一个字都不许改（normalize 把缺的补成空串）');
+  assert.strictEqual(a.CurrentUser.get().userName, '张三');
+
+  const b = load(fakeStorage({ 'spider.currentUser.v1': JSON.stringify({ userName: '张三' }) }));
+  b.UserApi = { fetchUserList: async () => ({ ok: true, list: [] }) };
+  const rb = await b.CurrentUser.autoComplete();
+  assert.strictEqual(rb.reason, 'notfound');
+  assert.strictEqual(b.CurrentUser.get().userName, '张三');
+
+  const c = load(fakeStorage({ 'spider.currentUser.v1': JSON.stringify({ userName: '张三' }) }));
+  c.UserApi = { fetchUserList: async () => ({ ok: false, error: '接口挂了' }) };
+  const rc = await c.CurrentUser.autoComplete();
+  assert.strictEqual(rc.ok, false);
+  assert.match(rc.error, /接口挂了/, '故障原因要带出来');
+
+  const d = load(fakeStorage({ 'spider.currentUser.v1': JSON.stringify(USER) }));
+  let called = 0;
+  d.UserApi = { fetchUserList: async () => { called += 1; return { ok: true, list: [USER] }; } };
+  const rd = await d.CurrentUser.autoComplete();
+  assert.strictEqual(rd.completed, false, '本来就齐的不用补');
+  assert.strictEqual(called, 0, '齐的时候不该白白发一次请求');
+
+  // 只填空、不覆盖：接口回了残缺对象时，本机已有的值不能被抹掉
+  const e = load(fakeStorage({ 'spider.currentUser.v1': JSON.stringify({ userName: '张三', orgId: 'KEEP' }) }));
+  e.UserApi = { fetchUserList: async () => ({ ok: true, list: [{ userId: '4711510', userName: '张三', orgId: '', teamId: 'K4229' }] }) };
+  await e.CurrentUser.autoComplete();
+  assert.strictEqual(e.CurrentUser.get().orgId, 'KEEP', '接口给了空值不许覆盖本机已有值');
+  assert.strictEqual(e.CurrentUser.get().userId, '4711510', '非空的那个要补上');
+});

@@ -170,6 +170,9 @@
     .sync-state.is-shared { color: var(--ok-ink); border-color: currentColor; }
     .sync-state.is-local { color: var(--on-variant); border-color: currentColor; }
     .sync-state.is-fail { color: var(--warn-ink); border-color: currentColor; }
+    /* 连上了共享库、但「当前用户」缺工号或部门：这种身份存的东西换台机器对不上，
+       角标要单独一档（「身份不全」），不能混在「已同步」里骗人（2026-09-23） */
+    .sync-state.is-incomplete { color: var(--warn-ink); border-color: currentColor; }
 
     /* 当前用户
        ⚠️ 这几条 [hidden] 规则不能省：下面的 display:flex 会盖掉 hidden 属性自带的

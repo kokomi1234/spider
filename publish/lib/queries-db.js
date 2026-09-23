@@ -229,6 +229,30 @@ function open(file) {
   `);
   const updQueryCounts = db.prepare('UPDATE saved_queries SET hits = MAX(hits, ?), saves = MAX(saves, ?) WHERE id = ?');
 
+  // ── 姓名 → 工号 的库内映射（2026-09-23）──────────────────────────
+  // 归属键是「工号优先」，但另一台机器可能只填得出姓名（人员接口没回工号 / 旧版设的身份），
+  // 于是它存出去的行键成了姓名 —— 别人按工号查不到它，它按工号也查不到别人的。
+  // 库里其实**知道**这个姓名对应哪个工号（同一人别的行带过工号），就在这里补上。
+  const selIdsByName = db.prepare(`
+    SELECT DISTINCT user_id FROM saved_query_savers WHERE user_name = ? AND user_id <> ''
+  `);
+  const selPersonByUserId = db.prepare(`
+    SELECT user_key, user_id, user_name, team_id, team_name, org_id, org_name, dept_key
+    FROM saved_query_savers WHERE user_id = ? ORDER BY saved_at DESC LIMIT 1
+  `);
+
+  /**
+   * 只有在这个姓名**唯一**对应一个工号时才返回那个人；查不到、或同名对应到两个以上工号，
+   * 一律返回 null —— 宁可留着姓名键（顶多换台机器看不到），也不能把别人的查询算到你头上。
+   */
+  function personByName(name) {
+    const key = String(name || '').trim();
+    if (!key) return null;
+    const ids = selIdsByName.all(key);
+    if (ids.length !== 1) return null;
+    return selPersonByUserId.get(ids[0].user_id) || null;
+  }
+
   const TOMB_KEEP_MS = 30 * 24 * 3600 * 1000;   // 与前端/旧 JSON 实现一致：墓碑留 30 天
 
   /** 一条 query + 它的保存者 → 前端要的记录形状（带 owner，兼容旧契约） */
@@ -305,15 +329,32 @@ function open(file) {
       try {
         (Array.isArray(items) ? items : []).forEach((it) => {
           if (!it || typeof it !== 'object' || !it.id || !it.page) { skipped += 1; return; }
-          const owner = it.owner && typeof it.owner === 'object' ? it.owner : {};
+          const owner0 = it.owner && typeof it.owner === 'object' ? it.owner : {};
           const at = num(it.at, now) || now;
-          const uk = userKeyOf(owner);
+          let uk = userKeyOf(owner0);
           // ⚠️ 没有归属人的记录**不入服务端**（2026-09-22 用户报「未登录存的会变成重复」）：
           // 服务端的用户视图是按 savers 表 join 出来的（byUser / deptTop 都靠它），
           // 没有 saver 的行走进去只会变成**孤儿行** —— 谁的用户视图都看不见它，
           // 但它确实占着一个 id、还会在镜像刷新后冒出来，表现就是"同一条查询出现两遍"。
           // 未登录时保存的东西本来就只属于那台机器（本机镜像是它的家，见 user-token 那套思路）。
           if (!uk) { skipped += 1; return; }
+          // 提交里只有姓名（没工号）时，按库内唯一映射换成工号键 —— 否则这台机器存的东西
+          // 换个工号身份的机器查不到（2026-09-23 深度矩阵里唯一没通的一格）。认不准就不换。
+          let who = owner0;
+          if (!String(owner0.userId || '').trim() && String(owner0.userName || '').trim() === uk) {
+            const known = personByName(uk);
+            if (known && known.user_id) {
+              who = {
+                userId: known.user_id,
+                userName: owner0.userName || known.user_name || uk,
+                teamId: owner0.teamId || known.team_id || '',
+                teamName: owner0.teamName || known.team_name || '',
+                orgId: owner0.orgId || known.org_id || '',
+                orgName: owner0.orgName || known.org_name || '',
+              };
+              uk = String(known.user_id);
+            }
+          }
           const fp = fingerprintOf(it);
           // 同条件 + 同人已有记录 → **并到它上面**（用它的 id），而不是新增一条。
           // 前端已经按同一口径判过了，这里再兜一层：前端镜像可能陈旧、或那次提交
@@ -336,10 +377,10 @@ function open(file) {
           if (uk) {
             insSaver.run(
               id, uk,
-              String(owner.userId || ''), String(owner.userName || uk),
-              String(owner.teamId || ''), String(owner.teamName || ''),
-              String(owner.orgId || ''), String(owner.orgName || ''),
-              deptKeyOf(owner), at,
+              String(who.userId || ''), String(who.userName || uk),
+              String(who.teamId || ''), String(who.teamName || ''),
+              String(who.orgId || ''), String(who.orgName || ''),
+              deptKeyOf(who), at,
             );
           }
         });
@@ -515,20 +556,29 @@ function open(file) {
 
     /**
      * 某人保存过的查询（个人视图）。
-     * @param {string} userKey 工号 / 姓名
+     * @param {string} userKeyOrName 工号 **或** 姓名
      * @param {number} [limit]
      */
-    byUser(userKey, limit) {
+    byUser(userKeyOrName, limit) {
       // 上限要钳住：?limit=1e21 是有限数，直接进 SQLite 的 LIMIT 会 500（datatype mismatch）
       const n = Number.isFinite(limit) && limit > 0 ? Math.min(1000, Math.floor(limit)) : 50;
+      // 三个键都要能命中（2026-09-23）：库里存的 user_key 是「工号优先」（userKeyOf），
+      // 但「当前用户」在另一台机器上可能只有姓名（接口没回工号 / 旧版本设的身份），
+      // 那时前端拿姓名来查 —— 只比 user_key 就会回 0 条，而 HTTP 200 + mode=user，
+      // 角标照报「已同步」，用户看到的是「我存过 4 条，换台机器一条都没有」（实测复现）。
+      // ⚠️ 同名同姓会互相看到对方的记录：这台后端在姓名多命中时本来就报错
+      //（current-user.js 的 lookup 里那条抓包结论），实际风险很低；真要区分还得靠工号。
+      // ⚠️ 空键直接返回空：user_id 允许是空串（只有姓名的人），否则 `user_id = ''` 会把这些行捞出来
+      const key = String(userKeyOrName || '');
+      if (!key) return [];
       const rows = db.prepare(`
         SELECT * FROM saved_queries q
         JOIN saved_query_savers s ON s.query_id = q.id
-        WHERE s.user_key = ?
+        WHERE (s.user_key = ? OR s.user_id = ? OR s.user_name = ?)
           AND q.id NOT IN (SELECT query_id FROM saved_query_tombstones)
         ORDER BY MAX(s.saved_at, q.last_opened_at) DESC
         LIMIT ?
-      `).all(String(userKey || ''), n);
+      `).all(key, key, key, n);
       return rows.map((r) => toRecord(r));
     },
 

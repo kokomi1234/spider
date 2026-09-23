@@ -68,10 +68,39 @@
     if (!s) return fail('浏览器存储不可用（隐私模式？），无法记住选择');
     try {
       s.setItem(STORAGE_KEY, JSON.stringify(u));
-      return { ok: true, user: u };
+      // missing 如实带回这份身份缺什么（见 missingOf）—— 调用方要据此提醒用户，
+      // 不能设完就报「成功」，残缺的身份存进共享库的东西换台机器会查不到。
+      return { ok: true, user: u, missing: missingOf(u) };
     } catch (_) {
       return fail('保存失败：浏览器存储空间不足或被禁用');
     }
+  }
+
+  /**
+   * 这份身份**缺什么**（决定它写进共享库的记录换台机器、换个人还查不查得到）。
+   *   'userId' —— 没工号：归属键退化成姓名（saved-query.js 的 userKeyOf = 工号 ‖ 姓名），
+   *     而库里存的是工号，换台机器拿姓名去查就是 0 条（2026-09-23 实测），还可能撞同名。
+   *   'team' —— 没有 team 级部门：部门榜的键会退到 orgId/orgName（整个一级单位），
+   *     和别人存的 teamId 对不上，榜单看着就是空的（同日实测）。
+   * 返回空数组 = 该有的都有。
+   */
+  function missingOf(u) {
+    const user = normalize(u);
+    if (!user) return ['identity'];
+    const out = [];
+    if (!user.userId) out.push('userId');
+    if (!(user.teamId || user.teamName)) out.push('team');
+    return out;
+  }
+
+  /** 残缺身份要说的那句话 —— 措辞只这一处：设上时的 toast 与首屏加载的提醒都走它 */
+  const MISSING_LABEL = { userId: '工号', team: '部门', identity: '信息' };
+  function incompleteWarning(u) {
+    const miss = missingOf(u);
+    if (!miss.length) return '';
+    const what = miss.map((m) => MISSING_LABEL[m] || '信息').join('和');
+    return `当前用户缺${what}：这样存进共享库的常用查询，换台机器或换浏览器可能查不到`
+      + '（归属按工号记、部门榜按部门键聚合）。在「当前用户」里重新查一次工号或姓名补全。';
   }
 
   function clear() {
@@ -166,6 +195,45 @@
     return user.teamName || user.orgName || '';
   }
 
+  /**
+   * 身份残缺时**自己补一次**：拿姓名去人员接口查，只有「姓名完全相等且唯一命中」才认。
+   *
+   * 为什么必须在首屏做：归属键是工号优先（`SavedQuery.userKeyOf`），缺工号的那台机器
+   * 存进共享库的记录，键就成了**姓名**；另一台用完整身份（工号）的机器按工号查不到它 ——
+   * 反向也一样查不到（2026-09-23 深度矩阵里唯一没通的那格）。补上工号，两边才认得彼此。
+   * 查不到 / 同名多命中一律**不动**：宁可继续提示「身份不全」，也不能把别人当成你。
+   *
+   * @returns {Promise<{ok:boolean, completed?:boolean, user?:object, missing?:string[], reason?:string, error?:string}>}
+   */
+  async function autoComplete() {
+    const cur = get();
+    if (!cur) return { ok: false, reason: 'nouser' };
+    const miss = missingOf(cur);
+    if (!miss.length) return { ok: true, completed: false, user: cur, missing: [] };
+    const name = cur.userName;
+    if (!name) return { ok: false, reason: 'noname', missing: miss };   // 连姓名都没有，无从查起
+    let r = null;
+    try {
+      r = await lookup(name);
+    } catch (e) {
+      return { ok: false, reason: 'error', error: (e && e.message) || String(e), missing: miss };
+    }
+    if (!r || !r.ok) return { ok: false, reason: 'error', error: (r && r.error) || '人员查询失败', missing: miss };
+    const exact = (r.list || []).filter((u) => u && u.userName === name);
+    if (exact.length !== 1) {
+      return { ok: false, reason: exact.length > 1 ? 'ambiguous' : 'notfound', missing: miss };
+    }
+    // 只**填空**，不覆盖已有值（接口偶尔回残缺对象，别把本机已有的字段抹成空串）
+    const found = exact[0];
+    const patch = {};
+    Object.keys(found).forEach((k) => { if (!cur[k] && found[k]) patch[k] = found[k]; });
+    const merged = normalize(Object.assign({}, cur, patch));
+    if (!merged) return { ok: false, reason: 'bad', missing: miss };
+    const w = set(merged);
+    if (!w.ok) return { ok: false, reason: 'storage', error: w.error, missing: miss };
+    return { ok: true, completed: missingOf(merged).length < miss.length, user: merged, missing: missingOf(merged) };
+  }
+
   /** 展示文案：「张三（4711510） · …开发三部」 */
   function label(u) {
     const user = normalize(u);
@@ -185,5 +253,8 @@
     deptLabel,
     normalize,
     looksLikeId,
+    missingOf,
+    incompleteWarning,
+    autoComplete,
   };
 })();

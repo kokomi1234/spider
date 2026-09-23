@@ -85,7 +85,7 @@ JSON 里一条记录只有一个 `owner`。同一份条件（比如「调用方=
 ```
 GET  /local/saved-queries                       → { items, deleted, file, storage, people }
 GET  /local/saved-queries?dept=<部门键>&limit=N   → 部门高频：按「几个人保存过」排序
-GET  /local/saved-queries?user=<工号>&limit=N     → 这一个人员的常用查询
+GET  /local/saved-queries?user=<工号或姓名>&limit=N → 这一个人员的常用查询（三个键同比：`user_key`/`user_id`/`user_name`）
 POST /local/saved-queries                        → { items, deletedIds }，合并后返回全集
 ```
 
