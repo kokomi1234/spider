@@ -73,6 +73,37 @@
 
 ## 📝 交接记录（新在上）
 
+### [2026-09-23 13:24] 主会话 —— 补发 stable-20260923-2 + 重出交付包
+
+**用户原话**：「重新发布 + 重出 zip/bundle」（上一版 `stable-20260923` 是"跨机器看不到"那六条修复**之前**的快照）。
+
+**发布动作**：`git fetch origin main` → `checkout main` → `reset --hard origin/main`（本地已在 `e621511`）
+→ `git merge dev --no-edit` → 合并提交 **`4cf215e`**，核对 `main^{tree}` == `dev^{tree}` **逐字节相同**
+→ 在 main 上复跑门禁 → `git tag -a stable-20260923-2`（标签对象 `8ce66b9` → 提交 `4cf215e`）
+→ push：`e621511..4cf215e main`、`* [new tag] stable-20260923-2`、`07a7ebb..d3ec4f7 dev` → 切回 `dev`。
+未 force-push、未 rebase。
+
+**这一版比 `stable-20260923` 多 4 个提交**：弹窗标题栏拖动补漏（`07a7ebb`）+ 常用查询跨机器六处收口
+（`7192704`、`d3ec4f7`）+ 上一条发布记录本身（`80270bf`）。细节在下面两条记录里。
+
+**门禁原话（在 main 上实跑）**：`node tests/run.js` → `679/679 通过`；
+`node tests/smoke-browser.js` → `==== 结果: ALL PASS (静态加载/接线无报错) ====`；
+时区矩阵 `TZ=UTC / Asia/Shanghai / Pacific/Kiritimati / America/New_York` → 均 `679/679 通过`。
+
+**交付包（外层 `/Users/a1/Desktop/spider/`，`checkout-index` 铺树 + Python `zipfile`）**
+- `spider-stable-4cf215e-20260923.zip` —— **257 个文件 / 4.3 MB**（比上一版多一个 `tests/dialog-drag.test.js`）
+- `spider-history-4cf215e-20260923.bundle` —— 5.1 MB，`git bundle verify` → `The bundle records a complete history.`
+- `spider-workbuddy-memory-20260923-2.tar.gz` —— 123 KB
+
+**验收**：真解压 → 文件数 **257**（与打包前一致）→ 中文名抽查 6 个无乱码 →
+**在解压目录里复跑两条门禁**：`679/679 通过` + `==== 结果: ALL PASS (静态加载/接线无报错) ====`。
+scratch 目录移入 `~/.Trash/spider-pkg2-20260923-132*`。
+
+**上一版包的去向**：`spider-stable-e621511-20260923.zip` / 同名 bundle / `spider-workbuddy-memory-20260923.tar.gz`
+仍在 `/Users/a1/Desktop/spider/`，**没删也没覆盖**（新包文件名带新短 sha）。要不要清掉旧的，你说一声。
+
+**下一步给谁**：无锁定。等用户 ① 拿新包上内网验那六条（尤其换机器存/看），② 定第 5 条墓碑雷拆不拆。
+
 ### [2026-09-23 13:11] 主会话 —— 常用查询跨机器「深度测试」：又抓出两个真问题并修掉
 
 **用户原话**：「测试确认没问题吗，请深度测试，我不希望还出现这个问题」。
